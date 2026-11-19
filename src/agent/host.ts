@@ -627,7 +627,8 @@ export async function jpegThumbnail(png: Blob, maxEdgePx: number): Promise<Thumb
   const width = Math.max(1, Math.round(bitmap.width * k));
   const height = Math.max(1, Math.round(bitmap.height * k));
   const canvas = new OffscreenCanvas(width, height);
-  const ctx = canvas.getContext("2d");
+  // On the CPU, like the canvas that encodes the photo: an accelerated canvas gave a black JPEG in a hardware-GPU Chromium.
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
   if (ctx === null) throw new Error("no 2D canvas for the thumbnail");
   ctx.drawImage(bitmap, 0, 0, width, height);
   bitmap.close();
