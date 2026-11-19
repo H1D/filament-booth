@@ -1,8 +1,8 @@
 import { describe, expect, test } from "vitest";
-import { DEFAULT_SLICE, mm } from "../src/document";
+import { DEFAULT_SLICE, defaultDocument, mm, parseDocument } from "../src/document";
 import type { SliceSettings } from "../src/document";
 import { fromBin } from "../src/print/centreline";
-import { bedFromOrca, orcaOverrides, settingsFromOrca } from "../src/print/orca";
+import { bedFromOrca, orcaOverrides, settingsFromOrca, TOP_PATTERNS, TOP_SURFACE_PATTERNS } from "../src/print/orca";
 import { binaryStl, placeOnBed, triangleSoup } from "../src/print/stl";
 import { centrelineOfGcode } from "../src/print/toolpath";
 
@@ -65,20 +65,27 @@ describe("slicing vocabulary", () => {
     });
   });
 
-  test.each(["monotonic", "monotonic-line", "concentric", "zigzag"] as const)("reads back what it wrote, for the %s top pattern", (topSurfacePattern) => {
+  test.each(TOP_SURFACE_PATTERNS)("reads back what it wrote, for the %s top pattern", (topSurfacePattern) => {
     for (const seamPosition of ["aligned", "nearest", "back", "random"] as const) {
       const s = { ...settings, topSurfacePattern, seamPosition };
       const keys = orcaOverrides(s);
-      const read = settingsFromOrca((k) => keys[k]);
+      const read = settingsFromOrca((k) => keys[k], DEFAULT_SLICE);
       expect(read.settings).toEqual(s);
       expect(read.unmodelled).toEqual([]);
     }
   });
 
+  test("names each pattern once, in the document's vocabulary and in Orca's", () => {
+    expect(new Set(TOP_PATTERNS.map(([booth]) => booth)).size).toBe(TOP_PATTERNS.length);
+    expect(new Set(TOP_PATTERNS.map(([, orca]) => orca)).size).toBe(TOP_PATTERNS.length);
+    expect(parseDocument(JSON.parse(JSON.stringify({ ...defaultDocument(), slicing: { ...DEFAULT_SLICE, topSurfacePattern: "hilbert-curve" } }))).slicing.topSurfacePattern).toBe("hilbert-curve");
+    expect(() => parseDocument({ ...defaultDocument(), slicing: { ...DEFAULT_SLICE, topSurfacePattern: "hilbertcurve" } })).toThrow(/topSurfacePattern/);
+  });
+
   test("keeps the default for a key the file lacks, and names a value it cannot express", () => {
-    const read = settingsFromOrca((k) => ({ top_surface_pattern: "hilbertcurve", seam_position: "aligned_back" })[k]);
+    const read = settingsFromOrca((k) => ({ top_surface_pattern: "adaptive-cubic", seam_position: "aligned_back" })[k], DEFAULT_SLICE);
     expect(read.settings).toEqual(DEFAULT_SLICE);
-    expect(read.unmodelled).toEqual(["top_surface_pattern = hilbertcurve", "seam_position = aligned_back"]);
+    expect(read.unmodelled).toEqual(["top_surface_pattern = adaptive-cubic", "seam_position = aligned_back"]);
   });
 
   test.each([

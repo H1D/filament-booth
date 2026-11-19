@@ -2,18 +2,31 @@
  * The booth's slicing vocabulary against OrcaSlicer's: SliceSettings to the
  * keys the engine takes, and the same keys read back from a G-code header.
  */
-import { DEFAULT_SLICE, mm } from "../document";
 import type { BedType, SliceSettings } from "../document";
+import { mm } from "../units";
 
-type TopPattern = SliceSettings["topSurfacePattern"];
 type Seam = SliceSettings["seamPosition"];
 
-const TOP_PATTERNS: readonly (readonly [TopPattern, string])[] = [
+/**
+ * Every top surface pattern the engine accepts (the enum behind Orca's
+ * `top_surface_pattern`), as [booth id, Orca value]. The first four ids are
+ * what saved documents already hold. This is the one list: the SliceSettings
+ * type, the document's validator and the Part panel's select all derive from
+ * it, so a pattern the slicer can print is a pattern the booth can name.
+ * It imports nothing at run time from document.ts, which imports it.
+ */
+export const TOP_PATTERNS = [
   ["monotonic", "monotonic"],
   ["monotonic-line", "monotonicline"],
   ["concentric", "concentric"],
   ["zigzag", "zig-zag"],
-];
+  ["aligned-rectilinear", "alignedrectilinear"],
+  ["hilbert-curve", "hilbertcurve"],
+  ["archimedean-chords", "archimedeanchords"],
+  ["octagram-spiral", "octagramspiral"],
+] as const;
+export type TopSurfacePattern = (typeof TOP_PATTERNS)[number][0];
+export const TOP_SURFACE_PATTERNS: readonly TopSurfacePattern[] = TOP_PATTERNS.map(([booth]) => booth);
 const SEAMS: readonly Seam[] = ["aligned", "nearest", "back", "random"];
 
 /**
@@ -42,8 +55,8 @@ export interface FileSettings {
   unmodelled: string[];
 }
 
-/** Reads the settings a G-code header records. A missing key keeps its default. */
-export function settingsFromOrca(get: (key: string) => string | undefined): FileSettings {
+/** Reads the settings a G-code header records. A missing key keeps the value in `base`. */
+export function settingsFromOrca(get: (key: string) => string | undefined, base: SliceSettings): FileSettings {
   const unmodelled: string[] = [];
   const num = (key: string, fallback: number): number => {
     const v = get(key);
@@ -51,14 +64,14 @@ export function settingsFromOrca(get: (key: string) => string | undefined): File
     return Number.isFinite(n) && n > 0 ? n : fallback;
   };
   const pattern = get("top_surface_pattern");
-  let topSurfacePattern = DEFAULT_SLICE.topSurfacePattern;
+  let topSurfacePattern = base.topSurfacePattern;
   if (pattern !== undefined) {
     const hit = TOP_PATTERNS.find(([, orca]) => orca === pattern);
     if (hit) topSurfacePattern = hit[0];
     else unmodelled.push(`top_surface_pattern = ${pattern}`);
   }
   const seam = get("seam_position");
-  let seamPosition = DEFAULT_SLICE.seamPosition;
+  let seamPosition = base.seamPosition;
   if (seam !== undefined) {
     const hit = SEAMS.find((s) => s === seam);
     if (hit) seamPosition = hit;
@@ -66,11 +79,11 @@ export function settingsFromOrca(get: (key: string) => string | undefined): File
   }
   return {
     settings: {
-      layerHeight: mm(num("layer_height", DEFAULT_SLICE.layerHeight)),
-      outerLineWidth: mm(num("outer_wall_line_width", DEFAULT_SLICE.outerLineWidth)),
-      innerLineWidth: mm(num("inner_wall_line_width", DEFAULT_SLICE.innerLineWidth)),
-      wallCount: Math.round(num("wall_loops", DEFAULT_SLICE.wallCount)),
-      topShellLayers: Math.round(num("top_shell_layers", DEFAULT_SLICE.topShellLayers)),
+      layerHeight: mm(num("layer_height", base.layerHeight)),
+      outerLineWidth: mm(num("outer_wall_line_width", base.outerLineWidth)),
+      innerLineWidth: mm(num("inner_wall_line_width", base.innerLineWidth)),
+      wallCount: Math.round(num("wall_loops", base.wallCount)),
+      topShellLayers: Math.round(num("top_shell_layers", base.topShellLayers)),
       topSurfacePattern,
       seamPosition,
     },

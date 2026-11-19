@@ -17,6 +17,7 @@
  *   distance * (sin az * cos el, -cos az * cos el, sin el).
  * This is render.py's camera convention and the old viewer's floor-card one.
  */
+import { TOP_SURFACE_PATTERNS, type TopSurfacePattern } from "./print/orca";
 import { FILAMENT_PRESETS, LOOK_PRESETS } from "./presets";
 import { deg, kelvin, m, mm, watts, type Degrees, type Kelvin, type Metres, type Mm, type Rgb, type Vec3, type Watts } from "./units";
 
@@ -97,7 +98,7 @@ export interface FilamentChoice {
 
 // ---- slicing (mm: this is the slicer's boundary, parsed in print.ts) -------
 
-export const TOP_SURFACE_PATTERNS = ["monotonic", "monotonic-line", "concentric", "zigzag"] as const;
+export { TOP_SURFACE_PATTERNS };
 export const SEAM_POSITIONS = ["aligned", "nearest", "back", "random"] as const;
 export interface SliceSettings {
   layerHeight: Mm;
@@ -105,7 +106,7 @@ export interface SliceSettings {
   innerLineWidth: Mm;
   wallCount: number;
   topShellLayers: number;
-  topSurfacePattern: (typeof TOP_SURFACE_PATTERNS)[number];
+  topSurfacePattern: TopSurfacePattern;
   seamPosition: (typeof SEAM_POSITIONS)[number];
 }
 export const DEFAULT_SLICE: SliceSettings = {
