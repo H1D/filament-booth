@@ -321,11 +321,13 @@ export function decodeRgbe(bytes: Uint8Array): WorldImage {
 /** wasm32 caps the heap at 4 GiB. */
 export const HEAP_LIMIT_BYTES = 4 * 1024 ** 3;
 
-/** Peak heap: a fixed base plus a cost per part triangle plus the film buffers. Measured with
- *  tools/parity (see cycles/README.md). */
+/** Peak heap: a fixed base plus a cost per part triangle plus the film buffers. Fitted to two
+ *  measured renders of the parity fixtures: 1.15 M triangles at 160 x 100 peaked at 802 MB,
+ *  10.08 M triangles at 1280 x 720 at 2662 MB. The per-pixel cost is an upper bound (render
+ *  buffers plus three snapshot passes, about 130 bytes). */
 export function estimateHeapBytes(partTriangles: number, pixels: number): number {
   return BASE_BYTES + partTriangles * BYTES_PER_TRIANGLE + pixels * BYTES_PER_PIXEL;
 }
-const BASE_BYTES = 310e6;
-const BYTES_PER_TRIANGLE = 165;
+const BASE_BYTES = 580e6;
+const BYTES_PER_TRIANGLE = 190;
 const BYTES_PER_PIXEL = 200;
