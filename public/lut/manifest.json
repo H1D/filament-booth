@@ -1,0 +1,46 @@
+{
+  "format": "agx-lut-2",
+  "blender": "5.2.3 LTS",
+  "toWorking": [
+    0.559371114,
+    0.304783344,
+    0.135845557,
+    0.0762207061,
+    0.787971795,
+    0.135807469,
+    0.065526709,
+    0.164546758,
+    0.769926488
+  ],
+  "log2Min": -12.47393,
+  "log2Max": 12.5260688117,
+  "preLog2Max": 8.0,
+  "tFloor": -4.0,
+  "base": {
+    "file": "agx-base.bin",
+    "size": 57
+  },
+  "looks": {
+    "none": null,
+    "punchy": {
+      "file": "agx-punchy.bin",
+      "size": 49
+    },
+    "low-contrast": {
+      "file": "agx-low-contrast.bin",
+      "size": 49
+    },
+    "medium-low-contrast": {
+      "file": "agx-medium-low-contrast.bin",
+      "size": 49
+    },
+    "medium-high-contrast": {
+      "file": "agx-medium-high-contrast.bin",
+      "size": 49
+    },
+    "high-contrast": {
+      "file": "agx-high-contrast.bin",
+      "size": 49
+    }
+  }
+}

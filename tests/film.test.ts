@@ -1,171 +1,201 @@
 import { readFileSync } from "node:fs";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { AGX_LOOKS, type AgxLook } from "../src/document";
-import { AGX, agx, downscaleFrame, toneMapFrame, type RadianceFrame } from "../src/film";
+import { agx, downscaleFrame, loadAgx, parseAgx, parseManifest, toneMapFrame, type AgxData, type RadianceFrame } from "../src/film";
 
-// Linear Rec.709 probes through Blender 5.2.3's AgX view with each look, as
-// 8-bit sRGB values. Printed by tools/blender/agx_truth.py (Image.save_render
-// with the scene's view settings, 16-bit PNG, dither off). Greys are one value
-// because Blender returns equal channels for a grey; colours are r, g, b in
-// then R, G, B out.
-interface BlenderProbes {
-  greys: [number, number][];
-  colours: [number, number, number, number, number, number][];
+const LUT_DIR = new URL("../public/lut/", import.meta.url);
+const FIXTURES = new URL("./fixtures/", import.meta.url);
+const manifest = parseManifest(JSON.parse(readFileSync(new URL("manifest.json", LUT_DIR), "utf8")));
+
+const loaded = new Map<AgxLook, AgxData>();
+function lut(look: AgxLook): AgxData {
+  let data = loaded.get(look);
+  if (!data) {
+    const entry = manifest.looks[look];
+    data = parseAgx(manifest, look, readFileSync(new URL(manifest.base.file, LUT_DIR)), entry === null ? null : readFileSync(new URL(entry.file, LUT_DIR)));
+    loaded.set(look, data);
+  }
+  return data;
 }
-const BLENDER: Record<AgxLook, BlenderProbes> = {
-  "none": {
-    greys: [[0.0, 0.0], [0.002, 2.6], [0.01, 18.5], [0.03, 42.0], [0.05, 57.9], [0.1, 86.8], [0.18, 117.6], [0.25, 135.7], [0.35, 153.0], [0.5, 169.6], [0.7, 183.5], [1.0, 196.6], [1.5, 209.3], [2.0, 217.2], [4.0, 233.0], [8.0, 245.2], [16.0, 254.6], [0.55, 173.9]],
-    colours: [
-      [0.18, 0.02, 0.02, 113.9, 33.1, 29.1],
-      [0.02, 0.18, 0.02, 33.5, 111.6, 27.0],
-      [0.02, 0.02, 0.18, 26.6, 46.7, 117.1],
-      [0.8, 0.3, 0.1, 196.1, 142.0, 102.6],
-      [0.4, 0.25, 0.2, 160.1, 135.3, 124.8],
-      [1.0, 0.0, 0.0, 218.8, 57.1, 32.9],
-      [0.0, 1.0, 0.0, 110.3, 197.0, 81.2],
-      [0.0, 0.0, 1.0, 20.2, 86.1, 209.5],
-      [0.9, 0.8, 0.1, 195.5, 184.7, 122.4],
-      [0.1, 0.6, 0.7, 124.4, 177.7, 184.9],
-      [0.0116, 0.0116, 0.0116, 21.1, 21.1, 21.1],
-    ],
-  },
-  "punchy": {
-    greys: [[0.0, 0.3], [0.002, 0.5], [0.01, 2.6], [0.03, 19.6], [0.05, 34.7], [0.1, 61.1], [0.18, 88.3], [0.25, 105.3], [0.35, 124.1], [0.5, 143.6], [0.7, 160.5], [1.0, 176.5], [1.5, 192.5], [2.0, 202.4], [4.0, 222.3], [8.0, 237.5], [16.0, 249.1], [0.55, 148.5]],
-    colours: [
-      [0.18, 0.02, 0.02, 83.7, 4.2, 0.9],
-      [0.02, 0.18, 0.02, 12.4, 82.5, 1.3],
-      [0.02, 0.02, 0.18, 0.1, 24.8, 86.0],
-      [0.8, 0.3, 0.1, 171.9, 112.8, 67.6],
-      [0.4, 0.25, 0.2, 131.0, 104.8, 93.7],
-      [1.0, 0.0, 0.0, 186.3, 29.4, 0.0],
-      [0.0, 1.0, 0.0, 70.3, 175.1, 29.4],
-      [0.0, 0.0, 1.0, 4.6, 66.6, 180.5],
-      [0.9, 0.8, 0.1, 174.3, 162.1, 83.9],
-      [0.1, 0.6, 0.7, 85.9, 153.0, 161.7],
-      [0.0116, 0.0116, 0.0116, 3.3, 3.3, 3.3],
-    ],
-  },
-  "low-contrast": {
-    greys: [[0.0, 0.4], [0.002, 8.7], [0.01, 29.3], [0.03, 52.7], [0.05, 67.4], [0.1, 92.4], [0.18, 117.6], [0.25, 132.2], [0.35, 146.4], [0.5, 160.5], [0.7, 172.5], [1.0, 184.1], [1.5, 195.9], [2.0, 203.4], [4.0, 219.0], [8.0, 231.7], [16.0, 242.0], [0.55, 163.9]],
-    colours: [
-      [0.18, 0.02, 0.02, 122.4, 44.8, 40.7],
-      [0.02, 0.18, 0.02, 50.1, 114.6, 40.1],
-      [0.02, 0.02, 0.18, 38.3, 57.1, 125.4],
-      [0.8, 0.3, 0.1, 185.5, 136.9, 100.9],
-      [0.4, 0.25, 0.2, 153.8, 131.5, 121.9],
-      [1.0, 0.0, 0.0, 209.1, 69.4, 49.9],
-      [0.0, 1.0, 0.0, 106.5, 185.5, 79.2],
-      [0.0, 0.0, 1.0, 54.5, 93.5, 201.7],
-      [0.9, 0.8, 0.1, 183.7, 173.9, 114.6],
-      [0.1, 0.6, 0.7, 118.4, 168.1, 174.9],
-      [0.0116, 0.0116, 0.0116, 32.0, 32.0, 32.0],
-    ],
-  },
-  "medium-low-contrast": {
-    greys: [[0.0, 0.1], [0.002, 4.8], [0.01, 23.5], [0.03, 47.1], [0.05, 62.6], [0.1, 89.6], [0.18, 117.6], [0.25, 133.9], [0.35, 149.7], [0.5, 165.0], [0.7, 178.1], [1.0, 190.5], [1.5, 202.8], [2.0, 210.6], [4.0, 226.4], [8.0, 238.9], [16.0, 248.8], [0.55, 168.9]],
-    colours: [
-      [0.18, 0.02, 0.02, 118.3, 38.6, 34.7],
-      [0.02, 0.18, 0.02, 41.3, 113.2, 33.1],
-      [0.02, 0.02, 0.18, 31.8, 51.6, 121.6],
-      [0.8, 0.3, 0.1, 191.0, 139.5, 101.4],
-      [0.4, 0.25, 0.2, 157.1, 133.4, 123.3],
-      [1.0, 0.0, 0.0, 214.4, 63.3, 41.2],
-      [0.0, 1.0, 0.0, 108.0, 191.5, 79.6],
-      [0.0, 0.0, 1.0, 45.7, 91.3, 205.2],
-      [0.9, 0.8, 0.1, 189.7, 179.3, 118.2],
-      [0.1, 0.6, 0.7, 121.2, 173.1, 180.1],
-      [0.0116, 0.0116, 0.0116, 26.2, 26.2, 26.2],
-    ],
-  },
-  "medium-high-contrast": {
-    greys: [[0.0, 0.0], [0.002, 0.6], [0.01, 10.2], [0.03, 33.0], [0.05, 49.5], [0.1, 81.1], [0.18, 117.6], [0.25, 139.2], [0.35, 159.6], [0.5, 178.2], [0.7, 193.5], [1.0, 207.5], [1.5, 220.6], [2.0, 228.6], [4.0, 244.1], [8.0, 255.0], [16.0, 255.0], [0.55, 182.8]],
-    colours: [
-      [0.18, 0.02, 0.02, 109.8, 17.3, 14.2],
-      [0.02, 0.18, 0.02, 15.8, 109.6, 4.7],
-      [0.02, 0.02, 0.18, 2.8, 37.8, 114.0],
-      [0.8, 0.3, 0.1, 208.3, 145.3, 99.7],
-      [0.4, 0.25, 0.2, 167.8, 138.4, 126.1],
-      [1.0, 0.0, 0.0, 230.8, 48.2, 23.5],
-      [0.0, 1.0, 0.0, 104.1, 208.8, 72.0],
-      [0.0, 0.0, 1.0, 36.6, 89.4, 218.8],
-      [0.9, 0.8, 0.1, 206.8, 194.5, 124.4],
-      [0.1, 0.6, 0.7, 126.8, 186.8, 195.3],
-      [0.0116, 0.0116, 0.0116, 12.6, 12.6, 12.6],
-    ],
-  },
-  "high-contrast": {
-    greys: [[0.0, 0.0], [0.002, 0.0], [0.01, 4.9], [0.03, 25.4], [0.05, 42.0], [0.1, 75.9], [0.18, 117.6], [0.25, 142.7], [0.35, 165.6], [0.5, 186.4], [0.7, 202.6], [1.0, 217.0], [1.5, 230.4], [2.0, 238.1], [4.0, 252.8], [8.0, 255.0], [16.0, 255.0], [0.55, 191.2]],
-    colours: [
-      [0.18, 0.02, 0.02, 101.3, 2.7, 1.1],
-      [0.02, 0.18, 0.02, 11.1, 106.0, 3.8],
-      [0.02, 0.02, 0.18, 0.1, 30.5, 105.5],
-      [0.8, 0.3, 0.1, 217.3, 150.0, 100.9],
-      [0.4, 0.25, 0.2, 174.0, 142.2, 128.6],
-      [1.0, 0.0, 0.0, 236.8, 52.1, 40.1],
-      [0.0, 1.0, 0.0, 106.0, 218.2, 72.9],
-      [0.0, 0.0, 1.0, 55.0, 94.9, 222.1],
-      [0.9, 0.8, 0.1, 216.1, 203.2, 131.8],
-      [0.1, 0.6, 0.7, 133.1, 194.8, 203.9],
-      [0.0116, 0.0116, 0.0116, 6.4, 6.4, 6.4],
-    ],
-  },
-};
 
-const to8 = (v: number) => v * 255;
+// Linear Rec.709 probes through Blender 5.2.3's AgX view with every look, as 16-bit display sRGB.
+// Written by tools/blender/agx_truth.py: Image.save_render with the scene's view settings, dither off.
+interface ProbeFixture {
+  fixed: number; // the first `fixed` probes are the hand-picked set, the rest are seeded random
+  probes: [number, number, number][];
+  looks: Record<AgxLook, [number, number, number][]>;
+}
+const fixture: ProbeFixture = JSON.parse(readFileSync(new URL("agx-probes.json", FIXTURES), "utf8"));
+
 const grey = (v: number): [number, number, number] => [v, v, v];
 
-describe("AGX data", () => {
-  // three.js's own AgX (Filament's), the one the old viewer's agxMHC was built on.
-  const chunk = readFileSync(
-    new URL("../node_modules/three/src/renderers/shaders/ShaderChunk/tonemapping_pars_fragment.glsl.js", import.meta.url),
-    "utf8",
-  );
-  const numbersIn = (name: string): number[] => {
-    const start = chunk.indexOf(name);
-    const block = chunk.slice(start, chunk.indexOf(");", start));
-    return Array.from(block.matchAll(/-?\s*\d+\.\d+/g), ([n]) => Number(n.replace(/\s+/g, "")));
-  };
+/** Worst channel difference to Blender over probes [from, to), in 8-bit levels, no rounding. */
+function worstDifference(look: AgxLook, from: number, to: number, keep: (rgb: [number, number, number]) => boolean = () => true): number {
+  const data = lut(look);
+  let worst = 0;
+  for (let i = from; i < to; i++) {
+    if (!keep(fixture.probes[i])) continue;
+    const got = agx(fixture.probes[i], data);
+    fixture.looks[look][i].forEach((v, k) => {
+      worst = Math.max(worst, Math.abs(got[k] * 255 - (v / 65535) * 255));
+    });
+  }
+  return worst;
+}
 
-  test("the matrices are three.js's AgX matrices, column for column", () => {
-    expect([...AGX.inset]).toEqual(numbersIn("AgXInsetMatrix = mat3"));
-    expect([...AGX.outset]).toEqual(numbersIn("AgXOutsetMatrix = mat3"));
-    expect([...AGX.toRec2020]).toEqual(numbersIn("LINEAR_SRGB_TO_LINEAR_REC2020 = mat3"));
-    expect([...AGX.toSrgb]).toEqual(numbersIn("LINEAR_REC2020_TO_LINEAR_SRGB = mat3"));
+describe("the shipped LUT files", () => {
+  test("every look is listed, and only 'none' has no warp file", () => {
+    expect(Object.keys(manifest.looks).sort()).toEqual([...AGX_LOOKS].sort());
+    for (const look of AGX_LOOKS) expect(manifest.looks[look] === null).toBe(look === "none");
   });
 
-  test("the log range and the contrast polynomial are three.js's", () => {
-    expect(chunk).toContain(`AgxMinEv = - ${Math.abs(AGX.logMin)}`);
-    expect(chunk).toContain(`AgxMaxEv = ${AGX.logMax}`);
-    // The GLSL lists + 15.5 * x4 * x2, - 40.14 * x4 * x ... with the signs outside the numbers.
-    const terms = Array.from(chunk.slice(chunk.indexOf("return + 15.5")).matchAll(/([+-])\s*(\d+\.\d+)/g)).slice(0, 7);
-    expect(terms.map(([, sign, v]) => Number(`${sign}${v}`))).toEqual([...AGX.curve]);
+  test("each file decodes to the size the manifest promises, within 0..1 for the cube", () => {
+    for (const look of AGX_LOOKS) {
+      const data = lut(look);
+      expect(data.base).toHaveLength(manifest.base.size ** 3 * 3);
+      expect(data.pre?.values.length ?? 0).toBe((manifest.looks[look]?.size ?? 0) ** 3 * 3);
+    }
+    const cube = lut("none").base;
+    expect(cube.reduce((lo, v) => Math.min(lo, v), Infinity)).toBeGreaterThanOrEqual(0);
+    expect(cube.reduce((hi, v) => Math.max(hi, v), -Infinity)).toBeLessThanOrEqual(1.0005);
   });
 
-  test("Medium High Contrast is contrast 1.2 about scene grey 0.18, and every look is listed", () => {
-    expect(AGX.looks["medium-high-contrast"]).toMatchObject({ contrast: 1.2, pivot: 0.606 });
-    expect((Math.log2(0.18) - AGX.logMin) / (AGX.logMax - AGX.logMin)).toBeCloseTo(0.606, 3);
-    expect(Object.keys(AGX.looks).sort()).toEqual([...AGX_LOOKS].sort());
+  test("half floats decode exactly, including negatives, subnormals and the largest value", () => {
+    const tiny = { ...manifest, base: { file: "", size: 2 }, looks: { ...manifest.looks, none: null } };
+    const halves = [0x3c00, 0xc000, 0x3800, 0x7bff, 0x0001, 0x0000, 0xb400, 0x3555];
+    const bytes = new Uint8Array(2 * 2 * 2 * 3 * 2);
+    const view = new DataView(bytes.buffer);
+    for (let i = 0; i < 24; i++) view.setUint16(i * 2, halves[i % halves.length], true);
+    const data = parseAgx(tiny, "none", bytes, null);
+    expect([...data.base.slice(0, 8)]).toEqual([1, -2, 0.5, 65504, 2 ** -24, 0, -0.25, Math.fround(0.333251953125)]);
   });
 
-  test("the contrast looks are ordered low to high", () => {
-    const c = (l: AgxLook) => AGX.looks[l].contrast;
-    expect([c("low-contrast"), c("medium-low-contrast"), c("none"), c("medium-high-contrast"), c("high-contrast")])
-      .toEqual([0.8, 0.9, 1, 1.2, 1.4]);
+  test("a file of the wrong size, or a look file the manifest does not expect, is refused", () => {
+    expect(() => parseAgx(manifest, "none", new Uint8Array(10), null)).toThrow(/bytes, expected/);
+    const base = readFileSync(new URL(manifest.base.file, LUT_DIR));
+    expect(() => parseAgx(manifest, "none", base, base)).toThrow(/does not match the manifest/);
+    expect(() => parseAgx(manifest, "punchy", base, null)).toThrow(/does not match the manifest/);
+  });
+
+  test("the manifest is checked at the boundary", () => {
+    expect(() => parseManifest({ format: "agx-lut-1" })).toThrow(/unknown format/);
+    expect(() => parseManifest({ ...manifest, toWorking: [1, 2, 3] })).toThrow(/toWorking/);
+    expect(() => parseManifest({ ...manifest, looks: { ...manifest.looks, punchy: 3 } })).toThrow(/look punchy/);
+    expect(() => parseManifest({ ...manifest, tFloor: "low" })).toThrow(/tFloor/);
+  });
+});
+
+describe("loadAgx", () => {
+  const serve = (calls: string[]) =>
+    vi.fn(async (url: string) => {
+      calls.push(url);
+      const path = url.replace("http://lut.test/", "");
+      try {
+        return new Response(readFileSync(new URL(path, LUT_DIR)));
+      } catch {
+        return new Response("missing", { status: 404 });
+      }
+    });
+
+  test("fetches the manifest, the cube and the look once, and matches what Node reads from disk", async () => {
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", serve(calls));
+    try {
+      const fetched = await loadAgx("punchy", "http://lut.test/");
+      await loadAgx("punchy", "http://lut.test/");
+      await loadAgx("high-contrast", "http://lut.test/");
+      expect(calls.sort()).toEqual(
+        ["agx-base.bin", "agx-high-contrast.bin", "agx-punchy.bin", "manifest.json"].map((f) => `http://lut.test/${f}`),
+      );
+      expect(agx([0.18, 0.4, 0.05], fetched)).toEqual(agx([0.18, 0.4, 0.05], lut("punchy")));
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  test("a failed fetch rejects and the next call tries again", async () => {
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", serve(calls));
+    try {
+      await expect(loadAgx("none", "http://lut.test/missing/")).rejects.toThrow(/404/);
+      await expect(loadAgx("none", "http://lut.test/missing/")).rejects.toThrow(/404/);
+      expect(calls).toHaveLength(2);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});
+
+describe("the shader recipe in film.ts", () => {
+  // Written from the doc comment alone, the way a fragment shader would do it: texture coordinates for the
+  // warp (hardware trilinear, texel centres at (k + 0.5) / N), nearest texelFetch for the cube.
+  function shader(rgb: [number, number, number], data: AgxData): [number, number, number] {
+    const { toWorking: M, log2Min, log2Max, preLog2Max, tFloor } = data.manifest;
+    const texel = (grid: Float32Array, n: number, x: number, y: number, z: number) => {
+      const o = ((z * n + y) * n + x) * 3;
+      return [grid[o], grid[o + 1], grid[o + 2]];
+    };
+    const filtered = (grid: Float32Array, n: number, [u, v, w]: number[]) => {
+      const axis = (c: number) => {
+        const p = c * n - 0.5;
+        const i0 = Math.floor(p);
+        return { i: [Math.min(Math.max(i0, 0), n - 1), Math.min(Math.max(i0 + 1, 0), n - 1)], f: p - i0 };
+      };
+      const [ax, ay, az] = [axis(u), axis(v), axis(w)];
+      const out = [0, 0, 0];
+      for (const [bx, wx] of [[0, 1 - ax.f], [1, ax.f]]) for (const [by, wy] of [[0, 1 - ay.f], [1, ay.f]]) for (const [bz, wz] of [[0, 1 - az.f], [1, az.f]]) {
+        texel(grid, n, ax.i[bx], ay.i[by], az.i[bz]).forEach((c, k) => { out[k] += c * wx * wy * wz; });
+      }
+      return out;
+    };
+    const e = [0, 1, 2].map((r) => M[r * 3] * rgb[0] + M[r * 3 + 1] * rgb[1] + M[r * 3 + 2] * rgb[2]);
+    let t = e.map((v) => Math.max((Math.log2(Math.max(v, 1e-30)) - log2Min) / (log2Max - log2Min), tFloor));
+    if (data.pre) {
+      const n = data.pre.size;
+      const s = rgb.map((v) => Math.min(Math.max((Math.log2(Math.max(v, 1e-30)) - log2Min) / (preLog2Max - log2Min), 0), 1));
+      const warp = filtered(data.pre.values, n, s.map((x) => (x * (n - 1) + 0.5) / n));
+      t = t.map((x, k) => x + warp[k]);
+    }
+    const nb = manifest.base.size;
+    const u = t.map((x) => Math.min(Math.max(x, 0), 1) * (nb - 1));
+    const i = u.map((x) => Math.min(Math.floor(x), nb - 2));
+    const f = u.map((x, k) => x - i[k]);
+    const order = [0, 1, 2].sort((a, b) => f[b] - f[a]);
+    const [a, b] = order;
+    const step = (axes: number[]) => i.map((v, k) => v + (axes.includes(k) ? 1 : 0));
+    const fetch = (corner: number[]) => texel(data.base, nb, corner[0], corner[1], corner[2]);
+    const fa = f[order[0]], fb = f[order[1]], fc = f[order[2]];
+    const parts: [number, number[]][] = [[1 - fa, i], [fa - fb, step([a])], [fb - fc, step([a, b])], [fc, step([0, 1, 2])]];
+    const encode = (k: number) => {
+      const c = Math.max(parts.reduce((sum, [w, corner]) => sum + w * fetch(corner)[k], 0), 0) ** 2.4;
+      return Math.min(Math.max(c <= 0.0031308 ? 12.92 * c : 1.055 * c ** (1 / 2.4) - 0.055, 0), 1);
+    };
+    return [encode(0), encode(1), encode(2)];
+  }
+
+  test("reproduces agx() on every probe, for every look", () => {
+    for (const look of AGX_LOOKS) {
+      for (const p of fixture.probes) {
+        const want = agx(p, lut(look));
+        shader(p, lut(look)).forEach((v, k) => expect(Math.abs(v - want[k]) * 255, `${look} ${p}`).toBeLessThan(1e-4));
+      }
+    }
   });
 });
 
 describe("agx", () => {
   test("black stays black and a huge value stays inside 0..1", () => {
-    expect(agx([0, 0, 0], "medium-high-contrast")).toEqual([0, 0, 0]);
-    for (const v of agx([1e6, 1e6, 1e6], "medium-high-contrast")) expect(v).toBeLessThanOrEqual(1);
-    for (const v of agx([-1, -2, -3], "medium-high-contrast")) expect(v).toBeGreaterThanOrEqual(0);
+    const data = lut("medium-high-contrast");
+    for (const v of agx([0, 0, 0], data)) expect(v).toBeLessThan(0.01 / 255);
+    for (const v of agx([1e6, 1e6, 1e6], data)) expect(v).toBeLessThanOrEqual(1);
+    for (const v of agx([-1, -2, -3], data)) expect(v).toBeGreaterThanOrEqual(0);
   });
 
   test("greys stay grey and brightness only ever rises with the input", () => {
     for (const look of AGX_LOOKS) {
       let last = -1;
       for (const v of [0.001, 0.01, 0.05, 0.18, 0.5, 1, 2, 4, 8]) {
-        const [r, g, b] = agx(grey(v), look);
+        const [r, g, b] = agx(grey(v), lut(look));
         expect(Math.abs(r - g)).toBeLessThan(0.003);
         expect(Math.abs(g - b)).toBeLessThan(0.003);
         expect(g, `${look} at ${v}`).toBeGreaterThanOrEqual(last);
@@ -175,57 +205,74 @@ describe("agx", () => {
   });
 
   test("more contrast darkens shadows and brightens highlights, and leaves scene grey 0.18 alone", () => {
-    const at = (v: number, look: AgxLook) => agx(grey(v), look)[1];
+    const at = (v: number, look: AgxLook) => agx(grey(v), lut(look))[1];
     expect(at(0.18, "high-contrast")).toBeCloseTo(at(0.18, "low-contrast"), 2);
     expect(at(0.02, "high-contrast")).toBeLessThan(at(0.02, "low-contrast"));
     expect(at(2, "high-contrast")).toBeGreaterThan(at(2, "low-contrast"));
   });
 });
 
-describe("agx against Blender 5.2.3", () => {
-  // MEASURED GAP, not a tolerance chosen to pass. agx() is the Filament AgX of
-  // the old viewer. Blender 5.2.3 ships a different AgX (EaryChow's rework, a
-  // 3D LUT in E-Gamut), so the base curve differs: scene grey 0.18 comes out
-  // 127.6/255 here and 117.6/255 in Blender. Each bound is the measured worst
-  // case rounded up, so the gap can narrow but not widen unnoticed.
-  const BOUND_8BIT: Record<AgxLook, { greys: number; colours: number }> = {
-    "none": { greys: 14, colours: 41 },
-    "punchy": { greys: 25, colours: 57 },
-    "low-contrast": { greys: 14, colours: 31 },
-    "medium-low-contrast": { greys: 14, colours: 36 },
-    "medium-high-contrast": { greys: 14, colours: 39 },
-    "high-contrast": { greys: 14, colours: 56 },
-  };
+describe("agx against native Blender 5.2.3", () => {
+  // The target is 2/255. The bake is held to 1/255, which is what its grid sizes were chosen for.
+  const TARGET = 2;
+  const BAKE = 1;
 
-  const greyError = (look: AgxLook, lo = 0, hi = Infinity) =>
-    Math.max(...BLENDER[look].greys.filter(([v]) => v >= lo && v <= hi).map(([v, out]) => Math.abs(to8(agx(grey(v), look)[1]) - out)));
-  const colourError = (look: AgxLook) =>
-    Math.max(...BLENDER[look].colours.flatMap(([r, g, b, ...out]) => agx([r, g, b], look).map((v, k) => Math.abs(to8(v) - out[k]))));
+  test("the fixture has the hand-picked set and at least 200 random probes", () => {
+    expect(fixture.fixed).toBeGreaterThanOrEqual(29);
+    expect(fixture.probes.length - fixture.fixed).toBeGreaterThanOrEqual(200);
+    const random = fixture.probes.slice(fixture.fixed);
+    expect(Math.min(...random.flat().filter((v) => v > 0))).toBeLessThan(2 ** -9);
+    expect(Math.max(...random.flat())).toBeGreaterThan(2 ** 5);
+    expect(random.some((p) => p.includes(0))).toBe(true);
+  });
 
   for (const look of AGX_LOOKS) {
-    test(`${look}: the gap stays within the measured bound`, () => {
-      expect(greyError(look)).toBeLessThanOrEqual(BOUND_8BIT[look].greys);
-      expect(colourError(look)).toBeLessThanOrEqual(BOUND_8BIT[look].colours);
+    test(`${look}: hand-picked probes are within ${BAKE}/255`, () => {
+      const worst = worstDifference(look, 0, fixture.fixed);
+      expect(worst).toBeLessThanOrEqual(TARGET);
+      expect(worst).toBeLessThanOrEqual(BAKE);
+    });
+
+    test(`${look}: random probes from deep shadow to six stops over white are within ${BAKE}/255`, () => {
+      const worst = worstDifference(look, fixture.fixed, fixture.probes.length);
+      expect(worst).toBeLessThanOrEqual(TARGET);
+      expect(worst).toBeLessThanOrEqual(BAKE);
     });
   }
 
-  // The target. It does not hold today: Medium High Contrast mid-greys (0.1 to
-  // 0.5) are off by 13.8/255 at worst. test.fails turns red the day agx()
-  // meets it, which is the cue to delete the bounds above.
-  test.fails("Medium High Contrast mid-greys are within 2/255 of Blender", () => {
-    expect(greyError("medium-high-contrast", 0.1, 0.5)).toBeLessThanOrEqual(2);
+  test("Medium High Contrast mid-greys, 0.1 to 0.5, are within 2/255 of Blender", () => {
+    const midGrey = ([r, g, b]: [number, number, number]) => r === g && g === b && r >= 0.1 && r <= 0.5;
+    expect(worstDifference("medium-high-contrast", 0, fixture.fixed, midGrey)).toBeLessThanOrEqual(TARGET);
   });
+});
 
-  test("what a contrast look does to a grey, relative to the base look, matches Blender within 7/255", () => {
-    for (const look of ["low-contrast", "medium-low-contrast", "medium-high-contrast", "high-contrast"] as const) {
-      for (const [v, out] of BLENDER[look].greys) {
-        const base = BLENDER.none.greys.find(([bv]) => bv === v);
-        if (!base) throw new Error(`no base probe for ${v}`);
-        const blenderShift = out - base[1];
-        const ourShift = to8(agx(grey(v), look)[1] - agx(grey(v), "none")[1]);
-        expect(Math.abs(ourShift - blenderShift), `${look} at ${v}`).toBeLessThanOrEqual(7);
+describe("a real frame against native Blender 5.2.3", () => {
+  // A Cycles render of six spheres on a floor: linear float in, and the 8-bit PNG Blender writes for it with
+  // AgX and Medium High Contrast, dither off. 25% of its pixels have a channel over 1.0.
+  const info: { width: number; height: number } = JSON.parse(readFileSync(new URL("agx-image.json", FIXTURES), "utf8"));
+  const f32 = readFileSync(new URL("agx-image.f32", FIXTURES));
+  const blender = readFileSync(new URL("agx-image.u8", FIXTURES));
+  const frame: RadianceFrame = {
+    width: info.width,
+    height: info.height,
+    samples: 48,
+    rgba: new Float32Array(f32.buffer.slice(f32.byteOffset, f32.byteOffset + f32.byteLength)),
+  };
+
+  test("every pixel is within one 8-bit level, and the mean difference is a few hundredths of a level", () => {
+    const ours = toneMapFrame(frame, lut("medium-high-contrast"));
+    let worst = 0;
+    let sum = 0;
+    for (let i = 0; i < ours.length; i += 4) {
+      for (let c = 0; c < 3; c++) {
+        const d = Math.abs(ours[i + c] - blender[i + c]);
+        worst = Math.max(worst, d);
+        sum += d;
       }
+      expect(ours[i + 3]).toBe(blender[i + 3]);
     }
+    expect(worst).toBeLessThanOrEqual(1);
+    expect(sum / (info.width * info.height * 3)).toBeLessThan(0.05);
   });
 });
 
@@ -233,24 +280,25 @@ describe("toneMapFrame", () => {
   const frame = (rgba: number[], width = rgba.length / 4): RadianceFrame => ({ width, height: rgba.length / 4 / width, samples: 1, rgba: Float32Array.from(rgba) });
 
   test("maps each pixel as agx() does and writes 8-bit RGBA", () => {
-    const out = toneMapFrame(frame([0.18, 0.18, 0.18, 1, 0.8, 0.3, 0.1, 1]), "medium-high-contrast");
+    const data = lut("medium-high-contrast");
+    const out = toneMapFrame(frame([0.18, 0.18, 0.18, 1, 0.8, 0.3, 0.1, 1]), data);
     expect(out).toBeInstanceOf(Uint8ClampedArray);
     expect(out).toHaveLength(8);
-    const expected = [...agx([0.18, 0.18, 0.18], "medium-high-contrast"), ...agx([0.8, 0.3, 0.1], "medium-high-contrast")];
+    const expected = [...agx([0.18, 0.18, 0.18], data), ...agx([0.8, 0.3, 0.1], data)];
     [0, 1, 2, 4, 5, 6].forEach((o, k) => expect(out[o]).toBe(Math.round(expected[k] * 255)));
     expect([out[3], out[7]]).toEqual([255, 255]);
   });
 
   test("un-premultiplies so a half-covered pixel shows the colour it would have at full cover", () => {
-    const covered = toneMapFrame(frame([0.4, 0.4, 0.4, 1]), "none");
-    const half = toneMapFrame(frame([0.2, 0.2, 0.2, 0.5]), "none");
+    const covered = toneMapFrame(frame([0.4, 0.4, 0.4, 1]), lut("none"));
+    const half = toneMapFrame(frame([0.2, 0.2, 0.2, 0.5]), lut("none"));
     expect([half[0], half[1], half[2]]).toEqual([covered[0], covered[1], covered[2]]);
     expect(half[3]).toBe(128);
   });
 
   test("an empty pixel is transparent black and bad samples read as zero", () => {
-    expect([...toneMapFrame(frame([0.5, 0.5, 0.5, 0]), "none")]).toEqual([0, 0, 0, 0]);
-    const out = toneMapFrame(frame([NaN, Infinity, -Infinity, 1]), "none");
+    expect([...toneMapFrame(frame([0.5, 0.5, 0.5, 0]), lut("none"))]).toEqual([0, 0, 0, 0]);
+    const out = toneMapFrame(frame([NaN, Infinity, -Infinity, 1]), lut("none"));
     expect([...out]).toEqual([0, 0, 0, 255]);
   });
 
@@ -258,7 +306,7 @@ describe("toneMapFrame", () => {
     const w = 400, h = 500;
     const big = { width: w, height: h, samples: 1, rgba: new Float32Array(w * h * 4).fill(0.25) };
     const started = performance.now();
-    const out = toneMapFrame(big, "medium-high-contrast");
+    const out = toneMapFrame(big, lut("medium-high-contrast"));
     expect(out).toHaveLength(w * h * 4);
     expect(performance.now() - started).toBeLessThan(2000);
   });
