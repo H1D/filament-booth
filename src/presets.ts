@@ -22,8 +22,8 @@ const roomW = (w: number) => watts(w / 40);
 
 // petg-basic and pla-matte carry the calibrated FINISHES numbers from the old
 // twin (index.html:114, render.py:23). The recipe albedo is the sRGB hex that
-// linearises to the old albedo: #1c1c1c is 0.0116 (old 0.012), #2a2a2a is
-// 0.0232 (old 0.022). Anisotropy is render.py's: 0.25 gloss, 0.10 matte.
+// linearises closest to the old albedo: #1c1c1c is 0.0116 (old 0.012), #292929
+// is 0.0222 (old 0.022). Anisotropy is render.py's: 0.25 gloss, 0.10 matte.
 // pla-basic and pla-silk are UNCALIBRATED ESTIMATES carried over from the
 // type sketch. No Cycles still has been matched to either.
 export const FILAMENT_PRESETS: Record<FilamentPresetId, { label: string; recipe: FilamentRecipe }> = {
@@ -31,7 +31,7 @@ export const FILAMENT_PRESETS: Record<FilamentPresetId, { label: string; recipe:
     colorHex: "#1c1c1c", ior: 1.57, anisotropy: 0.25, vary: 1.0,
     roughness: { 0: 0.21, 1: 0.24, 2: 0.36, 3: 0.50 }, peiRough: 0.42, peiFarRough: 0.55 } },
   "pla-matte": { label: "PLA Matte", recipe: {
-    colorHex: "#2a2a2a", ior: 1.46, anisotropy: 0.10, vary: 0.5,
+    colorHex: "#292929", ior: 1.46, anisotropy: 0.10, vary: 0.5,
     roughness: { 0: 0.74, 1: 0.62, 2: 0.80, 3: 0.85 }, peiRough: 0.66, peiFarRough: 0.74 } },
   "pla-basic": { label: "PLA Basic", recipe: { // uncalibrated estimate
     colorHex: "#1c1c1c", ior: 1.46, anisotropy: 0.15, vary: 0.8,
