@@ -7,6 +7,8 @@
  * with feature, layer and speed read from the packed word through BEAD_WORD.
  * The plate face replaces it, the motion squash and per-layer flatten bend
  * the normal, and setupVariants keeps the clamped specular anti-aliasing.
+ * Layers too fine to resolve trade their profile for an anisotropic lobe
+ * across the path, the direction Cycles stretches (cross(normal, tangent)).
  * The part is lit only by its environment (the studio bake): no live lights.
  */
 import {
@@ -14,9 +16,9 @@ import {
   type Node, type NodeBuilder,
 } from "three/webgpu";
 import {
-  Fn, attribute, float, fwidth, int, ivec2, lights, mix, mx_noise_float, mx_noise_vec3,
-  normalLocal, normalViewGeometry, normalize, pmremTexture, positionLocal, roughness, smoothstep, step, textureLoad,
-  transformNormalToView, uniform, uniformTexture, varying, vec3,
+  Fn, alphaT, anisotropy, anisotropyB, anisotropyT, attribute, float, fwidth, int, ivec2, lights, mix, mx_noise_float,
+  mx_noise_vec3, normalLocal, normalView, normalViewGeometry, normalize, pmremTexture, positionLocal, roughness,
+  smoothstep, step, tangentView, textureLoad, transformNormalToView, uniform, uniformTexture, varying, vec2, vec3,
 } from "three/tsl";
 import { BEAD_WORD, PLATE_EPS, SPEED_STEP_MMS, type BeadMesh, type WordField } from "../print";
 import { ROUGH_MIN, type BeadMaterial } from "../scene";
@@ -40,11 +42,15 @@ const TABLE_ROWS = 2;
 // as a fixed hatch and wood-grain arcs.
 class BeadNodeMaterial extends MeshPhysicalNodeMaterial {
   readonly #bead: Node<"float">;
+  readonly #spread: Node<"float">;
 
-  constructor(bead: Node<"float">) {
+  /** `spread`: 0 isotropic, 1 the lobe fully open across the bead path. */
+  constructor(bead: Node<"float">, spread: Node<"float">) {
     super({ metalness: 0 });
     this.#bead = bead;
+    this.#spread = spread;
     this.roughnessNode = bead;
+    this.anisotropyNode = vec2(1, 0); // switches three's anisotropic lobe on; its direction is set below
   }
 
   override setupVariants(builder: NodeBuilder): void {
@@ -55,6 +61,12 @@ class BeadNodeMaterial extends MeshPhysicalNodeMaterial {
     // Clamped, Filament-style: add the normal's screen-space spread to alpha^2, at most 0.12.
     const r = this.#bead.max(0.045), kernel = spread.pow2().mul(0.5).min(0.12);
     roughness.assign(r.pow2().add(kernel).sqrt().min(1));
+    // three's anisotropy reads the tangent frame of a normal map; the bead's frame is its path instead.
+    const across = normalView.cross(tangentView).normalize();
+    anisotropy.assign(this.#spread);
+    alphaT.assign(mix(roughness.pow2(), float(1), this.#spread.pow2()));
+    anisotropyT.assign(across);
+    anisotropyB.assign(normalView.cross(across));
   }
 }
 
@@ -70,6 +82,7 @@ export class BeadShading {
     layerCount: uniform(1), layerHeightM: uniform(2e-4), vRef: uniform(100), speedGain: uniform(0),
     mottleScale: uniform(300), mottleAmp: uniform(0), overlay: uniform(0),
     plateTextured: uniform(1), plateRough: uniform(0.5), plateFar: uniform(0.5), grainPerM: uniform(0),
+    anisotropy: uniform(0),
   };
   #shown: BeadMaterial | null = null;
 
@@ -96,14 +109,21 @@ export class BeadShading {
     // Motion level of detail: a 0.2 mm layer under ~3 px can't be resolved by one sample per frame,
     // and its +-69 deg profile normals beat against the pixel grid (moire) that TRAA then smears
     // (ghosting). While moving, the profile tilt is squashed toward the wall (walls: vertical spread;
-    // skins / bridges: sideways spread). Still frames get the real profile back, resolved by supersampling.
+    // skins / bridges: sideways spread).
+    // At rest the same squash starts lower, under 1.5 px a layer: the still's samples share one offset per
+    // frame, so a profile finer than that leaves a scaled copy of its stripes behind, which aliases into
+    // wood-grain arcs however many samples land (measured: sigma 5 px still showed them).
+    const layerPx = u.layerHeightM.div(fwidth(positionLocal).length().max(1e-9));
+    const resting = mix(float(0.05), float(1), smoothstep(0.5, 1.5, layerPx));
+    const moving = mix(float(0.05), float(1), smoothstep(1, 3, layerPx));
+    const squash = mix(resting, moving.min(resting), this.motionAA);
     const motionNormal = Fn(() => {
-      const n = normalLocal.normalize();
-      const layerPx = u.layerHeightM.div(fwidth(positionLocal).length().max(1e-9));
-      const f = mix(float(1), mix(float(0.05), float(1), smoothstep(1, 3, layerPx)), this.motionAA);
+      const n = normalLocal.normalize(), f = squash;
       const skin = step(0.5, feature);
       return mix(vec3(n.x, n.y, n.z.mul(f).mul(flatten)), vec3(n.x.mul(f), n.y.mul(f), n.z), skin).normalize();
     });
+    // What the squash takes from the profile goes into the lobe, on top of the filament's own anisotropy.
+    const spread = u.anisotropy.max(squash.oneMinus().div(0.95)).mul(isPlate.oneMinus());
 
     const tableRough = mix(mix(mix(rough4.x, rough4.y, step(0.5, feature)), rough4.z, step(1.5, feature)), rough4.w, step(2.5, feature));
     // mx_noise is centred on 0 with a peak-to-peak of about 2, so half of it is the doc's (noise01 - 0.5).
@@ -115,7 +135,7 @@ export class BeadShading {
     const ramp = (x: Node<"float">) => mix(vec3(0.05, 0.25, 1), vec3(1, 0.2, 0.02), x.mul(0.5).add(0.5).clamp(0, 1));
     const overlay = mix(ramp(heat), ramp(speedRel), step(1.5, u.overlay)).mul(step(0.5, u.overlay)).mul(0.6);
 
-    const m = this.material = new BeadNodeMaterial(mix(beadRough, plateRough, isPlate));
+    const m = this.material = new BeadNodeMaterial(mix(beadRough, plateRough, isPlate), spread);
     m.normalNode = transformNormalToView(mix(motionNormal(), plateNormal(), isPlate));
     m.emissiveNode = overlay;
     // On the node: three reads material.envMapIntensity only for an envMap, never for an envNode.
@@ -136,6 +156,7 @@ export class BeadShading {
     this.#shown = section;
     m.color.setRGB(section.baseColor[0], section.baseColor[1], section.baseColor[2]);
     m.ior = section.ior;
+    u.anisotropy.value = section.anisotropy;
     u.speedGain.value = section.speedGain;
     u.mottleScale.value = section.mottleScale;
     u.mottleAmp.value = section.mottleAmp;

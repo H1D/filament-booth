@@ -297,6 +297,7 @@ function beadGeometry(mesh: BeadMesh): BufferGeometry {
   g.setAttribute("position", new BufferAttribute(mesh.position, 3));
   g.setAttribute("normal", new BufferAttribute(mesh.normal, 3, true));
   g.setAttribute("word", new BufferAttribute(mesh.word, 1));
+  g.setAttribute("tangent", new BufferAttribute(mesh.tangent, 3, true));
   g.setIndex(new BufferAttribute(mesh.index, 1));
   // From the mesh's own box: computing one would walk millions of vertices.
   g.boundingBox = new Box3(new Vector3(...mesh.bboxM.min), new Vector3(...mesh.bboxM.max));
