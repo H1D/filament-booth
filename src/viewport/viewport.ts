@@ -63,7 +63,9 @@ export class Viewport {
    * The raster photo engine's lease on the renderer: pauses the live loop,
    * renders `scene` at its film size with jittered samples (pixel filter,
    * aperture, soft key), returns the linear accumulator, and restores the
-   * live state even on abort.
+   * live state even on abort. Aborting with reason "finish" resolves with
+   * the frame so far. Any other abort rejects. It must settle promptly after
+   * an abort: the photo desk waits for it before starting the next photo.
    */
   accumulate(scene: Scene, onPass: (frame: RadianceFrame, fraction: number) => void, signal: AbortSignal): Promise<RadianceFrame> {
     throw new Error("not implemented");
