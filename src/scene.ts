@@ -249,7 +249,7 @@ const rad = (d: number): number => (d * Math.PI) / 180;
 const clamp = (x: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, x));
 
 /** Offset of azimuth/elevation/distance, in the convention of document.ts. */
-function sphericalOffset(azimuthDeg: number, elevationDeg: number, distance: number): V3 {
+export function sphericalOffset(azimuthDeg: number, elevationDeg: number, distance: number): V3 {
   const az = rad(azimuthDeg), el = rad(elevationDeg);
   return [distance * Math.sin(az) * Math.cos(el), -distance * Math.cos(az) * Math.cos(el), distance * Math.sin(el)];
 }
