@@ -4,7 +4,13 @@ import { defaultDocument } from "../src/document";
 import { parseManifest } from "../src/film";
 import type { PhotoTools } from "../src/photo/photo";
 import { compileScene } from "../src/scene";
-import { photoDesk } from "../src/ui/wire";
+import { FakePrint } from "../dev/fakes";
+import type { PrintPort } from "../src/booth";
+import type { SliceSettings } from "../src/document";
+import type { BeadMesh, LoadedPrint, PrintSource } from "../src/print";
+import { Ui } from "../src/ui/store";
+import { connectViewport, photoDesk, type ViewportLike } from "../src/ui/wire";
+import { boothWith } from "./ui-fixtures";
 
 const scene = compileScene(defaultDocument(), null, 1);
 const manifest = parseManifest(JSON.parse(readFileSync(new URL("../public/lut/manifest.json", import.meta.url), "utf8")));
@@ -29,4 +35,56 @@ test("the photo desk renders on the preview when Cycles cannot run here", async 
 test("with no preview the desk has Cycles alone, and the photo fails saying why", async () => {
   const run = photoDesk(null, tools).take(scene, "part");
   await expect(run.result).rejects.toThrow(/cross-origin isolated/);
+});
+
+// ---- connectViewport -----------------------------------------------------------------------
+
+class LitePrint implements PrintPort {
+  readonly #inner = new FakePrint({ stage: 0, slice: 0, reslice: 0 });
+  readonly lites: { mesh: BeadMesh; resolve: (m: BeadMesh) => void }[] = [];
+
+  async open(src: PrintSource, settings: SliceSettings, onStage: (stage: string) => void): Promise<LoadedPrint> {
+    const loaded = await this.#inner.open(src, settings, onStage);
+    let resolve: (m: BeadMesh) => void = () => {};
+    const lite = new Promise<BeadMesh>((r) => { resolve = r; });
+    this.lites.push({ mesh: loaded.mesh, resolve });
+    return { ...loaded, liteMesh: () => lite };
+  }
+
+  reslice(settings: SliceSettings, onStage: (stage: string) => void): Promise<LoadedPrint> {
+    return this.#inner.reslice(settings, onStage);
+  }
+
+  dispose(): void {}
+}
+
+function recordingViewport(): ViewportLike & { lites: (BeadMesh | null)[] } {
+  const lites: (BeadMesh | null)[] = [];
+  return { lites, show: () => {}, setFocusTool: () => {}, setLiteMesh: (m) => { lites.push(m); } };
+}
+
+const gcode = (name: string) => new File(["G1 X0 Y0 Z0.2 E0.1\n"], name);
+
+test("the viewport gets the lite mesh of the part that opened", async () => {
+  const print = new LitePrint();
+  const { booth } = boothWith({ print });
+  const viewport = recordingViewport();
+  connectViewport(booth, new Ui(), viewport);
+  await booth.open(gcode("a.gcode"));
+  const lite = { ...print.lites[0].mesh };
+  print.lites[0].resolve(lite);
+  await vi.waitFor(() => { expect(viewport.lites).toEqual([lite]); });
+});
+
+test("a lite mesh that arrives after another part opened is not shown", async () => {
+  const print = new LitePrint();
+  const { booth } = boothWith({ print });
+  const viewport = recordingViewport();
+  connectViewport(booth, new Ui(), viewport);
+  await booth.open(gcode("a.gcode"));
+  await booth.open(gcode("b.gcode"));
+  const lateLite = { ...print.lites[0].mesh }, lite = { ...print.lites[1].mesh };
+  print.lites[0].resolve(lateLite);
+  print.lites[1].resolve(lite);
+  await vi.waitFor(() => { expect(viewport.lites).toEqual([lite]); });
 });

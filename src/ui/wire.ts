@@ -9,6 +9,7 @@ import { focusAt } from "../edits";
 import { cyclesEngine } from "../photo/cycles";
 import { PhotoDesk, type PhotoTools } from "../photo/photo";
 import { rasterEngine } from "../photo/raster";
+import type { BeadMesh, LoadedPrint } from "../print";
 import type { Viewport, ViewportEvents } from "../viewport/viewport";
 import type { Scene } from "../scene";
 import type { Ui } from "./store";
@@ -17,6 +18,8 @@ import type { Ui } from "./store";
 export interface ViewportLike {
   show(scene: Scene): void;
   setFocusTool(active: boolean): void;
+  /** The cheaper mesh of the part on show, for moving frames on a slow GPU. */
+  setLiteMesh(mesh: BeadMesh | null): void;
 }
 
 /**
@@ -42,12 +45,26 @@ export function viewportEvents(booth: Booth, ui: Ui): ViewportEvents {
   };
 }
 
-/** Keeps a viewport showing the booth's scene and the focus tool. Returns the function that disconnects it. */
+/**
+ * Keeps a viewport showing the booth's scene, the lite mesh of the part on
+ * show and the focus tool. Returns the function that disconnects it.
+ */
 export function connectViewport(booth: Booth, ui: Ui, viewport: ViewportLike): () => void {
-  viewport.show(booth.scene);
+  let liteAskedFor: LoadedPrint | null = null;
+  const show = () => {
+    const scene = booth.scene;
+    viewport.show(scene);
+    const p = booth.print;
+    const loaded = p.status === "ready" || p.status === "error" ? p.loaded : null;
+    if (loaded === null || loaded === liteAskedFor || loaded.mesh !== scene.part?.mesh) return;
+    liteAskedFor = loaded;
+    // A failed or superseded lite build costs only smooth motion on a slow GPU: the full mesh moves instead.
+    loaded.liteMesh().then((lite) => { if (booth.scene.part?.mesh === loaded.mesh) viewport.setLiteMesh(lite); }, () => {});
+  };
+  show();
   viewport.setFocusTool(ui.state.get().focusTool);
   let focusTool = ui.state.get().focusTool;
-  const stopBooth = booth.subscribe(() => { viewport.show(booth.scene); });
+  const stopBooth = booth.subscribe(show);
   const stopUi = ui.state.subscribe(() => {
     const next = ui.state.get().focusTool;
     if (next === focusTool) return;
