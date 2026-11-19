@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Cycles photo engine</title>
+    <style>
+      body { margin: 16px; font: 13px/1.4 system-ui, sans-serif; background: #1d1d1f; color: #eee; }
+      canvas { display: block; margin-top: 8px; max-width: 100%; background: #444; }
+      pre { white-space: pre-wrap; }
+    </style>
+  </head>
+  <body>
+    <div>Cycles photo engine on a parity fixture. Query: <code>fixture=a|b|c|d|scale</code>, <code>width</code>, <code>height</code>, <code>samples</code>, <code>repeat</code>, <code>abort=finish|cancel</code>, <code>abortAt=sampling|bvh|&lt;ms&gt;</code>, <code>draw=0</code>.</div>
+    <pre id="status">starting</pre>
+    <canvas id="preview"></canvas>
+    <script type="module" src="./photo.ts"></script>
+  </body>
+</html>

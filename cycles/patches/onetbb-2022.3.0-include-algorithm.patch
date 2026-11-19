@@ -1,0 +1,12 @@
+diff --git a/include/oneapi/tbb/concurrent_queue.h b/include/oneapi/tbb/concurrent_queue.h
+index c2b7a19..52b4fb2 100644
+--- a/include/oneapi/tbb/concurrent_queue.h
++++ b/include/oneapi/tbb/concurrent_queue.h
+@@ -18,6 +18,7 @@
+ #define __TBB_concurrent_queue_H
+ 
+ #include "detail/_namespace_injection.h"
++#include <algorithm>
+ #include "detail/_concurrent_queue_base.h"
+ #include "detail/_allocator_traits.h"
+ #include "detail/_exception.h"
