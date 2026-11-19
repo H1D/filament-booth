@@ -6,7 +6,10 @@
 import type { Booth } from "../booth";
 import { m } from "../document";
 import { focusAt } from "../edits";
-import type { ViewportEvents } from "../viewport/viewport";
+import { cyclesEngine } from "../photo/cycles";
+import { PhotoDesk, type PhotoTools } from "../photo/photo";
+import { rasterEngine } from "../photo/raster";
+import type { Viewport, ViewportEvents } from "../viewport/viewport";
 import type { Scene } from "../scene";
 import type { Ui } from "./store";
 
@@ -14,6 +17,15 @@ import type { Ui } from "./store";
 export interface ViewportLike {
   show(scene: Scene): void;
   setFocusTool(active: boolean): void;
+}
+
+/**
+ * The photo desk: Cycles first, then the raster engine on the live preview's
+ * renderer. Without a preview there is no raster engine, so a machine that
+ * cannot run Cycles gets a failed photo that says why.
+ */
+export function photoDesk(viewport: Pick<Viewport, "accumulate"> | null, tools?: PhotoTools): PhotoDesk {
+  return new PhotoDesk(viewport === null ? [cyclesEngine()] : [cyclesEngine(), rasterEngine(viewport)], tools);
 }
 
 /** Orbiting and focus picks become document edits. A pick ends the focus tool, so the next click orbits again. */
