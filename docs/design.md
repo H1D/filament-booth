@@ -23,7 +23,7 @@ Two independent design sketches reached the same core shape: one saved document,
 3. **Camera.** Normal orbit camera with azimuth, elevation, distance and target (B). The turntable is a separate pose control. A's "no azimuth, drag spins the part" is rejected.
 4. **Slicing settings live in the document** (A): `doc.slicing`. They apply when the print source is an STL. `PrintSource` for an STL carries no settings. A G-code reports its own settings on `SlicedPrint` with `settingsSource: 'file'`, and the panel shows them read-only. Slicer: the Muon3D engine (Orca in WebAssembly), one fresh worker per slice. Settings map to Orca keys: `layer_height`, `wall_loops`, `top_surface_pattern`, `seam_position`, `outer_wall_line_width`, `inner_wall_line_width`, `top_shell_layers`, `enable_arc_fitting`.
 5. **No revision counter in the saved document.** Remove `rev` from `BoothDocument`. `Booth` keeps a private revision number, and `Scene` carries it as `docRev` for stale-result checks.
-6. **Edits.** `booth.update(mutate)` over a cloned draft (B). No reducer or intent union (A rejected). `update` must keep untouched sections identical by reference, so clone only what the mutator touches, or compare sections after the mutation and reuse the old object when deep-equal.
+6. **Edits.** `booth.update(mutate)` over a cloned draft (B) is the only write path. No reducer or intent union (A rejected). Edits that keep an invariant are named functions in `src/edits.ts` that return a mutator (`booth.update(applyLook("dark"))`, `booth.update(setFocal(85))`), so Booth has no second set of setter methods. `update` must keep untouched sections identical by reference, so clone only what the mutator touches, or compare sections after the mutation and reuse the old object when deep-equal.
 7. **Change detection by section identity** (A). `Scene` has sections `part`, `lights`, `backdrop`, `world`, `camera`, `film`. `compileScene` takes the previous scene and returns the same section object when its inputs are unchanged. Renderers compare with `===`. Drop B's `hash` and `studioHash` strings.
 8. **Lights in the scene are full frames** (A's `EmitterFrame`): `centre`, `xAxis`, `yAxis`, `normal`, `sizeM`, linear colour, `partOnly`. No renderer derives orientation from position and aim. Area lights keep `powerW` and `spreadRad`. Scrims keep top and bottom radiance. Shape is `rect` or `ellipse`.
 9. **Floor cards are real scene elements.** B's `floorCards` stays in the document, and compiles to a `FloorCardRing` in the scene: an emissive ring on the floor that only glossy reflection rays see. The preview bakes it as today. Cycles builds it as an emissive mesh with camera, diffuse and shadow visibility off. Delete "Cycles ignores it".
@@ -37,6 +37,19 @@ Two independent design sketches reached the same core shape: one saved document,
 17. **Plate face.** One constant `PLATE_EPS` in `print.ts`, tested on Z. Bed type comes from the document (`auto` reads the G-code's bed).
 18. **Branded unit types** (B) stay in `document.ts`.
 19. **Parity tooling.** `sceneToJson(scene)` plus mesh buffers feed `tools/blender/render_scene.py`, which rebuilds the scene in native Blender 5.2.3. `tools/compare` reports per-pixel statistics between that and a browser photo.
+
+20. **HDR images.** `presets.ts` holds the one table from `hdrId` to a file under `public/hdr/`. Both renderers load through it.
+
+## How the merge was judged
+
+A third model scored both sketches against six criteria without seeing my scores. It rated A higher on one definition per setting, Cycles parity and boundary depth (23 against 20 in total), and B higher on porting cost and reader load. It recommended A as the base with three grafts from B: the print source union, the root matrix, and a camera azimuth separate from the turntable. The merged design above already takes A's scene (explicit film, full light frames, real floor cards, one backdrop mesh) and those three grafts. It keeps B's flat file layout, which is the one point where I went against the judge's base, on reader load. Its red flag on B's `Booth` (generic `update` next to setter methods, two ways to do one task) led to decision 6.
+
+## Tradeoffs accepted
+
+- AgX exists as one data table with two small implementations, CPU and shader, held together by a probe-colour test. The alternative was a math interface that runs one formula both ways.
+- The raster photo engine borrows the live viewport, so the preview pauses during a raster photo. The alternative was a second offscreen copy of the scene on the GPU.
+- The gloss slider is a new curve over each preset's recipe. The old viewer blended two calibrated finishes. Each preset at its default gloss still reproduces its calibrated numbers.
+- `PlateFace.roughUnresolved` is a preview-only value that lives in the scene.
 
 ## Proven facts the design relies on
 

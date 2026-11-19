@@ -5,7 +5,7 @@
  * After any change it compiles a new Scene and hands it to subscribers.
  * React panels and the viewport are subscribers. Persistence is one too.
  */
-import type { BoothDocument, FilamentPresetId, LookId, Vec3 } from "./document";
+import type { BoothDocument } from "./document";
 import type { PhotoRun } from "./photo/photo";
 import type { PrintState } from "./print";
 import type { Scene } from "./scene";
@@ -37,7 +37,8 @@ export class Booth {
   get filamentModified(): boolean { throw new Error("not implemented"); }
 
   /**
-   * The one write path for settings. The mutator edits a draft. Booth
+   * The one write path for settings. The mutator edits a draft: a panel's
+   * own leaf change, or a named edit from edits.ts. Booth
    * validates ranges, keeps untouched sections identical by reference,
    * bumps its revision, recompiles and notifies. A change under
    * `draft.slicing` re-slices an STL after 300 ms.
@@ -45,14 +46,6 @@ export class Booth {
   update(mutate: (draft: BoothDocument) => void): void {
     throw new Error("not implemented");
   }
-
-  /** Copies the look's studio into the document and records it as lookBase. */
-  applyLook(id: LookId): void { throw new Error("not implemented"); }
-  applyFilamentPreset(id: FilamentPresetId): void { throw new Error("not implemented"); }
-  /** A focal length change that keeps the framing (scene.refocal). */
-  setFocal(focalMm: number): void { throw new Error("not implemented"); }
-  /** Click to focus: a part-local point from the viewport. */
-  focusAt(partPoint: Vec3): void { throw new Error("not implemented"); }
 
   /**
    * Opens a dropped .stl, .gcode or .gcode.3mf. A second call supersedes the
