@@ -16,7 +16,7 @@ import { applyFilamentPreset, setFocal, type Edit } from "../edits";
 import { LOOK_PRESETS } from "../presets";
 import type { PrintSource, PrintState } from "../print";
 
-export const SECTION_IDS = ["part", "filament", "lights", "world", "camera", "pose", "output", "setup"] as const;
+export const SECTION_IDS = ["part", "filament", "lights", "world", "camera", "pose", "output", "setup", "agent"] as const;
 export type SectionId = (typeof SECTION_IDS)[number];
 
 export const SECTION_TITLES: Record<SectionId, string> = {
@@ -28,6 +28,7 @@ export const SECTION_TITLES: Record<SectionId, string> = {
   pose: "Pose",
   output: "Output",
   setup: "Setup",
+  agent: "Agent",
 };
 
 export const DEFAULTS: Readonly<BoothDocument> = defaultDocument();
@@ -195,6 +196,7 @@ export function sectionState(id: SectionId, ctx: SectionContext): SectionState {
         reset: resetOutput,
       };
     case "setup":
+    case "agent":
       return { modified: false, reset: null };
   }
 }

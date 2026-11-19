@@ -9,7 +9,8 @@ import type { PrintPort } from "../src/booth";
 import type { SliceSettings } from "../src/document";
 import type { BeadMesh, LoadedPrint, PrintSource } from "../src/print";
 import { Ui } from "../src/ui/store";
-import { connectViewport, photoDesk, type ViewportLike } from "../src/ui/wire";
+import { PhotoSession } from "../src/ui/photo-session";
+import { agentControl, connectViewport, photoDesk, type ViewportLike } from "../src/ui/wire";
 import { boothWith } from "./ui-fixtures";
 
 const scene = compileScene(defaultDocument(), null, 1);
@@ -36,6 +37,24 @@ test("the photo desk renders on the preview when Cycles cannot run here", async 
 test("with no preview the desk has Cycles alone, and the photo fails saying why", async () => {
   const run = photoDesk(null, tools).take(scene, "part");
   await expect(run.result).rejects.toThrow(/cross-origin isolated/);
+});
+
+// ---- agentControl --------------------------------------------------------------------------
+
+test("agent control is built over the real parts and starts nothing until the switch is turned on", () => {
+  const { booth } = boothWith();
+  const storage = new Map<string, string>();
+  const parts = {
+    booth, photos: new PhotoSession(() => booth.takePhoto()),
+    storage: { getItem: (k: string) => storage.get(k) ?? null, setItem: (k: string, v: string) => { storage.set(k, v); } },
+  };
+  for (const viewport of [null, { accumulate: vi.fn() }]) {
+    const agent = agentControl({ ...parts, viewport });
+    // Node is not cross-origin isolated, so Python cannot run here and the control says so instead of loading it.
+    expect(agent.state.get().status).toMatchObject({ kind: "unavailable", reason: expect.stringContaining("cross-origin isolated") as string });
+    expect(agent.state.get().settings.enabled).toBe(false);
+  }
+  expect(storage.size).toBe(0);
 });
 
 // ---- connectViewport -----------------------------------------------------------------------

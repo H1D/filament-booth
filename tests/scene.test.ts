@@ -7,7 +7,7 @@ import { LOOK_PRESETS } from "../src/presets";
 import type { BeadMesh, LoadedPrint, SlicedPrint } from "../src/print";
 import {
   compileScene, filmSize, framePart, glossRoughness, kelvinToRgb, layerHeatCurve, refocal, resolveMaterial,
-  exportScene, solveCamera, solveLight, solvePose, studioAim, sweepMesh, transformPoint, type Scene,
+  exportScene, solveCamera, solveLight, solvePose, sphericalAbout, studioAim, sweepMesh, transformPoint, type Scene,
 } from "../src/scene";
 
 // ---- fixtures ----------------------------------------------------------------
@@ -96,22 +96,10 @@ const BLENDER_LIGHTS: BlenderLight[] = [
 
 const AIM: readonly [number, number, number] = [0, 0, 0.09];
 
-/** Inverse of the placement convention: where a Cartesian point sits about the aim. */
-function spherical(loc: readonly number[]) {
-  const o = [loc[0] - AIM[0], loc[1] - AIM[1], loc[2] - AIM[2]];
-  const distance = Math.hypot(o[0], o[1], o[2]);
-  const horizontal = Math.hypot(o[0], o[1]);
-  return {
-    azimuth: horizontal < 1e-12 ? 0 : (Math.atan2(o[0], -o[1]) * 180) / Math.PI,
-    elevation: (Math.asin(o[2] / distance) * 180) / Math.PI,
-    distance,
-  };
-}
-
 function lightAt(kind: "area" | "scrim", loc: readonly number[], size: readonly number[]): StudioLight {
-  const s = spherical(loc);
+  const s = sphericalAbout(AIM, [loc[0], loc[1], loc[2]]);
   const base = {
-    id: "l", name: "l", on: true, azimuth: deg(s.azimuth), elevation: deg(s.elevation), distance: m(s.distance),
+    id: "l", name: "l", on: true, azimuth: s.azimuth, elevation: s.elevation, distance: s.distance,
     shape: "rect" as const, width: m(size[0]), height: m(size[1]), color: { kind: "rgb" as const, rgb: [1, 1, 1] as const }, partOnly: false,
   };
   return kind === "area"
@@ -248,6 +236,39 @@ describe("solvePose", () => {
     const { lo, hi } = posedBounds("plate", 90);
     close([hi[0] - lo[0], hi[1] - lo[1]], [0.04, 0.06], 1e-9);
     expect(lo[2]).toBeCloseTo(2e-5, 9);
+  });
+});
+
+describe("sphericalAbout", () => {
+  const aim = [m(0.01), m(-0.02), m(0.07)] as const;
+
+  test("recovers the placement solveLight was given, all round the sphere", () => {
+    for (const azimuth of [-179, -90, -30, 0, 45, 135, 180]) {
+      for (const elevation of [-80, -10, 0, 25, 89]) {
+        const light = { ...lightAt("area", [0, -1, 0.5], [1, 1]), azimuth: deg(azimuth), elevation: deg(elevation), distance: m(1.3) };
+        const back = sphericalAbout(aim, solveLight(light, aim).centre);
+        expect(back.azimuth).toBeCloseTo(azimuth, 9);
+        expect(back.elevation).toBeCloseTo(elevation, 9);
+        expect(back.distance).toBeCloseTo(1.3, 12);
+      }
+    }
+  });
+
+  test("azimuth turns from -Y towards +X and stays in (-180, 180]", () => {
+    expect(sphericalAbout([m(0), m(0), m(0)], [1, 0, 0]).azimuth).toBeCloseTo(90, 12);
+    expect(sphericalAbout([m(0), m(0), m(0)], [-1, 0, 0]).azimuth).toBeCloseTo(-90, 12);
+    expect(sphericalAbout([m(0), m(0), m(0)], [0, 1, 0]).azimuth).toBe(180);
+    expect(sphericalAbout([m(0), m(0), m(0)], [0, -1e-30, 0]).azimuth).toBe(0);
+  });
+
+  test("straight above or below has azimuth 0 and elevation +-90", () => {
+    const centre = [m(0.25), m(-0.5), m(0.125)] as const;
+    expect(sphericalAbout(centre, [0.25, -0.5, 1.125])).toEqual({ azimuth: 0, elevation: 90, distance: 1 });
+    expect(sphericalAbout(centre, [0.25, -0.5, -0.875])).toEqual({ azimuth: 0, elevation: -90, distance: 1 });
+  });
+
+  test("the centre itself has no direction", () => {
+    expect(() => sphericalAbout(aim, aim)).toThrow(RangeError);
   });
 });
 

@@ -3,13 +3,14 @@ type: typescript/browser-app
 framework: react+three.js+vite
 updated: 2026-11-19
 
-features[8]{name,path,status,layer}:
+features[9]{name,path,status,layer}:
   booth,.ai/docs/features/booth.md,stable,frontend
   scene,.ai/docs/features/scene.md,stable,frontend
   print,.ai/docs/features/print.md,stable,frontend
   preview,.ai/docs/features/preview.md,active,frontend
   photo,.ai/docs/features/photo.md,active,frontend
   controls,.ai/docs/features/controls.md,stable,frontend
+  agent,.ai/docs/features/agent.md,active,frontend
   cycles-wasm,.ai/docs/features/cycles-wasm.md,stable,infra
   verification,.ai/docs/features/verification.md,stable,infra
 

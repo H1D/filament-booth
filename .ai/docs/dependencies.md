@@ -13,7 +13,7 @@ runtime[4]{name,version,purpose}:
 ## Dev
 
 ```toon
-dev[11]{name,version,purpose}:
+dev[16]{name,version,purpose}:
   typescript,~7.0.2,type check with erasableSyntaxOnly
   vite,^8.3.6,dev server and build
   @vitejs/plugin-react,^6.1.2,React transform
@@ -25,16 +25,22 @@ dev[11]{name,version,purpose}:
   @types/react,^19.3.0,React types
   @types/react-dom,^19.3.0,React DOM types
   @types/node,^24.19.2,Node types for tools
+  @modelcontextprotocol/sdk,1.32.2,MCP server in the agent bridge and the client in tools/agent/e2e.ts
+  zod,4.6.7,tool input schemas that the MCP SDK reads
+  ws,8.23.0,WebSocket server in the agent bridge
+  @types/ws,8.18.2,types for ws
+  pyodide,314.0.8,source of the Pyodide files copied to public/pyodide
 ```
 
 ## Committed binaries
 
 ```toon
-binaries[5]{path,size,source,licence}:
+binaries[6]{path,size,source,licence}:
   public/cycles,13 MB,built by cycles/build.sh from Cycles 5.2,Apache-2.0 and others
   public/slicer/engine,23 MB,Muon3D release (OrcaSlicer),AGPL-3.0-only
   public/lut,4.5 MB,baked by tools/blender/bake_agx.py from Blender 5.2.3,Blender OCIO config
   public/hdr,1.6 MB,Poly Haven Studio Small 09,CC0
+  public/pyodide,13 MB,copied from the pyodide package by tools/agent/vendor-pyodide.ts,MPL-2.0
   vendor/muon-protocol,small,Muon3D protocol package with prebuilt dist,Apache-2.0
 ```
 

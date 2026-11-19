@@ -69,6 +69,15 @@ describe("PhotoSession", () => {
     expect(starts).toBe(1);
   });
 
+  test("take hands back the run it started, and null when it started none", () => {
+    const run = new ScriptedRun();
+    const { session } = setup(() => run);
+    expect(session.take()).toBe(run);
+    expect(session.take()).toBeNull();
+    const refused = setup(() => { throw new Error("Open a part before taking a photo"); });
+    expect(refused.session.take()).toBeNull();
+  });
+
   test("a late event from an earlier run cannot overwrite the new one", () => {
     const first = new ScriptedRun();
     const second = new ScriptedRun();

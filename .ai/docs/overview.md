@@ -30,12 +30,13 @@ bun run build        # tsc -b && vite build into dist/
 ## Project Structure
 
 ```toon
-dirs[16]{path,purpose}:
+dirs[19]{path,purpose}:
   src,app source with flat top-level modules
   src/print,file to beads (G-code parser and slicer and mesher and worker)
   src/viewport,live preview on three.js
   src/photo,PHOTO desk and the Cycles and raster engines
   src/ui,React rail panels and stores
+  src/agent,agent control (wire protocol and the bpy table and host and the Python worker and the bridge link)
   tests,Vitest unit tests and fixtures
   dev,standalone dev pages per module with fakes
   docs,design contract (docs/design.md)
@@ -44,14 +45,16 @@ dirs[16]{path,purpose}:
   tools/parity,browser Cycles against native Blender comparison
   tools/e2e,real app end to end in a hardware-GPU Chromium
   tools/ui,panel driver on dev/panels.html
+  tools/agent,agent bridge and its drivers
   public/cycles,built Cycles module (committed)
   public/slicer,built slicer engine (committed and AGPL-3.0)
   public/lut,Blender AgX tables baked from its OCIO config
+  public/pyodide,Pyodide runtime for the agent's Python (committed)
 ```
 
 ## Key Entry Points
 
-- **App bootstrap**: `src/main.tsx` builds `Booth`, `Viewport`, `PhotoDesk` and mounts `src/App.tsx`
+- **App bootstrap**: `src/main.tsx` builds `Booth`, `Viewport`, `PhotoDesk` and `AgentControl` and mounts `src/App.tsx`
 - **Settings schema**: `src/document.ts` (`BoothDocument`, `BOUNDS`, `parseDocument`, `defaultDocument`)
 - **The single lowering**: `src/scene.ts` (`compileScene`)
 - **Design contract**: `docs/design.md`. Read it before changing a module boundary.

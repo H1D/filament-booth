@@ -3,7 +3,7 @@
 The full list of 21 design decisions, the tradeoffs accepted and the proven facts is in `docs/design.md`. These are the ones with the largest consequences.
 
 ```toon
-decisions[9]{id,date,title,status}:
+decisions[10]{id,date,title,status}:
   001,2026-11-19,Real Cycles in WebAssembly for PHOTO,accepted
   002,2026-11-19,Muon3D Orca engine for slicing,accepted
   003,2026-11-19,One Scene compiled from the document,accepted
@@ -13,6 +13,7 @@ decisions[9]{id,date,title,status}:
   007,2026-11-19,Emitters are full frames and floor cards are real,accepted
   008,2026-11-19,Raster engine as fallback not as the photo,accepted
   009,2026-11-19,Built wasm modules are committed,accepted
+  010,2026-11-20,Agent control is Blender Python in a worker through one table,accepted
 ```
 
 ## ADR-001: Real Cycles in WebAssembly for PHOTO
@@ -102,3 +103,13 @@ decisions[9]{id,date,title,status}:
 **Context**: Building Cycles needs emsdk and about 3 GB of sources.
 **Decision**: Commit `public/cycles/` and `public/slicer/`, and the prebuilt `vendor/muon-protocol/dist`.
 **Consequences**: `bun install && bun run dev` works on a fresh clone. The repo carries about 36 MB of binaries. `tools/check-clean-checkout.sh` guards against ignored files.
+
+---
+
+## ADR-010: Agent control is Blender Python in a worker through one table
+
+**Status**: accepted
+**Date**: 2026-11-20
+**Context**: A coding agent should drive the booth in a language it already knows. A JSON command set beside a script would give two ways to do one task.
+**Decision**: The agent writes `bpy`. A Pyodide worker runs the script. `AgentHost` interprets one table, `src/agent/rna.ts`, against `Booth`, so each assignment is one `booth.update`. A local bridge in `tools/agent/` is the MCP server and the socket the tab dials. The page loads Python and opens the socket only after the user turns on the switch.
+**Consequences**: A new document field must be reached by the table or named in `UNMAPPED`, or a test fails. A runaway script cannot freeze the page, and a cancel costs a fresh interpreter. The repo carries 13 MB of Pyodide. A page on a public HTTPS origin may be unable to dial `ws://127.0.0.1`, and that case is open.

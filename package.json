@@ -11,7 +11,10 @@
     "typecheck": "tsc --noEmit -p tsconfig.app.json",
     "typecheck:dev": "tsc --noEmit -p tsconfig.dev.json",
     "ui:drive": "bun tools/ui/drive.ts",
+    "agent:drive": "bun tools/agent/drive.ts",
+    "agent:e2e": "bun tools/agent/e2e.ts",
     "e2e": "bun tools/e2e/drive.ts",
+    "agent": "bun tools/agent/bridge.ts",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -21,16 +24,21 @@
     "three": "0.187.0"
   },
   "devDependencies": {
+    "@modelcontextprotocol/sdk": "1.32.2",
     "@types/node": "^24.19.2",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@types/three": "0.187",
+    "@types/ws": "8.18.2",
     "@vitejs/plugin-react": "^6.1.2",
     "happy-dom": "^21.0.4",
     "oxlint": "^1.90.0",
     "playwright-core": "^1.65.1",
+    "pyodide": "314.0.8",
     "typescript": "~7.0.2",
     "vite": "^8.3.6",
-    "vitest": "^5.1.1"
+    "vitest": "^5.1.1",
+    "ws": "8.23.0",
+    "zod": "4.6.7"
   }
 }

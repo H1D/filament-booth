@@ -64,15 +64,19 @@ export class PhotoSession {
     return this.state.get().run.phase === "running";
   }
 
-  /** Starts a photo. A failure to start (no part open) shows as a failed run. */
-  take(): void {
-    if (this.running) return;
+  /**
+   * Starts a photo and returns its run. Returns null when a photo is already
+   * running, or when it could not start (no part open), which shows as a
+   * failed run with the reason.
+   */
+  take(): PhotoRun | null {
+    if (this.running) return null;
     let run: PhotoRun;
     try {
       run = this.#start();
     } catch (e) {
       this.#setRun({ phase: "failed", message: e instanceof Error ? e.message : String(e) });
-      return;
+      return null;
     }
     this.#detach();
     this.#run = run;
@@ -86,6 +90,7 @@ export class PhotoSession {
         else this.#onProgress(run, { state: "failed", message: e instanceof Error ? e.message : String(e) });
       },
     );
+    return run;
   }
 
   cancel(): void { this.#run?.cancel(); }

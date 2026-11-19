@@ -769,6 +769,107 @@ describe("export and import", () => {
   });
 });
 
+// ---- whenIdle, partName, sceneWith ---------------------------------------------------
+
+/** Lets pending promise callbacks and real zero-delay timers run. */
+const settle = () => new Promise<void>((resolve) => { setTimeout(resolve, 0); });
+
+function watch<T>(promise: Promise<T>): { readonly value: () => T | undefined } {
+  let value: T | undefined;
+  void promise.then((v) => { value = v; });
+  return { value: () => value };
+}
+
+describe("whenIdle", () => {
+  test("with nothing to do it resolves with the print state at once", async () => {
+    const rig = setup();
+    await expect(rig.booth.whenIdle()).resolves.toEqual({ status: "empty" });
+  });
+
+  test("waits for an open to land", async () => {
+    const rig = setup();
+    const opened = rig.booth.open(binaryStl());
+    const idle = watch(rig.booth.whenIdle());
+    await untilCalls(rig, 1);
+    await settle();
+    expect(idle.value()).toBeUndefined();
+    const call = lastCall(rig);
+    if (call.src === null) throw new Error("expected an open call");
+    call.resolve(printFrom(call.src));
+    await opened;
+    await vi.waitFor(() => expect(idle.value()).toMatchObject({ status: "ready" }));
+  });
+
+  test("waits through the re-slice debounce and the re-slice it starts", async () => {
+    const rig = setup();
+    const first = await openPart(rig, binaryStl());
+    rig.booth.update((d) => { d.slicing.layerHeight = mm(0.12); });
+    const idle = watch(rig.booth.whenIdle());
+    await settle();
+    expect(idle.value()).toBeUndefined();
+    rig.clock.advance(300);
+    await untilCalls(rig, 2);
+    await settle();
+    expect(idle.value()).toBeUndefined();
+    const resliced = printFrom(first.source);
+    lastCall(rig).resolve(resliced);
+    await vi.waitFor(() => expect(idle.value()).toMatchObject({ status: "ready", loaded: resliced }));
+  });
+
+  test("a slicing edit on a G-code has nothing to re-slice, so it is idle after the debounce", async () => {
+    const rig = setup();
+    await openPart(rig, gcodeFile());
+    rig.booth.update((d) => { d.slicing.layerHeight = mm(0.12); });
+    const idle = watch(rig.booth.whenIdle());
+    await settle();
+    expect(idle.value()).toBeUndefined();
+    rig.clock.advance(300);
+    await vi.waitFor(() => expect(idle.value()).toMatchObject({ status: "ready" }));
+    expect(callCount(rig)).toBe(1);
+  });
+
+  test("a failed open resolves with the error", async () => {
+    const rig = setup();
+    const opened = rig.booth.open(binaryStl());
+    const idle = watch(rig.booth.whenIdle());
+    await untilCalls(rig, 1);
+    lastCall(rig).reject(new Error("the slicer crashed"));
+    await opened;
+    await vi.waitFor(() => expect(idle.value()).toMatchObject({ status: "error", message: "the slicer crashed" }));
+  });
+});
+
+describe("partName", () => {
+  test("is null with no part, then the open part's name without its extension", async () => {
+    const rig = setup();
+    expect(rig.booth.partName).toBeNull();
+    await openPart(rig, threeMf("plate_1.gcode.3mf"));
+    expect(rig.booth.partName).toBe("plate_1");
+  });
+});
+
+describe("sceneWith", () => {
+  test("compiles an edit without committing it", () => {
+    const rig = setup();
+    const doc = rig.booth.doc;
+    const scene = rig.booth.scene;
+    const small = rig.booth.sceneWith((d) => { d.output.longEdgePx = 768; d.output.samples = 16; });
+    expect(small.film).toMatchObject({ width: 614, height: 768, samples: 16 });
+    expect(small.lights).toBe(scene.lights);
+    expect(rig.booth.doc).toBe(doc);
+    expect(rig.booth.scene).toBe(scene);
+    expect(rig.notified).not.toHaveBeenCalled();
+    rig.clock.advance(5000);
+    expect(rig.storage.writes).toHaveLength(0);
+  });
+
+  test("an invalid edit throws the DocumentError update would", () => {
+    const rig = setup();
+    const e = rejection(() => rig.booth.sceneWith((d) => { d.output.samples = 0; }));
+    expect(e.path).toBe("output.samples");
+  });
+});
+
 // ---- dispose -----------------------------------------------------------------------
 
 describe("dispose", () => {

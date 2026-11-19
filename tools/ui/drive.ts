@@ -379,7 +379,7 @@ try {
   await ready(page, "bracket.stl");
 
   await check("every control in the rail is reachable with the Tab key", async () => {
-    for (const id of ["part", "filament", "lights", "world", "camera", "pose", "output", "setup"]) await openSection(page, id);
+    for (const id of ["part", "filament", "lights", "world", "camera", "pose", "output", "setup", "agent"]) await openSection(page, id);
     await page.evaluate(() => {
       for (const d of document.querySelectorAll("details.light, details.fold")) d.setAttribute("open", "");
     });
@@ -459,6 +459,51 @@ try {
     expect(closed, "the popover stays open after confirming");
     expect((await standIn(page))?.hasPart === true, "the open part was dropped by the reset");
     return "popover opened from the button, Reset everything restored samples to 256 and left the part open";
+  });
+
+
+  const agentSwitch = page.getByRole("switch", { name: "Allow a local agent to control this tab" });
+
+  await check("the Agent section starts off, asks for a pairing and says what an agent can do", async () => {
+    await openSection(page, "agent");
+    expect(await agentSwitch.isDisabled(), "the switch is available with no token");
+    const status = await text(page, ".agent .agent-status");
+    expect(status.includes("--pair"), `status: ${status}`);
+    const note = await text(page, '[data-section="agent"] .note');
+    expect(/change every setting/.test(note) && /open files/.test(note) && /save photos/.test(note) && /only to 127\.0\.0\.1/.test(note), `note: ${note}`);
+    expect(await page.locator(".topbar .agent-badge").count() === 0, "the badge shows while the switch is off");
+    return `switch disabled, status "${status}", note names settings, files, photos and 127.0.0.1`;
+  });
+
+  await check("a token enables the switch, and turning it on loads Python in the real worker and waits for a bridge", async () => {
+    const token = page.getByRole("textbox", { name: "Token" });
+    await token.fill("9c1e47a0d2b35f86e4a1");
+    await token.press("Enter");
+    expect(await agentSwitch.isEnabled(), "the switch is still disabled after a token was entered");
+    expect(await token.getAttribute("type") === "password", "the token field is not masked");
+    await agentSwitch.click();
+    const starting = await text(page, ".agent .agent-status");
+    await page.locator(".agent .agent-status", { hasText: "Waiting for the bridge on port 47615" }).waitFor({ timeout: 30_000 });
+    const badge = await text(page, ".topbar .agent-badge");
+    expect(badge === "Agent waiting", `badge: ${badge}`);
+    const saved = await page.evaluate(() => localStorage.getItem("booth.agent"));
+    expect(saved !== null && JSON.parse(saved).enabled === true, `saved: ${saved}`);
+    return `status "${starting}" then "Waiting for the bridge on port 47615", badge "${badge}", switch remembered`;
+  });
+
+  await check("the badge opens a native popover, and Turn off agent control closes it and removes the badge", async () => {
+    await page.locator(".topbar .agent-badge").click();
+    const open = await page.evaluate(() => document.querySelector(".agent-menu")?.matches(":popover-open") === true);
+    expect(open, "the agent menu is not an open popover");
+    const menu = await text(page, ".agent-menu");
+    expect(/Waiting for the bridge/.test(menu) && !/Stop script/.test(menu), `menu: ${menu}`);
+    await page.getByRole("button", { name: "Turn off agent control" }).click();
+    await page.locator(".topbar .agent-badge").waitFor({ state: "detached" });
+    const status = await text(page, ".agent .agent-status");
+    const saved = await page.evaluate(() => localStorage.getItem("booth.agent"));
+    expect(status === "Off" && saved !== null && JSON.parse(saved).enabled === false, `status ${status}, saved ${saved}`);
+    expect(await agentSwitch.isChecked() === false, "the switch is still on");
+    return "popover opened from the badge, Turn off agent control removed the badge, the status reads Off and the switch is remembered off";
   });
 
   // The setup is back at its defaults and the part is open.
