@@ -30,14 +30,15 @@ static app to `dist/`.
   typecheck:dev` check the app and the tooling.
 - `bun run ui:drive` drives the React panels on `dev/panels.html` in headless Chromium, with
   stand-ins for the viewport, the slicer and the photo engine.
-- `bun run e2e [flow numbers] [table]` runs the real app end to end: real parts dropped on the
+- `bun run e2e [flow numbers] [table] [hero]` runs the real app end to end: real parts dropped on the
   window, real controls clicked, the WebGPU preview and Cycles photos measured by pixels. It needs
   a GPU, `gamescope` and `/usr/bin/chromium`, because headless Chromium only offers a software
   WebGPU adapter. It re-runs itself inside a headless gamescope and drives a headful Chromium there.
   Test parts come from `$BOOTH_REF` (default `~/.t3/scratch/lekv2-photoreal-ref`) and native
   Blender from `$BLENDER` (default `~/apps/blender-5.2.3-linux-x64/blender`). Screenshots and
-  photos go to `tools/e2e/out/`. `table` adds the preview against Cycles brightness table for the
-  five looks.
+  photos go to `tools/e2e/out/`. Flow 12 alone renders the 180 mm part at 1600 x 2000 and 256
+  samples, about 40 minutes here. `table` (preview against Cycles brightness for the five looks)
+  and `hero` (the preview against an old reference still) run only when named.
 - `bun tools/parity/run.ts` renders parity fixtures in the browser's Cycles and in native
   Blender 5.2.3 and prints PSNR and pixel statistics. `--scale` and `--cancel` measure a
   10-million-triangle render and cancelling. See `cycles/README.md` for the numbers.

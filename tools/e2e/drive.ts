@@ -1,17 +1,18 @@
 /**
  * drive.ts: the real app end to end, in a hardware-GPU Chromium.
  *
- *   bun run e2e [flow numbers...] [table]
+ *   bun run e2e [flow numbers...] [table] [hero]
  *
  * Prints PASS or FAIL per flow with what it observed and exits non-zero on a
  * failure. Screenshots, photos and the native Blender render go to
- * tools/e2e/out/. `table` adds the preview against Cycles brightness table
- * for the five looks (five more Cycles photos). Native Blender is
- * $BLENDER, else ~/apps/blender-5.2.3-linux-x64/blender. The test parts come
- * from $BOOTH_REF, else ~/.t3/scratch/lekv2-photoreal-ref.
+ * tools/e2e/out/. Two studies run only when named: `table`, the preview
+ * against Cycles brightness for the five looks (five Cycles photos), and
+ * `hero`, the preview of the LEKV2 hero_light shot against its old still.
+ * Native Blender is $BLENDER, else ~/apps/blender-5.2.3-linux-x64/blender.
+ * The test parts come from $BOOTH_REF, else ~/.t3/scratch/lekv2-photoreal-ref.
  */
 import { spawnSync } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
@@ -186,6 +187,21 @@ async function applyLook(id: string): Promise<void> {
   await until(`the ${id} look`, () => page.evaluate((v) => window.boothDev?.booth.doc.lookBase === v, id), 5000);
 }
 
+/** Any PNG the browser can read (the old stills are 16-bit), as 8-bit RGBA. */
+async function decodeInPage(path: string): Promise<Rgba8> {
+  const { width, height, rgba } = await page.evaluate(async (b64) => {
+    const bitmap = await createImageBitmap(new Blob([Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))], { type: "image/png" }));
+    const ctx = new OffscreenCanvas(bitmap.width, bitmap.height).getContext("2d", { willReadFrequently: true });
+    if (!ctx) throw new Error("no 2d context");
+    ctx.drawImage(bitmap, 0, 0);
+    const data = ctx.getImageData(0, 0, bitmap.width, bitmap.height).data;
+    let s = "";
+    for (let i = 0; i < data.length; i += 0x8000) s += String.fromCharCode(...data.subarray(i, i + 0x8000));
+    return { width: bitmap.width, height: bitmap.height, rgba: btoa(s) };
+  }, readFileSync(path).toString("base64"));
+  return { width, height, data: Uint8Array.from(Buffer.from(rgba, "base64")) };
+}
+
 // ---- photos ------------------------------------------------------------------------------
 
 interface Shot {
@@ -224,16 +240,22 @@ const refiningImage = () => page.evaluate(async () => {
 /** Presses PHOTO and waits for the photo; Save writes it to tools/e2e/out/<name>.png through a real download. */
 async function photo(name: string, ms = 600_000, during?: (state: string) => Promise<void>): Promise<Shot> {
   const t0 = Date.now();
+  // Every "preparing" message of this run, including the ones that flash by between two polls.
+  await page.evaluate(() => {
+    const photos = window.boothDev?.photos;
+    if (!photos) throw new Error("no photo session");
+    const seen: string[] = [];
+    Object.assign(window, { e2ePreparing: seen });
+    photos.state.subscribe(() => {
+      const run = photos.state.get().run;
+      if (run.phase === "running" && run.progress.state === "preparing" && seen.at(-1) !== run.progress.message) seen.push(run.progress.message);
+    });
+  });
   await photoButton().click();
   let sawRefining = false, refiningLuma: number | null = null;
-  const preparing: string[] = [];
   await until("the photo to finish", async () => {
     const state = await cardState();
     if (state === "Failed") throw new Failed(`photo failed: ${await page.locator(".photo-card .note").innerText()}`);
-    if (state === "Preparing") {
-      const text = await page.locator(".photo-card .readout").innerText().catch(() => "");
-      if (text && !preparing.includes(text)) preparing.push(text);
-    }
     if (!sawRefining && state === "Rendering") {
       const image = await refiningImage();
       if (image !== null) {
@@ -247,6 +269,10 @@ async function photo(name: string, ms = 600_000, during?: (state: string) => Pro
     return state === "Done";
   }, ms, 200);
   const readout = await page.locator(".photo-card .readout").innerText();
+  const preparing = await page.evaluate(() => {
+    const seen: unknown = Reflect.get(window, "e2ePreparing");
+    return Array.isArray(seen) ? seen.map(String) : [];
+  });
   const [download] = await Promise.all([page.waitForEvent("download"), page.locator(".photo-card").getByRole("button", { name: "Save" }).click()]);
   const path = join(OUT, `${name}.png`);
   await download.saveAs(path);
@@ -265,8 +291,11 @@ interface Result { readonly flow: string; readonly ok: boolean; readonly detail:
 const results: Result[] = [];
 const wanted = argv.filter((a) => !a.startsWith("--"));
 
+/** Studies that take long or compare against outside files: run only when named. */
+const ON_REQUEST = ["table", "hero"];
+
 async function flow(id: string, name: string, body: () => Promise<string>): Promise<void> {
-  if (wanted.length > 0 && !wanted.includes(id)) return;
+  if (wanted.length > 0 ? !wanted.includes(id) : ON_REQUEST.includes(id)) return;
   const t0 = Date.now();
   let r: Result;
   try {
@@ -512,7 +541,7 @@ try {
     expect(all > 20 && part > 5, `the raster photo is black: mean ${f1(all)}, part ${f1(part)}`);
     await closeCard();
     await load("");
-    return `${shot.readout} in ${(shot.ms / 1000).toFixed(1)} s; first said "${shot.preparing.join(" | ")}"; mean luma ${f1(all)}, part ${f1(part)}`;
+    return `${shot.readout} in ${(shot.ms / 1000).toFixed(1)} s; the card said "${shot.preparing.join(" | ")}"; mean luma ${f1(all)}, part ${f1(part)}`;
   });
 
   await flow("9", "a transparent background has real alpha", async () => {
@@ -614,12 +643,35 @@ try {
     await previewShot("12-lekv2-preview");
     const shot = await photo("12-lekv2-cycles", 3_600_000);
     const stats = await page.evaluate(() => window.boothDev?.cyclesStats.at(-1) ?? null);
-    expect(shot.engine === "Cycles" && stats !== null, `${shot.readout}`);
+    expect(shot.engine === "Cycles" && stats !== null, `${shot.readout}; the photo said: ${shot.preparing.join(" | ")}`);
     expect(meanLuma(shot.img) > 20, "the LEKV2 photo is black");
     const s = stats ?? { syncMs: NaN, bvhMs: NaN, samplingMs: NaN, heapBytes: NaN, cyclesPeakBytes: NaN, threads: NaN };
     return `${tris} triangles; G-code parsed and meshed in ${(parseMs / 1000).toFixed(1)} s; ${shot.readout}; press to saved ${(shot.ms / 1000).toFixed(0)} s; `
       + `start to first sample ${(s.syncMs / 1000).toFixed(1)} s of which BVH ${(s.bvhMs / 1000).toFixed(1)} s, sampling ${(s.samplingMs / 1000).toFixed(1)} s, `
       + `wasm heap ${(s.heapBytes / 2 ** 20).toFixed(0)} MiB, Cycles peak ${(s.cyclesPeakBytes / 2 ** 20).toFixed(0)} MiB, ${s.threads} threads`;
+  });
+
+  await flow("hero", "the old LEKV2 hero_light still against the preview of the same shot", async () => {
+    await load("", true);
+    await openPart(LEKV2, "plate_1.gcode");
+    // shots.json hero_light: turntable 80, camera azimuth 0, elevation 22, 0.8 m, 85 mm, f/11, 1600 x 2000.
+    const orbit = (await openSection(page, "camera")).locator("details.fold", { hasText: "Orbit" });
+    if ((await orbit.getAttribute("open")) === null) await orbit.locator("> summary").click();
+    await setField("camera", "Azimuth", "0");
+    await setField("camera", "Elevation", "22");
+    await setField("camera", "Distance", "0.8");
+    const ref = await decodeInPage(join(REF, "renders/hero_light.png"));
+    const dark = (img: Rgba8) => Uint8Array.from({ length: img.width * img.height }, (_, px) =>
+      (0.2126 * img.data[px * 4] + 0.7152 * img.data[px * 4 + 1] + 0.0722 * img.data[px * 4 + 2] < 90 ? 1 : 0));
+    const rows: string[] = [];
+    for (const turn of [80, -80, 260, 100]) {
+      await setField("pose", "Turntable", String(turn));
+      const shot = await previewShot(`hero-turntable-${turn}`);
+      const small = resize(ref, shot.img.width, shot.img.height);
+      if (turn === 80) writeFileSync(join(OUT, "hero-preview-vs-old-still.png"), encodePng(sideBySide(shot.img, small)));
+      rows.push(`turntable ${turn}: silhouette IoU with the old still ${f3(iou(dark(shot.img), dark(small)))}`);
+    }
+    return rows.join("; ");
   });
 
   await flow("table", "preview against Cycles brightness for the five looks", async () => {
