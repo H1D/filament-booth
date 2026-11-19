@@ -13,6 +13,7 @@
     "ui:drive": "bun tools/ui/drive.ts",
     "agent:drive": "bun tools/agent/drive.ts",
     "e2e": "bun tools/e2e/drive.ts",
+    "agent": "bun tools/agent/bridge.ts",
     "preview": "vite preview"
   },
   "dependencies": {
