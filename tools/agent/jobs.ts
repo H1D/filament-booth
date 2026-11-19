@@ -37,6 +37,8 @@ export interface Reported {
 }
 
 export const MAX_OUTPUT_CHARS = 20_000;
+/** Images one report carries. A script that loops previews would otherwise fill the bridge's memory and the agent's context. */
+export const MAX_IMAGES = 8;
 /** booth_cancel waits this long for the tab to confirm before it says the cancel is still pending. */
 export const CANCEL_GRACE_S = 10;
 const KEPT_JOBS = 16;
@@ -57,6 +59,7 @@ interface JobRecord {
   /** Since the last report. */
   output: string;
   droppedChars: number;
+  droppedImages: number;
   images: { readonly meta: ImageMeta; readonly thumbnail: Uint8Array }[];
   readonly waiters: Set<Waiter>;
 }
@@ -117,6 +120,7 @@ export class Jobs implements TabEvents {
       status: { kind: "running", progress: null },
       output: "",
       droppedChars: 0,
+      droppedImages: 0,
       images: [],
       waiters: new Set(),
     };
@@ -166,7 +170,12 @@ export class Jobs implements TabEvents {
   }
 
   image(job: JobId, meta: ImageMeta, thumbnail: Uint8Array): void {
-    this.#runningRecord(job)?.images.push({ meta, thumbnail });
+    const record = this.#runningRecord(job);
+    if (record === undefined) return;
+    record.images.push({ meta, thumbnail });
+    if (record.images.length <= MAX_IMAGES) return;
+    record.images.shift();
+    record.droppedImages += 1;
   }
 
   done(job: JobId, outcome: ScriptOutcome): void {
@@ -250,7 +259,8 @@ export class Jobs implements TabEvents {
   #report(record: JobRecord, drain: boolean): Reported {
     const { status } = record;
     const outcome = status.kind === "ended" ? status.outcome : null;
-    const dropped = record.droppedChars > 0 ? `[${record.droppedChars} earlier characters dropped]\n` : "";
+    const dropped = (record.droppedChars > 0 ? `[${record.droppedChars} earlier characters dropped]\n` : "")
+      + (record.droppedImages > 0 ? `[${record.droppedImages} earlier images dropped, a report carries the newest ${MAX_IMAGES}]\n` : "");
     const report: JobReport = {
       job: record.id,
       state: outcome === null ? "running" : outcome.kind,
@@ -264,6 +274,7 @@ export class Jobs implements TabEvents {
     if (drain) {
       record.output = "";
       record.droppedChars = 0;
+      record.droppedImages = 0;
       record.images = [];
     }
     return { report, thumbnails };

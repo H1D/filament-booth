@@ -11,6 +11,7 @@ holds the light's id, not a copy of it. Every read asks the booth and every
 assignment is one edit to it.
 """
 import json as _json
+import sys as _sys
 import warnings as _warnings
 
 import booth_host as _host
@@ -83,7 +84,9 @@ class bpy_struct:
     def __setattr__(self, name, value):
         warning = _call("set", self._handle, self._rna, name, _plain(value))["warning"]
         if warning:
-            _warnings.warn(warning, stacklevel=2)
+            # Without a registry Python cannot mark the line as already warned, so each assignment the booth altered says so.
+            caller = _sys._getframe(1)
+            _warnings.warn_explicit(warning, UserWarning, caller.f_code.co_filename, caller.f_lineno)
 
     def __dir__(self):
         return sorted(_TYPES[self._rna]["attrs"])

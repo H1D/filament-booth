@@ -85,6 +85,11 @@ computer.
 The switch, port and token are remembered in this browser, so the next load reconnects without a
 click. A pairing link turns the switch off, so you confirm a new bridge yourself.
 
+The browser keeps the token in the storage of the page's origin. Any other app you later serve from
+that origin, such as another project on `http://localhost:5173`, can read it and reach the bridge
+while an agent session runs. Delete `~/.config/filament-booth/bridge.json` and pair again to replace
+the token.
+
 Now ask the agent for something, such as "light the part with a warm key and a cool fill, then
 render a 1600 px photo into renders/".
 

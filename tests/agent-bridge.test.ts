@@ -15,7 +15,7 @@ import {
   type TabMessage,
 } from "../src/agent/protocol";
 import { UsageError, createBridge, loadBridgeFile, parseArgs, type BridgeConfig } from "../tools/agent/bridge";
-import { Jobs, ToolRefusal, type JobReport, type Reported } from "../tools/agent/jobs";
+import { Jobs, MAX_IMAGES, ToolRefusal, type JobReport, type Reported } from "../tools/agent/jobs";
 import { TabServer, resolveInRoots, type TabServerOptions } from "../tools/agent/tabs";
 
 const TOKEN = "9c1e47a0d2b35f86e4a1";
@@ -381,6 +381,18 @@ describe("binary frames", () => {
     const tab = await pairedTab(r);
     tab.sendRaw(jpeg);
     expect((await tab.closed).code).toBe(1002);
+  });
+
+  test("a report carries the newest images and says how many older ones it dropped", async () => {
+    const r = await rig();
+    const tab = await pairedTab(r);
+    const { job, report } = await startScript(r, tab);
+    for (let i = 0; i < MAX_IMAGES + 3; i++) tab.send({ image: { job, ...image, note: `preview ${i}`, binary: jpeg.length } }, jpeg);
+    tab.send({ done: { job, outcome: { kind: "done" } } });
+    const done = await report;
+    expect(done.report.images.map((meta) => meta.note)).toEqual(Array.from({ length: MAX_IMAGES }, (_, i) => `preview ${i + 3}`));
+    expect(done.thumbnails).toHaveLength(MAX_IMAGES);
+    expect(done.report.output).toBe(`[3 earlier images dropped, a report carries the newest ${MAX_IMAGES}]\n`);
   });
 
   test("an image for a job that is not running is dropped", async () => {

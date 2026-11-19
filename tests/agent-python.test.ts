@@ -210,6 +210,15 @@ describe("Blender's shapes", () => {
       .toMatch(/<agent>:2: UserWarning: the booth sets a light's brightness by energy alone, so a dark color only tints it/);
   });
 
+  test("the same warning shows again in the next script and on each pass of a loop", () => {
+    fresh();
+    const dim = "import bpy\nbpy.data.lights['Top softbox'].color = (0.2, 0.1, 0.1)";
+    done(dim);
+    expect(done(dim)).toMatch(/UserWarning: the booth sets a light's brightness by energy alone/);
+    const looped = done("import bpy\nfor _ in range(3):\n    bpy.data.lights['Top softbox'].color = (0.2, 0.1, 0.1)");
+    expect(looped.match(/UserWarning/g)).toHaveLength(3);
+  });
+
   test("bpy.booth.reference() is the table's", () => {
     fresh();
     expect(done("import bpy\nprint(bpy.booth.reference('AreaLight'))")).toContain(".energy: float W, 0 to 1000000");
