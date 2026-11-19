@@ -7,9 +7,10 @@
  * the count divides it at display and readback. Alpha is coverage, which a
  * transparent film needs.
  */
-import { FloatType, NearestFilter, RenderTarget, Texture } from "three/webgpu";
+import { FloatType, NearestFilter, RenderTarget, Texture, type WebGPURenderer } from "three/webgpu";
 import { texture, uniform } from "three/tsl";
 import type { Node } from "three/webgpu";
+import type { RadianceFrame } from "../film";
 
 // Sample i of a 4D low-discrepancy (R4) sequence: pixel jitter drawn from the Gaussian pixel filter
 // (Box-Muller, so every sample weighs 1), and a point on the aperture.
@@ -94,4 +95,17 @@ export class Accumulator {
 
 function newTarget(): RenderTarget {
   return new RenderTarget(1, 1, { type: FloatType, minFilter: NearestFilter, magFilter: NearestFilter, depthBuffer: false });
+}
+
+/** The accumulator's mean, top row first. `bottomUp` for a backend that reads rows bottom up, as WebGL does. */
+export async function readMean(renderer: WebGPURenderer, acc: Accumulator, bottomUp: boolean): Promise<RadianceFrame> {
+  const target = acc.latest, n = acc.count, w = target.width, h = target.height;
+  const raw = await renderer.readRenderTargetPixelsAsync(target, 0, 0, w, h);
+  if (!(raw instanceof Float32Array)) throw new Error("the accumulator did not read back as float32");
+  const rgba = new Float32Array(w * h * 4), row = w * 4, k = 1 / n;
+  for (let y = 0; y < h; y++) {
+    const from = (bottomUp ? h - 1 - y : y) * row, to = y * row;
+    for (let i = 0; i < row; i++) rgba[to + i] = raw[from + i] * k;
+  }
+  return { width: w, height: h, samples: n, rgba };
 }

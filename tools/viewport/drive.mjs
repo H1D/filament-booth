@@ -12,6 +12,7 @@
 //
 //   --webgl         headless Chromium with WebGPU switched off: three's automatic WebGL2 fallback
 //   --query k=v&..  extra dev page URL parameters
+//   --size WxH      the page's size (default 1440x900)
 //   --url <origin>  use a running dev server; otherwise one is started on --port (default 5198) and stopped
 //
 // Hardware WebGPU needs a real display, so without --webgl this script re-runs itself inside a headless
@@ -72,7 +73,8 @@ async function shot(name, crop = true) {
 }
 
 async function openPage(query = "") {
-  page = await browser.newPage({ viewport: { width: WIDTH, height: HEIGHT } });
+  const [w, h] = (opt.size ?? `${WIDTH}x${HEIGHT}`).split("x").map(Number);
+  page = await browser.newPage({ viewport: { width: w, height: h } });
   page.on("pageerror", (err) => log("pageerror", { message: err.message }));
   page.on("console", (m) => { if (m.type() === "error" || m.type() === "warning") log("console", { type: m.type(), text: m.text().slice(0, 300) }); });
   await page.goto(`${server?.origin ?? opt.url}/dev/viewport.html${query ? `?${query}` : ""}`);
@@ -89,7 +91,9 @@ const open = (i = 0, lite = true) => page.evaluate(([n, l]) => window.viewportDe
 
 /** A left-button drag across the canvas centre, `seconds` long, sampling stats every half second. */
 async function orbitFor(seconds, dx = 600) {
-  const cx = WIDTH / 2, cy = HEIGHT / 2, steps = Math.round(seconds * 60), samples = [];
+  const { width, height } = page.viewportSize();
+  dx = Math.min(dx, width * 0.8);
+  const cx = width / 2, cy = height / 2, steps = Math.round(seconds * 60), samples = [];
   await page.mouse.move(cx - dx / 2, cy);
   await page.mouse.down();
   for (let i = 0; i < steps; i++) {

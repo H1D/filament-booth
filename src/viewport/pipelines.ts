@@ -105,3 +105,21 @@ function linear(renderer: WebGPURenderer, node: ConstructorParameters<typeof Ren
   p.outputColorTransform = false;
   return p;
 }
+
+export function isWebGpu(renderer: WebGPURenderer): boolean {
+  return "isWebGPUBackend" in renderer.backend && renderer.backend.isWebGPUBackend === true;
+}
+
+/** The adapter's or the GL renderer's name, for the quality ladder's first guess. */
+export function gpuName(renderer: WebGPURenderer): string {
+  const backend = renderer.backend;
+  if (typeof GPUDevice !== "undefined" && "device" in backend && backend.device instanceof GPUDevice) {
+    const a = backend.device.adapterInfo;
+    return `${a.vendor} ${a.architecture} ${a.description}`;
+  }
+  if ("gl" in backend && backend.gl instanceof WebGL2RenderingContext) {
+    const gl = backend.gl, ext = gl.getExtension("WEBGL_debug_renderer_info");
+    return String(gl.getParameter(ext ? ext.UNMASKED_RENDERER_WEBGL : gl.RENDERER));
+  }
+  return "";
+}

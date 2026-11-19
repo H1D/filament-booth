@@ -18,12 +18,13 @@ import { RectAreaLightTexturesLib } from "three/addons/lights/RectAreaLightTextu
 import type { CameraSetup } from "../document";
 import type { RadianceFrame } from "../film";
 import type { BeadMesh } from "../print";
-import { transformPoint, type Scene } from "../scene";
-import { jitterSample } from "./accumulate";
+import type { Scene } from "../scene";
+import { jitterSample, readMean } from "./accumulate";
 import { HdrCache, StudioBake, type Baked, type BakeInput } from "./bake";
-import { cropRect, pxPerMetreAt, type Crop, type V3 } from "./frame";
+import { FocusTool } from "./focus";
+import { cropRect, type Crop } from "./frame";
 import { CameraRig } from "./orbit";
-import { Pipelines } from "./pipelines";
+import { Pipelines, gpuName, isWebGpu } from "./pipelines";
 import { looksSlow, QualityState, type QualitySetting } from "./quality";
 import { Stage } from "./stage";
 
@@ -67,9 +68,7 @@ export interface ViewportStats {
 
 // Live still. Measured vs 256: 99.9 % of pixels within 8/255; 64 halves that (Photo keeps 512).
 const TRAA_FRAMES = 16, SAMPLES = 32;
-const CLICK_SLOP_PX = 4;
 const PASS_EVERY_MS = 1000;
-const FOCUS_MATCH_M = 1e-3;
 const GPU_WINDOW = 30;
 /** The document's default look, loaded before the first frame so the display never waits on it. */
 const DEFAULT_LOOK = "medium-high-contrast";
@@ -118,7 +117,7 @@ export class Viewport {
   #crop: Crop = { x: 0, y: 0, width: 1, height: 1 };
   #baseRatio = 1;
   #qualityKey = "";
-  #focus: { tool: boolean; picked: V3 | null } = { tool: false, picked: null };
+  readonly #focus: FocusTool;
   #lease: Lease | null = null;
 
   static async create(canvas: HTMLCanvasElement, events: ViewportEvents): Promise<Viewport> {
@@ -146,7 +145,11 @@ export class Viewport {
     const resize = new ResizeObserver(() => this.#fit());
     resize.observe(canvas);
     this.#cleanup.push(() => resize.disconnect());
-    this.#listenForClicks();
+    this.#focus = new FocusTool({
+      canvas, renderer, stage: this.#stage, rig: this.#rig, busy: () => this.#lease !== null,
+      onPicked: (p) => { events.onFocusPicked(p); this.#frame.dirty(); },
+    });
+    this.#cleanup.push(() => this.#focus.dispose());
     const status = setInterval(() => this.#reportStatus(), 500);
     this.#cleanup.push(() => clearInterval(status));
     this.#fit();
@@ -170,7 +173,7 @@ export class Viewport {
   }
 
   setFocusTool(active: boolean): void {
-    this.#focus.tool = active;
+    this.#focus.active = active;
     this.#canvas.style.cursor = active ? "crosshair" : "";
     this.#frame.dirty();
   }
@@ -281,7 +284,7 @@ export class Viewport {
       f.gap = true;
       return;
     }
-    this.#placeMarker();
+    this.#focus.place(this.#applied);
     if (f.still < TRAA_FRAMES) this.#movingFrame();
     else this.#stillSample(f.still - TRAA_FRAMES);
     f.still++;
@@ -369,56 +372,6 @@ export class Viewport {
     }, () => {});
   }
 
-  // ---- focus -------------------------------------------------------------------
-
-  #listenForClicks(): void {
-    const canvas = this.#canvas;
-    let down: { x: number; y: number; id: number } | null = null;
-    const onDown = (e: PointerEvent) => { down = e.button === 0 ? { x: e.offsetX, y: e.offsetY, id: e.pointerId } : null; };
-    const onUp = (e: PointerEvent) => {
-      const d = down;
-      down = null;
-      if (!d || !this.#focus.tool || this.#lease || d.id !== e.pointerId) return;
-      if (Math.hypot(e.offsetX - d.x, e.offsetY - d.y) > CLICK_SLOP_PX) return;
-      void this.#pickAt(e.offsetX, e.offsetY);
-    };
-    canvas.addEventListener("pointerdown", onDown);
-    canvas.addEventListener("pointerup", onUp);
-    this.#cleanup.push(() => {
-      canvas.removeEventListener("pointerdown", onDown);
-      canvas.removeEventListener("pointerup", onUp);
-    });
-  }
-
-  async #pickAt(cssX: number, cssY: number): Promise<void> {
-    const size = this.#renderer.getDrawingBufferSize(new Vector2());
-    const k = size.x / Math.max(1, this.#canvas.clientWidth);
-    const hit = await this.#stage.pick(this.#renderer, this.#rig.camera, Math.floor(cssX * k), Math.floor(cssY * k), size.x, size.y);
-    if (hit === null) return;
-    this.#focus.picked = hit;
-    this.#events.onFocusPicked(hit);
-    this.#frame.dirty();
-  }
-
-  /** The picked point while it is what the camera focuses on, else the focus plane's point on the view axis. */
-  #placeMarker(): void {
-    const scene = this.#applied, cam = scene?.camera;
-    if (!this.#focus.tool || !scene || !cam) {
-      this.#stage.setMarker(null, 1);
-      return;
-    }
-    const { position, forward } = this.#rig.pose();
-    const depthOf = (p: V3) => (p[0] - position[0]) * forward[0] + (p[1] - position[1]) * forward[1] + (p[2] - position[2]) * forward[2];
-    const picked = this.#focus.picked && scene.part ? transformPoint(scene.part.toWorld, this.#focus.picked) : null;
-    const f = cam.focusDistanceM;
-    const point: V3 = picked && Math.abs(depthOf(picked) - f) < FOCUS_MATCH_M
-      ? picked
-      : [position[0] + forward[0] * f, position[1] + forward[1] * f, position[2] + forward[2] * f];
-    const size = this.#renderer.getDrawingBufferSize(new Vector2());
-    const fovY = (this.#rig.camera.fov * Math.PI) / 180;
-    this.#stage.setMarker(point, pxPerMetreAt(depthOf(point), fovY, size.y) / (size.y / Math.max(1, this.#canvas.clientHeight)));
-  }
-
   // ---- photo lease -------------------------------------------------------------
 
   #leaseStep(lease: Lease): void {
@@ -452,7 +405,7 @@ export class Viewport {
       void this.#endLease(lease, "finish");
     } else if (acc.count === 1 || performance.now() - lease.lastPassAt >= PASS_EVERY_MS) {
       lease.reading = true;
-      this.#readFrame().then((frame) => {
+      readMean(this.#renderer, this.#pipes.accumulator, !isWebGpu(this.#renderer)).then((frame) => {
         lease.reading = false;
         lease.lastPassAt = performance.now();
         if (!lease.ended) lease.onPass(frame, frame.samples / total);
@@ -465,7 +418,7 @@ export class Viewport {
     lease.ended = true;
     try {
       if (reason === "finish" && this.#pipes.accumulator.count > 0) {
-        const frame = await this.#readFrame();
+        const frame = await readMean(this.#renderer, this.#pipes.accumulator, !isWebGpu(this.#renderer));
         lease.onPass(frame, frame.samples / Math.max(1, lease.scene.film.samples));
         lease.resolve(frame);
       } else {
@@ -491,36 +444,4 @@ export class Viewport {
     this.#frame.dirty();
   }
 
-  /** The accumulator's mean, top row first. */
-  async #readFrame(): Promise<RadianceFrame> {
-    const acc = this.#pipes.accumulator, target = acc.latest, n = acc.count;
-    const w = target.width, h = target.height;
-    const raw = await this.#renderer.readRenderTargetPixelsAsync(target, 0, 0, w, h);
-    if (!(raw instanceof Float32Array)) throw new Error("the accumulator did not read back as float32");
-    const rgba = new Float32Array(w * h * 4), row = w * 4, k = 1 / n;
-    // WebGL reads rows bottom up, WebGPU top down.
-    const flip = !isWebGpu(this.#renderer);
-    for (let y = 0; y < h; y++) {
-      const from = (flip ? h - 1 - y : y) * row, to = y * row;
-      for (let i = 0; i < row; i++) rgba[to + i] = raw[from + i] * k;
-    }
-    return { width: w, height: h, samples: n, rgba };
-  }
-}
-
-function isWebGpu(renderer: WebGPURenderer): boolean {
-  return "isWebGPUBackend" in renderer.backend && renderer.backend.isWebGPUBackend === true;
-}
-
-function gpuName(renderer: WebGPURenderer): string {
-  const backend = renderer.backend;
-  if (typeof GPUDevice !== "undefined" && "device" in backend && backend.device instanceof GPUDevice) {
-    const a = backend.device.adapterInfo;
-    return `${a.vendor} ${a.architecture} ${a.description}`;
-  }
-  if ("gl" in backend && backend.gl instanceof WebGL2RenderingContext) {
-    const gl = backend.gl, ext = gl.getExtension("WEBGL_debug_renderer_info");
-    return String(gl.getParameter(ext ? ext.UNMASKED_RENDERER_WEBGL : gl.RENDERER));
-  }
-  return "";
 }
