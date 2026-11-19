@@ -45,6 +45,24 @@ export function keyConeRad(e: Pick<AreaEmitter, "spreadRad">): number {
   return Math.min(Math.PI / 2, e.spreadRad / 2);
 }
 
+/** Irradiance an emitter puts on the floor at `at`, seen as a small source: I cos(emitter) cos(floor) / d^2. */
+export function floorIrradiance(e: Emitter, at: readonly [number, number, number]): number {
+  const dx = at[0] - e.centre[0], dy = at[1] - e.centre[1], dz = at[2] - e.centre[2];
+  const d2 = dx * dx + dy * dy + dz * dz, d = Math.sqrt(d2);
+  const cosEmitter = Math.max(0, (dx * e.normal[0] + dy * e.normal[1] + dz * e.normal[2]) / d);
+  const cosFloor = Math.max(0, -dz / d);
+  return meanRadiance(e) * emitterArea(e) * cosEmitter * cosFloor / d2;
+}
+
+/**
+ * How dark the key's shadow reads on a shadow catcher: the key's share of the
+ * emitter light on the floor at `at`. The world's share is left out.
+ */
+export function keyShare(emitters: readonly Emitter[], key: Emitter, at: readonly [number, number, number]): number {
+  const total = emitters.filter((e) => !e.partOnly).reduce((s, e) => s + floorIrradiance(e, at), 0);
+  return total > 0 ? floorIrradiance(key, at) / total : 0;
+}
+
 /** A rectangle with an ellipse's area and aspect, for RectAreaLight, which has no ellipse. */
 export function rectStandIn(e: Pick<Emitter, "sizeM" | "shape">): readonly [number, number] {
   const k = e.shape === "ellipse" ? Math.sqrt(Math.PI / 4) : 1;

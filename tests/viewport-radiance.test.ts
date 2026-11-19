@@ -2,7 +2,7 @@ import { describe, expect, test } from "vitest";
 import { defaultDocument } from "../src/document";
 import { applyLook } from "../src/edits";
 import { compileScene, type AreaEmitter, type Emitter } from "../src/scene";
-import { areaRadiance, emitterArea, keyConeRad, keyEmitter, keyIntensity, meanRadiance, rectStandIn } from "../src/viewport/radiance";
+import { areaRadiance, emitterArea, floorIrradiance, keyConeRad, keyEmitter, keyIntensity, keyShare, meanRadiance, rectStandIn } from "../src/viewport/radiance";
 
 function emitters(look: Parameters<typeof applyLook>[0]): readonly Emitter[] {
   const doc = defaultDocument();
@@ -44,6 +44,17 @@ describe("baked radiance", () => {
 });
 
 describe("the live key", () => {
+  test("its shadow on a shadow catcher is as dark as its share of the floor's emitter light", () => {
+    const list = emitters("studio"), top = area(byId(list, "top"));
+    // Straight below a card facing down, small-source irradiance is L A / h^2.
+    const below: [number, number, number] = [top.centre[0], top.centre[1], 0];
+    expect(floorIrradiance(top, below)).toBeCloseTo(areaRadiance(top) * 1.08 / top.centre[2] ** 2 * Math.abs(top.normal[2]), 9);
+    const share = keyShare(list, top, [0, 0, 0]);
+    expect(share).toBeGreaterThan(0.5);
+    expect(share).toBeLessThan(1);
+    expect(keyShare([top], top, [0, 0, 0])).toBeCloseTo(1, 12);
+  });
+
   test("is the most powerful area light that reaches the backdrop", () => {
     expect(keyEmitter(emitters("studio"))?.id).toBe("top");
     // The dark look's rims carry more power but are partOnly.

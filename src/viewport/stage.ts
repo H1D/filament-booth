@@ -18,7 +18,7 @@ import type { BeadMesh } from "../print";
 import type { BackdropSection, LightsSection, PartSection, WorldSection } from "../scene";
 import { BeadShading } from "./bead-material";
 import { backdropLight, blenderRoot, sweepGeometry, worldNode } from "./bake";
-import { keyConeRad, keyEmitter, keyIntensity } from "./radiance";
+import { keyConeRad, keyEmitter, keyIntensity, keyShare } from "./radiance";
 import type { V3 } from "./frame";
 
 const SHADOW_MAP_PX = 2048;
@@ -149,6 +149,8 @@ export class Stage {
     } else {
       k.intensity = keyIntensity(key);
       k.angle = keyConeRad(key);
+      // A shadow catcher darkens by the light the shadow takes away, not to black.
+      this.#sweepCatcher.opacity = keyShare(lights.emitters, key, [lights.aim[0], lights.aim[1], 0]);
       k.color.setRGB(key.color[0], key.color[1], key.color[2]);
       this.#keySoft = { centre: key.centre, x: key.xAxis, y: key.yAxis, normal: key.normal, w: key.sizeM[0], h: key.sizeM[1] };
     }
