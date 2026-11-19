@@ -1,5 +1,6 @@
 import { describe, expect, expectTypeOf, test, vi } from "vitest";
-import { Booth, STORAGE_KEY, type BoothDeps, type PrintPort, type Schedule } from "../src/booth";
+import { Booth, STORAGE_KEY, type BoothDeps, type PrintPort } from "../src/booth";
+import type { Schedule } from "../src/schedule";
 import { DocumentError, defaultDocument, deg, m, mm, type BoothDocument, type SliceSettings } from "../src/document";
 import { applyFilamentPreset, applyLook, focusAt, patchLight } from "../src/edits";
 import type { Photo, PhotoRun } from "../src/photo/photo";

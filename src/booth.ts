@@ -12,6 +12,7 @@ import {
 import type { PhotoRun } from "./photo/photo";
 import { FILAMENT_PRESETS, LOOK_PRESETS } from "./presets";
 import type { LoadedPrint, PrintSource, PrintState } from "./print";
+import { setTimer, type Schedule } from "./schedule";
 import { compileScene, framePart, type Scene } from "./scene";
 
 /**
@@ -23,9 +24,6 @@ export interface PrintPort {
   reslice(settings: SliceSettings, onStage: (stage: string) => void): Promise<LoadedPrint>;
   dispose(): void;
 }
-
-/** Runs `fn` after `ms` and returns a function that cancels it. */
-export type Schedule = (fn: () => void, ms: number) => () => void;
 
 export interface BoothDeps {
   /** Where the document is saved. Tests pass a Map-backed stub. */
@@ -40,11 +38,6 @@ export interface BoothDeps {
 export const STORAGE_KEY = "booth.document";
 const RESLICE_QUIET_MS = 300;
 const SAVE_QUIET_MS = 500;
-
-const setTimer: Schedule = (fn, ms) => {
-  const handle = setTimeout(fn, ms);
-  return () => clearTimeout(handle);
-};
 
 type StlSource = Extract<PrintSource, { kind: "stl" }>;
 
