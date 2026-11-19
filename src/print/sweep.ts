@@ -77,13 +77,24 @@ function tables(lite: boolean, H: number): RingTables {
 
 const I16 = 32767; // 16 bit normals: 8-bit steps show as contour rings in gloss
 
-export function sweep(cl: Centreline, lite = false): BeadMesh {
-  const { n: N, p: P, zq: Zq, wq: Wq, fl: FL, vq: Vq, h: H } = cl;
-  const { n: RN, SIDE, VV, SGN, PN, PN1, VT, NT, cap: CAP, fan: FAN } = tables(lite, H), Hm = H * 1e-3, LQ = H * 100;
-  const st = (i: number): boolean => i === 0 || (FL[i] & 1) === 1, en = (i: number): boolean => i === N - 1 || (FL[i + 1] & 1) === 1;
+/** Path directions and ring counts of every point: run ends and corners need more than one ring. */
+export interface RingPlan {
+  din: Float64Array;
+  dout: Float64Array;
+  len: Float64Array;
+  nring: Uint16Array;
+  rings: number;
+  quadsMax: number;
+}
+
+const startOf = (cl: Centreline, i: number): boolean => i === 0 || (cl.fl[i] & 1) === 1;
+const endOf = (cl: Centreline, i: number): boolean => i === cl.n - 1 || (cl.fl[i + 1] & 1) === 1;
+
+export function planRings(cl: Centreline, lite = false): RingPlan {
+  const { n: N, p: P } = cl, { cap: CAP, fan: FAN } = tables(lite, cl.h);
   const din = new Float64Array(2 * N), dout = new Float64Array(2 * N), len = new Float64Array(N);
   for (let i = 0; i < N - 1; i++) {
-    if (en(i)) continue;
+    if (endOf(cl, i)) continue;
     const dx = P[2 * i + 2] - P[2 * i], dy = P[2 * i + 3] - P[2 * i + 1], l = Math.hypot(dx, dy);
     len[i] = l;
     dout[2 * i] = din[2 * i + 2] = dx / l;
@@ -94,7 +105,7 @@ export function sweep(cl: Centreline, lite = false): BeadMesh {
   const nring = new Uint16Array(N);
   let rings = 0, quadsMax = 0;
   for (let i = 0; i < N; i++) {
-    const s = st(i), e = en(i);
+    const s = startOf(cl, i), e = endOf(cl, i);
     if (s) { din[2 * i] = dout[2 * i]; din[2 * i + 1] = dout[2 * i + 1]; }
     if (e) { dout[2 * i] = din[2 * i]; dout[2 * i + 1] = din[2 * i + 1]; }
     const c = din[2 * i] * dout[2 * i] + din[2 * i + 1] * dout[2 * i + 1];
@@ -103,6 +114,14 @@ export function sweep(cl: Centreline, lite = false): BeadMesh {
     rings += nring[i];
     quadsMax += nring[i] - (s ? 1 : 0);
   }
+  return { din, dout, len, nring, rings, quadsMax };
+}
+
+export function sweep(cl: Centreline, lite = false): BeadMesh {
+  const { n: N, p: P, zq: Zq, wq: Wq, fl: FL, vq: Vq, h: H } = cl;
+  const { n: RN, SIDE, VV, SGN, PN, PN1, VT, NT, cap: CAP } = tables(lite, H), Hm = H * 1e-3, LQ = H * 100;
+  const { din, dout, len, nring, rings, quadsMax } = planRings(cl, lite);
+  const st = (i: number): boolean => startOf(cl, i), en = (i: number): boolean => endOf(cl, i);
   const pos = new Float32Array(rings * RN * 3), nrm = new Int16Array(rings * RN * 3), tan = new Int16Array(rings * RN * 3);
   const word = new Float32Array(rings * RN);
   const index = new Uint32Array(quadsMax * RN * 6);
