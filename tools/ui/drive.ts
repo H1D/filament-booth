@@ -186,6 +186,30 @@ try {
     return `banner "${banner.replace(/\n/g, " ")}"; status line shows the message: ${status.includes("drop an .stl")}; part still in the viewport`;
   });
 
+  await check("a top pattern the slicer accepts but the booth could not name before can be chosen", async () => {
+    const part = await openSection(page, "part");
+    const select = part.locator('select[aria-label="Top pattern"]');
+    const labels = await select.locator("option").allInnerTexts();
+    expect(labels.includes("Hilbert curve") && labels.length === 8, `the select offers ${labels.join(", ")}`);
+    await select.selectOption("hilbert-curve");
+    await until("the select to show it", async () => ((await select.inputValue()) === "hilbert-curve" ? true : null));
+    expect(await part.getAttribute("data-modified") !== null, "the part section is not marked modified");
+    await select.selectOption("monotonic");
+    return `${labels.length} patterns (${labels.join(", ")}); Hilbert curve chosen and the section marked modified`;
+  });
+
+  await check("a filament preset nobody calibrated is marked as an estimate", async () => {
+    const filament = await openSection(page, "filament");
+    const select = filament.locator('select[aria-label="Preset"]');
+    const labels = await select.locator("option").allInnerTexts();
+    expect(labels.join("|") === "PETG Basic|PLA Basic (estimate)|PLA Matte|PLA Silk (estimate)", `the presets read ${labels.join(", ")}`);
+    await select.selectOption("pla-silk");
+    const shown = await select.evaluate((el) => (el instanceof HTMLSelectElement ? (el.selectedOptions[0]?.textContent ?? "") : ""));
+    await select.selectOption("petg-basic");
+    expect(shown === "PLA Silk (estimate)", `with PLA Silk chosen the select reads ${shown}`);
+    return `presets read ${labels.join(", ")}; PLA Silk chosen reads "${shown}"`;
+  });
+
   await check("a focal preset keeps the framing", async () => {
     await openSection(page, "camera");
     const before = await standIn(page);

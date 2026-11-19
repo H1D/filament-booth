@@ -89,6 +89,23 @@ test("the floor cards show in the part's reflections only", async () => {
   expect(meanWhere(lit, true)).toBeCloseTo(meanWhere(dark, true), 2);
 }, 60_000);
 
+test("the floor card is a disc that fades from its inner to its outer radius, not an annulus", async () => {
+  const base = fixture("c", small);
+  const ring = base.lights.floorCards;
+  if (!ring) throw new Error("fixture c has no floor cards");
+  const withRing = (innerRadiusM: number, outerRadiusM: number): Scene =>
+    ({ ...base, lights: { ...base.lights, floorCards: { ...ring, innerRadiusM, outerRadiusM } } });
+  const none = meanWhere((await render({ ...base, lights: { ...base.lights, floorCards: null } })).passes, false);
+  const fading = meanWhere((await render(withRing(0.03, 0.3))).passes, false);
+  const nearlyFlat = meanWhere((await render(withRing(0.29, 0.3))).passes, false);
+  const vanishing = meanWhere((await render(withRing(0.001, 0.002))).passes, false);
+  // The same radiance everywhere inside 0.29 m lights the part at least as much as one that fades from 0.03 m.
+  expect(nearlyFlat).toBeGreaterThan(fading);
+  expect(fading).toBeGreaterThan(none + 0.1 * (nearlyFlat - none));
+  // A disc 2 mm across, fading from 1 mm, adds almost nothing.
+  expect(vanishing - none).toBeLessThan(0.05 * (nearlyFlat - none));
+}, 120_000);
+
 test("finish keeps the samples rendered so far", async () => {
   const scene = fixture("a", { ...small, samples: 100_000 });
   const { passes, state } = await render(scene, () => M._cb_finish());

@@ -3,6 +3,7 @@ import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, test } from "vitest";
 import type { Booth } from "../src/booth";
+import { FilamentPanel } from "../src/ui/FilamentPanel";
 import { LightsPanel } from "../src/ui/LightsPanel";
 import { OutputPanel } from "../src/ui/OutputPanels";
 import { PartPanel } from "../src/ui/PartPanel";
@@ -52,6 +53,14 @@ function input(container: HTMLElement, label: string): HTMLInputElement {
   if (!(el instanceof HTMLInputElement)) throw new Error(`no input labelled ${label}`);
   return el;
 }
+
+function select(container: HTMLElement, label: string): HTMLSelectElement {
+  const el = container.querySelector(`select[aria-label="${label}"]`);
+  if (!(el instanceof HTMLSelectElement)) throw new Error(`no select labelled ${label}`);
+  return el;
+}
+
+const optionLabels = (el: HTMLSelectElement): (string | null)[] => Array.from(el.options, (o) => o.textContent);
 
 describe("the lights section", () => {
   test("editing one light's power changes the document, marks the section and the look, and Reset undoes it", () => {
@@ -176,5 +185,23 @@ describe("the output section", () => {
     expect(container.querySelector(".readout.size")?.textContent).toContain("1600 by 2000 px");
     typeInto(input(container, "Long edge value, px"), "1000");
     expect(container.querySelector(".readout.size")?.textContent).toContain("800 by 1000 px");
+  });
+});
+
+describe("the filament section", () => {
+  test("marks the presets no still has been matched to as estimates", () => {
+    const { booth } = boothWith();
+    const { container } = mount(booth, <FilamentPanel />);
+    expect(optionLabels(select(container, "Preset"))).toEqual(["PETG Basic", "PLA Basic (estimate)", "PLA Matte", "PLA Silk (estimate)"]);
+  });
+});
+
+describe("the top pattern select", () => {
+  test("offers every pattern the slicer accepts", () => {
+    const { booth } = boothWith();
+    const { container } = mount(booth, <Section id="part" open><PartPanel /></Section>);
+    expect(optionLabels(select(container, "Top pattern"))).toEqual([
+      "Monotonic", "Monotonic line", "Concentric", "Zigzag", "Aligned rectilinear", "Hilbert curve", "Archimedean chords", "Octagram spiral",
+    ]);
   });
 });

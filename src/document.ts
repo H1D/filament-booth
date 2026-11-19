@@ -17,6 +17,7 @@
  *   distance * (sin az * cos el, -cos az * cos el, sin el).
  * This is render.py's camera convention and the old viewer's floor-card one.
  */
+import { TOP_SURFACE_PATTERNS, type TopSurfacePattern } from "./print/orca";
 import { FILAMENT_PRESETS, LOOK_PRESETS } from "./presets";
 import { deg, kelvin, m, mm, watts, type Degrees, type Kelvin, type Metres, type Mm, type Rgb, type Vec3, type Watts } from "./units";
 
@@ -83,7 +84,11 @@ export type BedType = (typeof BED_TYPES)[number];
 export const DEFAULT_GLOSS = 0.5;
 
 export interface FilamentChoice {
-  presetId: FilamentPresetId | null; // null once any recipe field is edited
+  /** The preset the recipe was copied from. It stays when the recipe or gloss is
+   *  edited: `Booth.filamentModified` compares them with that preset's, so
+   *  editing a field back clears the mark. Null only for a document that names
+   *  no preset, which the panel shows as Custom. */
+  presetId: FilamentPresetId | null;
   recipe: FilamentRecipe;
   /** 0..1 UI slider, DEFAULT_GLOSS = the recipe as written. Not a blend
    *  between presets: scene.ts applies it as one monotonic curve over every
@@ -97,7 +102,7 @@ export interface FilamentChoice {
 
 // ---- slicing (mm: this is the slicer's boundary, parsed in print.ts) -------
 
-export const TOP_SURFACE_PATTERNS = ["monotonic", "monotonic-line", "concentric", "zigzag"] as const;
+export { TOP_SURFACE_PATTERNS };
 export const SEAM_POSITIONS = ["aligned", "nearest", "back", "random"] as const;
 export interface SliceSettings {
   layerHeight: Mm;
@@ -105,7 +110,7 @@ export interface SliceSettings {
   innerLineWidth: Mm;
   wallCount: number;
   topShellLayers: number;
-  topSurfacePattern: (typeof TOP_SURFACE_PATTERNS)[number];
+  topSurfacePattern: TopSurfacePattern;
   seamPosition: (typeof SEAM_POSITIONS)[number];
 }
 export const DEFAULT_SLICE: SliceSettings = {

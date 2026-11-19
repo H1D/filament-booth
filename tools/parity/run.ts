@@ -1,11 +1,15 @@
 /**
  * Parity, scale and cancel checks for the Cycles photo engine.
  *
- *   bun tools/parity/run.ts [a b c d] [--samples 256] [--width 640] [--height 400] [--bvh bvh2|embree]
+ *   bun tools/parity/run.ts [a b c d e f g] [--samples 256] [--width 640] [--height 400] [--bvh bvh2|embree]
+ *                           [--gcode file]
  *       Each fixture renders in headless Chromium through dev/photo.html and cyclesEngine(), and
  *       in native Blender through tools/blender/render_scene.py, both with the Standard view
  *       transform. Prints PSNR, mean absolute difference and the share of pixels more than
  *       4/255 apart; writes browser.png, blender.png and side_by_side.png per fixture.
+ *       e, f and g go defaultDocument() and two looks through compileScene on a real bead mesh
+ *       (--gcode, else $BOOTH_REF/bsch04/sliced/plate_1.gcode, else tests/fixtures/mini.gcode).
+ *       Node and the page each compile them and the run stops if their scene files differ.
  *   bun tools/parity/run.ts --scale [--samples 64] [--width 1280] [--height 720]
  *       The 10-million-triangle fixture twice in one page: build, render, heap.
  *   bun tools/parity/run.ts --cancel
@@ -14,12 +18,13 @@
  * Output goes to tools/parity/out/. BLENDER overrides the Blender binary.
  */
 import { spawnSync } from "node:child_process";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { exportScene, type Scene } from "../../src/scene";
 import { Browser, record, REPO, startVite } from "./browser";
+import { compiledFixture, isCompiledName, sceneDigest, type CompiledName } from "./compiled";
 import { fixture, isFixtureName, type FixtureName } from "./fixtures";
 import { compare, decodePng, encodePng, sideBySide, standard, type Difference } from "./image";
-import { writeScene } from "./scene-json";
 
 const BLENDER = process.env.BLENDER ?? `${process.env.HOME}/apps/blender-5.2.3-linux-x64/blender`;
 const OUT = join(REPO, "tools/parity/out");
@@ -29,6 +34,24 @@ const opt = (name: string, fallback: string) => {
   return i >= 0 ? argv[i + 1] : fallback;
 };
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** The scene file: scene.json and one <name>.bin per buffer, the format src/scene.ts defines. */
+function writeScene(scene: Scene, dir: string): { digest: Promise<string> } {
+  mkdirSync(dir, { recursive: true });
+  const file = exportScene(scene);
+  for (const [name, data] of file.buffers) writeFileSync(join(dir, `${name}.bin`), new Uint8Array(data.buffer, data.byteOffset, data.byteLength));
+  writeFileSync(join(dir, "scene.json"), file.json);
+  return { digest: sceneDigest(file) };
+}
+
+/** The G-code the compiled fixtures mesh. */
+function gcodePath(): string {
+  const given = opt("--gcode", "");
+  if (given) return given;
+  const ref = process.env.BOOTH_REF;
+  const real = ref ? join(ref, "bsch04/sliced/plate_1.gcode") : "";
+  return real && existsSync(real) ? real : join(REPO, "tests/fixtures/mini.gcode");
+}
 
 // ---- reading the page --------------------------------------------------------------------
 
@@ -61,6 +84,7 @@ function readRun(v: unknown): Run {
 
 interface PageResult {
   readonly fits: string;
+  readonly digest: string;
   readonly buildMs: number;
   readonly triangles: number;
   readonly runs: Run[];
@@ -77,7 +101,7 @@ async function openPage(browser: Browser, url: string, runs: number, onSettled?:
     );
     const text = typeof raw === "string" ? raw : "";
     if (!text.startsWith("{")) {
-      if (performance.now() - t0 > 60_000) throw new Error(`page did not start: ${text}\n${browser.console.join("\n")}`);
+      if (performance.now() - t0 > 300_000) throw new Error(`page did not start: ${text}\n${browser.console.join("\n")}`);
       continue;
     }
     const page = record(JSON.parse(text));
@@ -87,7 +111,7 @@ async function openPage(browser: Browser, url: string, runs: number, onSettled?:
     settled = done;
     if (page.state === "finished" && done === runs) {
       return {
-        fits: String(page.fits), buildMs: num(page.buildMs), triangles: num(page.triangles),
+        fits: String(page.fits), digest: String(page.digest), buildMs: num(page.buildMs), triangles: num(page.triangles),
         runs: Array.isArray(page.runs) ? page.runs.map(readRun) : [],
       };
     }
@@ -108,33 +132,43 @@ async function pullFrame(browser: Browser, width: number, height: number): Promi
 // ---- parity ------------------------------------------------------------------------------
 
 interface ParityRow {
-  readonly name: FixtureName;
+  readonly name: string;
   readonly diff: Difference;
   readonly browserMs: number;
   readonly blenderS: string;
+  readonly size: string;
 }
 
-async function parity(names: FixtureName[]) {
+async function parity(names: (FixtureName | CompiledName)[]) {
   const width = Number(opt("--width", "640"));
   const height = Number(opt("--height", "400"));
   const samples = Number(opt("--samples", "256"));
   const bvh = opt("--bvh", "bvh2");
+  const gcode = gcodePath();
+  console.log(`compiled fixtures mesh ${gcode}`);
+  // Served by Vite, so the page meshes the same text as Node.
+  mkdirSync(OUT, { recursive: true });
+  copyFileSync(gcode, join(OUT, "print.gcode"));
   const vite = await startVite();
   const browser = await Browser.launch();
   const rows: ParityRow[] = [];
   try {
-    const browserMs = new Map<FixtureName, number>();
+    const browserMs = new Map<string, number>();
     for (const name of names) {
       const dir = join(OUT, name);
-      mkdirSync(dir, { recursive: true });
-      const scene = fixture(name, { width, height, samples });
-      writeScene(scene, dir);
-      const page = await openPage(browser, `${vite.url}dev/photo.html?fixture=${name}&width=${width}&height=${height}&samples=${samples}`, 1);
+      const options = { width, height, samples };
+      const scene = isCompiledName(name) ? await compiledFixture(name, readFileSync(gcode, "utf8"), options) : fixture(name, options);
+      const written = writeScene(scene, dir);
+      const page = await openPage(browser,
+        `${vite.url}dev/photo.html?fixture=${name}&width=${width}&height=${height}&samples=${samples}&gcode=/tools/parity/out/print.gcode`, 1);
+      if (isCompiledName(name) && page.digest !== await written.digest) {
+        throw new Error(`${name}: Node and the page compiled different scenes (${await written.digest} against ${page.digest})`);
+      }
       const run = page.runs[0];
       if (run.outcome !== "done") throw new Error(`${name}: ${run.error}`);
       browserMs.set(name, run.totalMs);
-      const rgba = await pullFrame(browser, width, height);
-      writeFileSync(join(dir, "browser.png"), encodePng(standard(width, height, rgba, scene.film.transparent)));
+      const rgba = await pullFrame(browser, scene.film.width, scene.film.height);
+      writeFileSync(join(dir, "browser.png"), encodePng(standard(scene.film.width, scene.film.height, rgba, scene.film.transparent)));
       writeFileSync(join(dir, "browser.json"), JSON.stringify({ page, url: `dev/photo.html?fixture=${name}` }, null, 1));
       console.log(`${name}: browser ${(run.totalMs / 1000).toFixed(1)} s, ${run.samples} samples, ${page.triangles} part triangles`);
     }
@@ -151,17 +185,17 @@ async function parity(names: FixtureName[]) {
       const b = decodePng(new Uint8Array(readFileSync(join(dir, "blender.png"))));
       const diff = compare(a, b);
       writeFileSync(join(dir, "side_by_side.png"), encodePng(sideBySide(a, b)));
-      writeFileSync(join(dir, "diff.json"), JSON.stringify({ diff, bvh, width, height, samples }, null, 1));
-      rows.push({ name, diff, browserMs: browserMs.get(name) ?? NaN, blenderS: line[2] });
+      writeFileSync(join(dir, "diff.json"), JSON.stringify({ diff, bvh, width: a.width, height: a.height, samples }, null, 1));
+      rows.push({ name, diff, browserMs: browserMs.get(name) ?? NaN, blenderS: line[2], size: `${a.width}x${a.height}` });
     }
   } finally {
     await browser.close().catch(() => {});
     await vite.close().catch(() => {});
   }
-  console.log(`\n${width}x${height}, ${samples} samples, native BVH ${bvh}`);
-  console.log("fixture  PSNR dB  mean |d| /255  >4/255   alpha |d|  browser s  Blender render s");
+  console.log(`\n${samples} samples, native BVH ${bvh}`);
+  console.log("fixture  size     PSNR dB  mean |d| /255  >4/255   alpha |d|  browser s  Blender render s");
   for (const r of rows) {
-    console.log(`${r.name.padEnd(8)} ${r.diff.psnrDb.toFixed(2).padStart(7)}  ${r.diff.meanAbs.toFixed(3).padStart(12)}  ${(r.diff.over4 * 100).toFixed(2).padStart(6)} %  ${r.diff.alphaMeanAbs.toFixed(3).padStart(9)}  ${(r.browserMs / 1000).toFixed(1).padStart(9)}  ${r.blenderS.padStart(8)}`);
+    console.log(`${r.name.padEnd(8)} ${r.size.padEnd(8)} ${r.diff.psnrDb.toFixed(2).padStart(7)}  ${r.diff.meanAbs.toFixed(3).padStart(12)}  ${(r.diff.over4 * 100).toFixed(2).padStart(6)} %  ${r.diff.alphaMeanAbs.toFixed(3).padStart(9)}  ${(r.browserMs / 1000).toFixed(1).padStart(9)}  ${r.blenderS.padStart(8)}`);
   }
 }
 
@@ -230,7 +264,7 @@ else if (argv.includes("--cancel")) await cancel();
 else {
   const names = argv.filter((a, i) => !a.startsWith("--") && !(i > 0 && argv[i - 1].startsWith("--")));
   const chosen = (names.length ? names : ["a", "b", "c", "d"]).map((n) => {
-    if (!isFixtureName(n)) throw new Error(`unknown fixture ${n}`);
+    if (!isFixtureName(n) && !isCompiledName(n)) throw new Error(`unknown fixture ${n}`);
     return n;
   });
   await parity(chosen);

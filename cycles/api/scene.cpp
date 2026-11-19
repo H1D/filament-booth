@@ -484,11 +484,13 @@ CB_EXPORT int cb_scrim(const float *frame, float size_x, float size_y, int ellip
   return 0;
 }
 
-/* An emissive annulus on the floor that only the part's glossy reflections see. Visibility
- * alone is not enough: the floor's own specular lobe would reflect a card lying on it, so the
- * ring is also linked to the part like a part-only light. Its radiance is
- *   far + (key - far) * ((1 + cos(azimuth - key_azimuth)) / 2)^2
- * where azimuth = atan2(x - cx, -(y - cy)), the camera orbit's convention (0 toward -Y). */
+/* An emissive disc on the floor that only the part's glossy reflections see. Visibility alone is
+ * not enough: the floor's own specular lobe would reflect a card lying on it, so the disc is also
+ * linked to the part like a part-only light. Its radiance, at a floor point (x, y) at distance r
+ * from (cx, cy), is
+ *   (far + (key - far) * ((1 + cos(azimuth - key_azimuth)) / 2)^2) * (1 - smoothstep(inner, outer, r))
+ * where azimuth = atan2(x - cx, -(y - cy)), the camera orbit's convention (0 toward -Y).
+ * FloorCardRing in src/scene.ts is the contract; tools/blender/render_scene.py builds the same. */
 CB_EXPORT int cb_floor_ring(float cx, float cy, float cz, float inner, float outer, float key,
                             float far, float key_azimuth)
 {
@@ -516,24 +518,49 @@ CB_EXPORT int cb_floor_ring(float cx, float cy, float cz, float inner, float out
   gr->connect(half->output("Value"), weight->input("Value2"));
   MathNode *radiance = math(gr, NODE_MATH_MULTIPLY_ADD, 0.0f, key - far, far);
   gr->connect(weight->output("Value"), radiance->input("Value1"));
+  /* 1 - smoothstep(inner, outer, r), with r = sqrt(dx^2 + dy^2). */
+  MathNode *dx2 = math(gr, NODE_MATH_MULTIPLY);
+  gr->connect(dx->output("Value"), dx2->input("Value1"));
+  gr->connect(dx->output("Value"), dx2->input("Value2"));
+  MathNode *dist2 = math(gr, NODE_MATH_MULTIPLY_ADD);
+  gr->connect(dy->output("Value"), dist2->input("Value1"));
+  gr->connect(dy->output("Value"), dist2->input("Value2"));
+  gr->connect(dx2->output("Value"), dist2->input("Value3"));
+  MathNode *dist = math(gr, NODE_MATH_SQRT);
+  gr->connect(dist2->output("Value"), dist->input("Value1"));
+  const float span = outer - inner;
+  MathNode *t = math(gr, NODE_MATH_MULTIPLY_ADD, 0.0f, 1.0f / span, -inner / span);
+  t->set_use_clamp(true);
+  gr->connect(dist->output("Value"), t->input("Value1"));
+  MathNode *ease = math(gr, NODE_MATH_MULTIPLY_ADD, 0.0f, -2.0f, 3.0f);
+  gr->connect(t->output("Value"), ease->input("Value1"));
+  MathNode *t2 = math(gr, NODE_MATH_MULTIPLY);
+  gr->connect(t->output("Value"), t2->input("Value1"));
+  gr->connect(t->output("Value"), t2->input("Value2"));
+  MathNode *smooth = math(gr, NODE_MATH_MULTIPLY);
+  gr->connect(t2->output("Value"), smooth->input("Value1"));
+  gr->connect(ease->output("Value"), smooth->input("Value2"));
+  MathNode *fade = math(gr, NODE_MATH_MULTIPLY_ADD, 0.0f, -1.0f, 1.0f);
+  gr->connect(smooth->output("Value"), fade->input("Value1"));
+  MathNode *faded = math(gr, NODE_MATH_MULTIPLY);
+  gr->connect(radiance->output("Value"), faded->input("Value1"));
+  gr->connect(fade->output("Value"), faded->input("Value2"));
   EmissionNode *emission = gr->create_node<EmissionNode>();
   emission->set_color(one_float3());
-  gr->connect(radiance->output("Value"), emission->input("Strength"));
+  gr->connect(faded->output("Value"), emission->input("Strength"));
   gr->connect(emission->output("Emission"), gr->output()->input("Surface"));
   Shader *shader = add_shader(scene, "booth_floor_ring", std::move(graph));
 
+  /* A fan out to `outer`, where the fade has reached zero. The shader decides the radiance at each
+   * point, so the mesh only has to cover the disc. */
   vector<float3> positions;
   vector<int> triangles;
   const float z = cz + RING_LIFT_M;
+  positions.push_back(make_float3(cx, cy, z));
   for (int i = 0; i < RING_SEGMENTS; i++) {
     const float a = M_2PI_F * float(i) / float(RING_SEGMENTS);
-    const float c = cosf(a);
-    const float s = sinf(a);
-    positions.push_back(make_float3(cx + inner * c, cy + inner * s, z));
-    positions.push_back(make_float3(cx + outer * c, cy + outer * s, z));
-    const int i0 = 2 * i;
-    const int i1 = 2 * ((i + 1) % RING_SEGMENTS);
-    triangles.insert(triangles.end(), {i0, i0 + 1, i1 + 1, i0, i1 + 1, i1});
+    positions.push_back(make_float3(cx + outer * cosf(a), cy + outer * sinf(a), z));
+    triangles.insert(triangles.end(), {0, 1 + i, 1 + (i + 1) % RING_SEGMENTS});
   }
   Mesh *mesh = build_mesh(scene, shader, positions, triangles);
   Object *object = scene->create_node<Object>();

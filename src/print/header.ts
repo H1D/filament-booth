@@ -2,7 +2,7 @@
  * What a Bambu / Orca G-code says about itself in its `; key = value` header
  * block. This is the boundary where a file's text becomes typed settings.
  */
-import { mm } from "../document";
+import { DEFAULT_SLICE, mm } from "../document";
 import type { BedType } from "../document";
 import { H0 } from "./calibration";
 import { bedFromOrca, settingsFromOrca } from "./orca";
@@ -23,7 +23,7 @@ export function readHeader(text: string): GcodeHeader {
   const lh = Number(get("layer_height")), first = Number(get("initial_layer_print_height"));
   if (get("spiral_mode") === "1") throw new Error("spiral vase G-code is not supported");
   if (lh && first && Math.abs(lh - first) > 1e-6) throw new Error(`only even layers are modelled (this slice: ${lh} mm, first ${first} mm)`);
-  const file = settingsFromOrca(get);
+  const file = settingsFromOrca(get, DEFAULT_SLICE);
   const layerHeightMm = lh || H0;
   return {
     settings: { ...file.settings, layerHeight: mm(layerHeightMm) },

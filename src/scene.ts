@@ -3,7 +3,7 @@
  *
  * A Scene is everything a renderer needs, already decided, in Blender's
  * frame (Z up), metres, watts and linear colour. The preview, the Cycles
- * engine, the raster photo engine and native Blender (through sceneToJson)
+ * engine, the raster photo engine and native Blender (through exportScene)
  * read it and resolve nothing themselves. Pose, camera fit, light placement,
  * kelvin, the gloss curve and the per-layer roughness each live here once.
  *
@@ -110,12 +110,23 @@ export interface ScrimEmitter extends EmitterFrame {
 export type Emitter = AreaEmitter | ScrimEmitter;
 
 /**
- * An emissive ring on the floor around the part that only glossy rays see.
- * At floor point (x, y) at distance r from `centre`, with
- * theta = atan2(x, -y) (the azimuth convention of document.ts), the radiance is
- *   mix(farRadiance, keyRadiance, ((cos(theta - keyAzimuthRad) + 1) / 2)^2)
- *     * (1 - smoothstep(innerRadiusM, outerRadiusM, r)).
- * These are the old bake's numbers (index.html:480), minus its preview GAIN.
+ * An emissive disc on the floor around the part, so the walls of a dark glossy
+ * part mirror a lit table. Only glossy rays see it: not the camera, not
+ * diffuse light, not shadows. It is light-linked to the part, so the backdrop's
+ * own glossy lobe never reflects it either.
+ *
+ * Azimuth is the convention of document.ts: degrees from -Y turning towards
+ * +X. At a floor point (x, y) at distance r from `centre`,
+ *   theta = atan2(x - centre.x, -(y - centre.y)),
+ *   w = ((1 + cos(theta - keyAzimuthRad)) / 2)^2,
+ *   radiance = (farRadiance + (keyRadiance - farRadiance) * w)
+ *              * (1 - smoothstep(innerRadiusM, outerRadiusM, r)).
+ * So the key side (theta = keyAzimuthRad) has `keyRadiance`, the points 90
+ * degrees round have a quarter of the way from far to key, and the opposite
+ * side has `farRadiance`. Full strength out to `innerRadiusM`, falling to zero
+ * at `outerRadiusM`. Radiance is Blender emission strength. These are the old
+ * bake's numbers (index.html:480), minus its preview GAIN. The Cycles engine
+ * (cycles/api/scene.cpp) and tools/blender/render_scene.py build exactly this.
  */
 export interface FloorCardRing {
   readonly centre: Vec3;
@@ -608,21 +619,48 @@ function sharedSweep(): ReturnType<typeof sweepMesh> {
 
 // ---- export ------------------------------------------------------------------
 
-/** Everything but the mesh buffers, for tools/blender/render_scene.py. Typed
- *  arrays are written next to it by the caller and referenced by name. */
-export function sceneToJson(scene: Scene): string {
-  const plain = (value: unknown, path: string): unknown => {
-    if (ArrayBuffer.isView(value)) {
-      const length = value instanceof DataView ? value.byteLength : Reflect.get(value, "length");
-      return { buffer: path, length };
+export type SceneBuffer = Float32Array | Int16Array | Uint32Array;
+export type BufferKind = "f32" | "i16" | "u32";
+
+function bufferKind(value: SceneBuffer): BufferKind {
+  if (value instanceof Float32Array) return "f32";
+  if (value instanceof Int16Array) return "i16";
+  return "u32";
+}
+
+function isSceneBuffer(value: unknown): value is SceneBuffer {
+  return value instanceof Float32Array || value instanceof Int16Array || value instanceof Uint32Array;
+}
+
+export interface SceneFile {
+  /** The scene with every typed array replaced by `{ buffer, kind, length }`. */
+  readonly json: string;
+  /** The arrays, by the dotted path from the scene root (`part.mesh.position`,
+   *  `lights.emitters.0.…`), which is also the `buffer` field that refers to them. */
+  readonly buffers: ReadonlyMap<string, SceneBuffer>;
+}
+
+/**
+ * The scene file for tools/blender/render_scene.py, and the only writer of
+ * it. The JSON holds everything but the typed arrays. The caller writes each
+ * array in `buffers` as raw little-endian values to `<name>.bin` next to the
+ * JSON. A reference carries its element type, so a reader needs no table of
+ * which field is which. The scene types hold no other kind of typed array.
+ */
+export function exportScene(scene: Scene): SceneFile {
+  const buffers = new Map<string, SceneBuffer>();
+  const walk = (value: unknown, path: string): unknown => {
+    if (isSceneBuffer(value)) {
+      buffers.set(path, value);
+      return { buffer: path, kind: bufferKind(value), length: value.length };
     }
-    if (Array.isArray(value)) return value.map((v, i) => plain(v, `${path}[${i}]`));
+    if (Array.isArray(value)) return value.map((v, i) => walk(v, `${path}.${i}`));
     if (typeof value === "object" && value !== null) {
-      return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, plain(v, path === "" ? k : `${path}.${k}`)]));
+      return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, walk(v, path === "" ? k : `${path}.${k}`)]));
     }
     return value;
   };
-  return JSON.stringify(plain(scene, ""), null, 2);
+  return { json: JSON.stringify(walk(scene, ""), null, 1), buffers };
 }
 
 export type { Metres, Studio };

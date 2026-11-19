@@ -7,7 +7,7 @@ import { LOOK_PRESETS } from "../src/presets";
 import type { BeadMesh, LoadedPrint, SlicedPrint } from "../src/print";
 import {
   compileScene, filmSize, framePart, glossRoughness, kelvinToRgb, layerHeatCurve, refocal, resolveMaterial,
-  sceneToJson, solveCamera, solveLight, solvePose, studioAim, sweepMesh, transformPoint, type Scene,
+  exportScene, solveCamera, solveLight, solvePose, studioAim, sweepMesh, transformPoint, type Scene,
 } from "../src/scene";
 
 // ---- fixtures ----------------------------------------------------------------
@@ -595,15 +595,15 @@ describe("sweepMesh", () => {
   });
 });
 
-describe("sceneToJson", () => {
-  test("replaces typed arrays with named buffer references and keeps everything else", () => {
-    const scene = compileScene(defaultDocument(), loaded(), 5);
-    const json = sceneToJson(scene);
-    const parsed: unknown = JSON.parse(json);
-    expect(parsed).toMatchObject({
+describe("exportScene", () => {
+  const scene = compileScene(defaultDocument(), loaded(), 5);
+  const { json, buffers } = exportScene(scene);
+
+  test("replaces typed arrays with references that carry the element type and keeps everything else", () => {
+    expect(JSON.parse(json)).toMatchObject({
       docRev: 5,
-      part: { mesh: { position: { buffer: "part.mesh.position", length: 300 }, layerCount: 100 },
-              material: { layers: { rough: { buffer: "part.material.layers.rough", length: 404 } } } },
+      part: { mesh: { position: { buffer: "part.mesh.position", kind: "f32", length: 300 }, normal: { kind: "i16" }, index: { kind: "u32" }, layerCount: 100 },
+              material: { layers: { rough: { buffer: "part.material.layers.rough", kind: "f32", length: 404 } } } },
       backdrop: { positions: { buffer: "backdrop.positions" } },
       camera: { focalMm: 85 },
       film: { width: 1600, height: 2000 },
@@ -612,7 +612,13 @@ describe("sceneToJson", () => {
     expect(json).not.toContain("Float32Array");
   });
 
+  test("lists every referenced buffer under the name its reference gives, and no other", () => {
+    const named = [...json.matchAll(/"buffer": "([^"]+)"/g)].map((match) => match[1]);
+    expect([...buffers.keys()].sort()).toEqual(named.sort());
+    expect(buffers.get("part.mesh.position")).toBe(scene.part?.mesh.position);
+  });
+
   test("a scene with no part writes null for it", () => {
-    expect(JSON.parse(sceneToJson(compileScene(defaultDocument(), null, 1)))).toMatchObject({ part: null });
+    expect(JSON.parse(exportScene(compileScene(defaultDocument(), null, 1)).json)).toMatchObject({ part: null });
   });
 });

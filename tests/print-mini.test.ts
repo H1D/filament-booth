@@ -192,9 +192,9 @@ describe("opening the fixture as a file", () => {
   });
 
   test("names the header values it cannot express instead of hiding them", async () => {
-    const odd = MINI_GCODE.replace("monotonicline", "hilbertcurve");
+    const odd = MINI_GCODE.replace("monotonicline", "adaptive-cubic");
     const { sliced } = await new PrintSession().open(gcodeSource(odd), DEFAULT_SLICE, recordingJob());
-    expect(sliced.note).toBe("file also sets top_surface_pattern = hilbertcurve");
+    expect(sliced.note).toBe("file also sets top_surface_pattern = adaptive-cubic");
   });
 
   test("builds the lite mesh from the cached centreline without parsing again", async () => {

@@ -3,12 +3,11 @@
  * stages, timings and mesh statistics as text. `window.printDev` is the same
  * thing for tools/print/drive.mjs.
  */
-import { DEFAULT_SLICE, mm } from "../src/document";
+import { DEFAULT_SLICE, TOP_SURFACE_PATTERNS, mm } from "../src/document";
 import type { SliceSettings } from "../src/document";
 import { PrintPipeline, Superseded } from "../src/print";
 import type { BeadMesh, LoadedPrint, PrintSource } from "../src/print";
 
-const TOP_PATTERNS = ["monotonic", "monotonic-line", "concentric", "zigzag"] as const;
 const SEAMS = ["aligned", "nearest", "back", "random"] as const;
 
 function oneOf<T extends string>(options: readonly T[], value: unknown, what: string): T {
@@ -30,7 +29,7 @@ function settingsFrom(raw: Record<string, unknown>): SliceSettings {
     innerLineWidth: mm(positive(raw.innerLineWidth, "innerLineWidth")),
     wallCount: positive(raw.wallCount, "wallCount"),
     topShellLayers: positive(raw.topShellLayers, "topShellLayers"),
-    topSurfacePattern: oneOf(TOP_PATTERNS, raw.topSurfacePattern, "topSurfacePattern"),
+    topSurfacePattern: oneOf(TOP_SURFACE_PATTERNS, raw.topSurfacePattern, "topSurfacePattern"),
     seamPosition: oneOf(SEAMS, raw.seamPosition, "seamPosition"),
   };
 }
