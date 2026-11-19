@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { expect, test } from "vitest";
 import { packBeadWord, PLATE_EPS, type BeadMesh } from "../src/print";
-import { decodeRgbe, estimateHeapBytes, HEAP_LIMIT_BYTES, partNormals, partRoughness, plateMask } from "../src/photo/cycles-upload";
+import { decodeRgbe, estimateHeapBytes, HEAP_LIMIT_BYTES, heapFloats, partNormals, partRoughness, plateMask } from "../src/photo/cycles-upload";
 import type { BeadMaterial } from "../src/scene";
 
 function mesh(words: number[], normals: number[], z: number[]): BeadMesh {
@@ -70,4 +70,11 @@ test("the studio HDR decodes to the values Blender reads from it", () => {
 test("a 10-million-triangle part fits the 4 GB heap and a 25-million one does not", () => {
   expect(estimateHeapBytes(10e6, 1920 * 1080)).toBeLessThan(HEAP_LIMIT_BYTES);
   expect(estimateHeapBytes(25e6, 1920 * 1080)).toBeGreaterThan(HEAP_LIMIT_BYTES);
+});
+
+test("a heap pointer above 2 GiB, which arrives from wasm as a negative number, reads the floats at its unsigned offset", () => {
+  const memory = new WebAssembly.Memory({ initial: 32769, maximum: 65536 });
+  const offset = 2 ** 31 + 1024;
+  new Float32Array(memory.buffer, offset, 3).set([1, 2, 3]);
+  expect([...heapFloats(memory, offset | 0, 3)]).toEqual([1, 2, 3]);
 });
