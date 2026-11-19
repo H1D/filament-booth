@@ -1,5 +1,5 @@
 /**
- * document.ts — the BoothDocument: every user setting, as plain JSON.
+ * document.ts: the BoothDocument: every user setting, as plain JSON.
  *
  * Invariants this file enforces by construction:
  * - One frame: Blender Z-up, metres, watts. Millimetres exist only inside
@@ -52,7 +52,7 @@ export interface FilamentRecipe {
   ior: number;
   anisotropy: number; // 0..1, Principled Anisotropic (grooves along path)
   /** Per-feature roughness: the bead shader and the Cycles graph select by
-   *  the same feature code. Keys are exhaustive — no fallback branch. */
+   *  the same feature code. Keys are exhaustive, no fallback branch. */
   roughness: Record<FeatureCode, number>;
   vary: number; // scales per-layer sheen + slow mottling
   /** Plate-face roughness per bed. `smooth` reuses wall roughness + gloss. */
@@ -127,7 +127,7 @@ interface LightBase {
   /** Spherical placement about the studio aim point (scene.ts owns the aim:
    *  part centre at floor-resting height), in the azimuth convention at the
    *  top of this file. The photographer's vocabulary is the storage
-   *  vocabulary — no Cartesian copy to keep in sync. */
+   *  vocabulary, with no Cartesian copy to keep in sync. */
   azimuth: Degrees;
   elevation: Degrees;
   distance: Metres;

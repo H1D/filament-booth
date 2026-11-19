@@ -120,7 +120,10 @@ describe("filament presets", () => {
   test("every preset id has an entry, with every roughness a valid 0..1 value", () => {
     for (const id of FILAMENT_PRESET_IDS) {
       expect(FILAMENT_PRESETS[id].label).not.toBe("");
-      for (const v of Object.values(FILAMENT_PRESETS[id].recipe.roughness)) expect(v).toBeGreaterThan(0), expect(v).toBeLessThan(1);
+      for (const v of Object.values(FILAMENT_PRESETS[id].recipe.roughness)) {
+        expect(v).toBeGreaterThan(0);
+        expect(v).toBeLessThan(1);
+      }
     }
   });
 

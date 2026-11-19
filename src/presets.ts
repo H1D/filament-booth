@@ -1,5 +1,5 @@
 /**
- * presets.ts — the one list of filaments and the one list of looks.
+ * presets.ts: the one list of filaments and the one list of looks.
  *
  * Calibration constants that used to be copied between render.py and the
  * viewer live here and nowhere else. Adding a preset is one entry; panels,
