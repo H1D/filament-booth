@@ -3,15 +3,38 @@
  * engines return RadianceFrames and both go through here, so tone, file
  * format and naming never depend on which engine ran.
  *
- * The AgX numbers exist once, as data in AGX. The CPU path below and the
- * viewport's TSL display node are both built from that table, and a unit
- * test checks they agree on probe colours.
+ * The tone map is Blender 5.2.3's AgX, not an approximation. tools/blender/
+ * bake_agx.py bakes Blender's own colour config into public/lut/, and this
+ * file and the preview shader both read those files, so they cannot drift.
+ * Per pixel, for linear Rec.709 `rgb` (the layout and ranges are in
+ * manifest.json, and bake_agx.py documents how each file was made):
  *
- * AGX is the Filament/three.js AgX that the old viewer's `agxMHC` was built
- * on. It is NOT the AgX of Blender 5.2.3, which ships a 3D LUT (EaryChow's
- * rework). tests/film.test.ts measures the gap against native Blender.
+ *   e  = toWorking * rgb                       Rec.709 to E-Gamut
+ *   t  = max((log2 e - log2Min) / (log2Max - log2Min), tFloor)     per channel, unclamped
+ *   s  = clamp((log2 rgb - log2Min) / (preLog2Max - log2Min), 0, 1) per channel
+ *   t' = clamp(t + trilinear(pre, s), 0, 1)    skipped for the "none" look
+ *   c  = tetrahedral(base, t')
+ *   out = srgbEncode(max(c, 0) ^ 2.4)
+ *
+ * Sampling the same files in a shader, as 3D textures of N^3 texels, red along
+ * x, green along y, blue along z. Both are RGB16F (three.js Data3DTexture,
+ * HalfFloatType; pad each texel to RGBA with alpha 1, since RGBFormat is gone):
+ *
+ *   texel centre of grid node k is (k + 0.5) / N, so for a coordinate x in
+ *   0..1 the texture coordinate is (x * (N - 1) + 0.5) / N.
+ *   pre:  LinearFilter, clamp to edge. Hardware trilinear is the same
+ *         interpolation as here. Skip it for "none".
+ *   base: NearestFilter and four texelFetch calls, never LinearFilter.
+ *         Trilinear on this cube is up to 13.8/255 away from Blender because
+ *         the cube is clipped to the display gamut, so it must be tetrahedral:
+ *         with u = x * (N - 1), i = min(floor(u), N - 2), f = u - i, order the
+ *         three fractions descending as fa >= fb >= fc along axes a, b, c, then
+ *           c = (1 - fa) * T(i) + (fa - fb) * T(i + ea)
+ *             + (fb - fc) * T(i + ea + eb) + fc * T(i + 1)
+ *         where ea, eb are the unit steps along axes a and b.
+ *   Do the arithmetic in float, then clamp and encode as above.
  */
-import type { AgxLook } from "./document";
+import { AGX_LOOKS, type AgxLook } from "./document";
 import type { FilmSection } from "./scene";
 
 /** Scene-linear Rec.709, premultiplied alpha. `albedo` and `normal` guide the denoiser when present. */
@@ -24,106 +47,200 @@ export interface RadianceFrame {
   readonly normal?: Float32Array;
 }
 
-/** What a look does to the log-encoded colour, in order: contrast about
- *  `pivot`, saturation about the Rec.709 luma, a power. Neutral is 1, 1, 1. */
-export interface AgxLookData {
-  readonly contrast: number;
-  /** Where contrast pivots, in the log encoding. 0.606 is scene-linear 0.18. */
-  readonly pivot: number;
-  readonly saturation: number;
-  readonly power: number;
+/** public/lut/manifest.json, written by tools/blender/bake_agx.py. */
+export interface AgxManifest {
+  readonly format: "agx-lut-2";
+  readonly blender: string;
+  /** Rec.709 to E-Gamut, 3x3 row-major. */
+  readonly toWorking: readonly number[];
+  readonly log2Min: number;
+  readonly log2Max: number;
+  readonly preLog2Max: number;
+  readonly tFloor: number;
+  readonly base: { readonly file: string; readonly size: number };
+  /** One entry per AgxLook, `null` for "none": no look, no warp. */
+  readonly looks: Readonly<Record<string, { readonly file: string; readonly size: number } | null>>;
 }
 
+/** One look, loaded: Blender's cube plus that look's warp. Values are decoded from half float. */
 export interface AgxData {
-  readonly toRec2020: readonly number[]; // 3x3, column-major
-  readonly inset: readonly number[];
-  readonly outset: readonly number[];
-  readonly toSrgb: readonly number[];
-  readonly logMin: number;
-  readonly logMax: number;
-  readonly curve: readonly number[];     // polynomial coefficients, highest power first
-  /** The display power applied after the outset matrix. */
-  readonly gamma: number;
-  readonly looks: Readonly<Record<AgxLook, AgxLookData>>;
+  readonly look: AgxLook;
+  readonly manifest: AgxManifest;
+  /** baseSize^3 RGB texels, red fastest. Display values with the 2.4 power still on. */
+  readonly base: Float32Array;
+  /** preSize^3 RGB texels, red fastest: the look's change to t. `null` for "none". */
+  readonly pre: { readonly size: number; readonly values: Float32Array } | null;
 }
 
-const MIDDLE_GREY_LOG = 0.606; // (log2(0.18) - logMin) / (logMax - logMin)
+const isRecord = (x: unknown): x is Record<string, unknown> => typeof x === "object" && x !== null;
+const isEntry = (x: unknown): x is { file: string; size: number } =>
+  isRecord(x) && typeof x.file === "string" && typeof x.size === "number";
+const isNumbers = (x: unknown, n: number): x is number[] =>
+  Array.isArray(x) && x.length === n && x.every((v) => typeof v === "number" && Number.isFinite(v));
 
-export const AGX: AgxData = {
-  // index.html:316 agxMHC, matrices as its mat3(vec3 column, vec3 column, vec3 column).
-  toRec2020: [0.6274, 0.0691, 0.0164, 0.3293, 0.9195, 0.088, 0.0433, 0.0113, 0.8956],
-  inset: [
-    0.856627153315983, 0.137318972929847, 0.11189821299995,
-    0.0951212405381588, 0.761241990602591, 0.0767994186031903,
-    0.0482516061458583, 0.101439036467562, 0.811302368396859,
-  ],
-  outset: [
-    1.1271005818144368, -0.1413297634984383, -0.14132976349843826,
-    -0.11060664309660323, 1.157823702216272, -0.11060664309660294,
-    -0.016493938717834573, -0.016493938717834257, 1.2519364065950405,
-  ],
-  toSrgb: [1.6605, -0.1246, -0.0182, -0.5876, 1.1329, -0.1006, -0.0728, -0.0083, 1.1187],
-  logMin: -12.47393,
-  logMax: 4.026069,
-  curve: [15.5, -40.14, 31.96, -6.868, 0.4298, 0.1191, -0.00232],
-  gamma: 2.2,
-  /*
-   * Contrast and saturation are read from Blender 5.2.3's colour config
-   * (datafiles/colormanagement/config.ocio, the "AgX - ..." looks, each a
-   * log-style GradingPrimary with contrast pivot -0.2 in AgX Log). Verified
-   * means a probe through native Blender agrees with agx() for that look to
-   * the bounds tests/film.test.ts states.
-   * UNVERIFIED: "punchy". Blender's Punchy is a GradingTone shadows lift plus
-   * a CDL power of 1.0912, not a contrast change. Only the power is here.
-   */
-  looks: {
-    "none": { contrast: 1, pivot: MIDDLE_GREY_LOG, saturation: 1, power: 1 },
-    "punchy": { contrast: 1, pivot: MIDDLE_GREY_LOG, saturation: 1, power: 1.0912 },
-    "low-contrast": { contrast: 0.8, pivot: MIDDLE_GREY_LOG, saturation: 1.1, power: 1 },
-    "medium-low-contrast": { contrast: 0.9, pivot: MIDDLE_GREY_LOG, saturation: 1.05, power: 1 },
-    "medium-high-contrast": { contrast: 1.2, pivot: MIDDLE_GREY_LOG, saturation: 1, power: 1 },
-    "high-contrast": { contrast: 1.4, pivot: MIDDLE_GREY_LOG, saturation: 0.95, power: 1 },
-  },
-};
+/** Boundary check for the manifest. Throws naming the field. */
+export function parseManifest(json: unknown): AgxManifest {
+  if (!isRecord(json) || json.format !== "agx-lut-2") throw new Error("agx manifest: unknown format");
+  const num = (key: string): number => {
+    const v = json[key];
+    if (typeof v !== "number" || !Number.isFinite(v)) throw new Error(`agx manifest: ${key} is not a number`);
+    return v;
+  };
+  const { toWorking, base, looks } = json;
+  if (!isNumbers(toWorking, 9)) throw new Error("agx manifest: toWorking is not nine numbers");
+  if (!isEntry(base)) throw new Error("agx manifest: base is not a file entry");
+  if (!isRecord(looks)) throw new Error("agx manifest: looks is missing");
+  for (const look of AGX_LOOKS) {
+    if (looks[look] !== null && !isEntry(looks[look])) throw new Error(`agx manifest: look ${look} is not a file entry or null`);
+  }
+  return {
+    format: "agx-lut-2",
+    blender: typeof json.blender === "string" ? json.blender : "",
+    toWorking,
+    log2Min: num("log2Min"),
+    log2Max: num("log2Max"),
+    preLog2Max: num("preLog2Max"),
+    tFloor: num("tFloor"),
+    base,
+    looks: Object.fromEntries(AGX_LOOKS.map((look) => [look, isEntry(looks[look]) ? looks[look] : null])),
+  };
+}
+
+function halfToFloat(h: number): number {
+  const exponent = (h >> 10) & 31;
+  const mantissa = h & 1023;
+  const sign = h & 0x8000 ? -1 : 1;
+  if (exponent === 0) return sign * mantissa * 2 ** -24;
+  if (exponent === 31) return mantissa === 0 ? sign * Infinity : NaN;
+  return sign * (1 + mantissa / 1024) * 2 ** (exponent - 15);
+}
+
+/** `size`^3 little endian half-float RGB texels to floats. */
+function decodeGrid(bytes: Uint8Array, size: number, what: string): Float32Array {
+  const count = size * size * size * 3;
+  if (bytes.byteLength !== count * 2) throw new Error(`agx ${what}: ${bytes.byteLength} bytes, expected ${count * 2}`);
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const out = new Float32Array(count);
+  for (let i = 0; i < count; i++) out[i] = halfToFloat(view.getUint16(i * 2, true));
+  return out;
+}
+
+/** Pure: the loaded files for one look. `lookBytes` is null exactly for "none". */
+export function parseAgx(manifest: AgxManifest, look: AgxLook, baseBytes: Uint8Array, lookBytes: Uint8Array | null): AgxData {
+  const entry = manifest.looks[look];
+  if ((entry === null) !== (lookBytes === null)) throw new Error(`agx ${look}: look file does not match the manifest`);
+  const base = decodeGrid(baseBytes, manifest.base.size, "base");
+  const pre = entry === null || lookBytes === null ? null : { size: entry.size, values: decodeGrid(lookBytes, entry.size, look) };
+  return { look, manifest, base, pre };
+}
+
+const manifests = new Map<string, Promise<AgxManifest>>();
+const grids = new Map<string, Promise<Uint8Array>>();
+
+/** One fetch per URL for the life of the page. A failure is forgotten so the next call retries. */
+function once<T>(cache: Map<string, Promise<T>>, url: string, read: (response: Response) => Promise<T>): Promise<T> {
+  const known = cache.get(url);
+  if (known) return known;
+  const pending = fetch(url)
+    .then((response) => {
+      if (!response.ok) throw new Error(`${url}: ${response.status}`);
+      return read(response);
+    })
+    .catch((error: unknown) => {
+      cache.delete(url);
+      throw error;
+    });
+  cache.set(url, pending);
+  return pending;
+}
+
+const bytesOf = async (response: Response) => new Uint8Array(await response.arrayBuffer());
+
+/** Loads Blender's AgX cube and the warp for `look` from `baseUrl` (default: the app's public/lut/). Cached. */
+export async function loadAgx(look: AgxLook, baseUrl = `${import.meta.env.BASE_URL}lut/`): Promise<AgxData> {
+  const manifest = await once(manifests, `${baseUrl}manifest.json`, async (r) => parseManifest(await r.json()));
+  const entry = manifest.looks[look];
+  const [base, warp] = await Promise.all([
+    once(grids, baseUrl + manifest.base.file, bytesOf),
+    entry === null ? null : once(grids, baseUrl + entry.file, bytesOf),
+  ]);
+  return parseAgx(manifest, look, base, warp);
+}
 
 const clamp01 = (x: number): number => (x < 0 ? 0 : x > 1 ? 1 : x);
 const srgbEncode = (c: number): number => (c <= 0.0031308 ? 12.92 * c : 1.055 * c ** (1 / 2.4) - 0.055);
 
-/** A tone mapper for one look: reads r, g, b, writes display sRGB 0..1 to out[0..2]. No allocation per call. */
-function toneMapper(look: AgxLook): (r: number, g: number, b: number, out: number[]) => void {
-  const { toRec2020: A, inset: I, outset: O, toSrgb: S, logMin, logMax, curve, gamma } = AGX;
-  const { contrast, pivot, saturation, power } = AGX.looks[look];
-  const span = logMax - logMin;
-  const poly = (x: number) => curve.reduce((acc, c) => acc * x + c, 0);
-  return (r, g, b, out) => {
-    const r2 = A[0] * r + A[3] * g + A[6] * b, g2 = A[1] * r + A[4] * g + A[7] * b, b2 = A[2] * r + A[5] * g + A[8] * b;
-    const encode = (v: number) => clamp01((Math.log2(Math.max(v, 1e-10)) - logMin) / span);
-    let x = encode(I[0] * r2 + I[3] * g2 + I[6] * b2);
-    let y = encode(I[1] * r2 + I[4] * g2 + I[7] * b2);
-    let z = encode(I[2] * r2 + I[5] * g2 + I[8] * b2);
-    x = clamp01((x - pivot) * contrast + pivot);
-    y = clamp01((y - pivot) * contrast + pivot);
-    z = clamp01((z - pivot) * contrast + pivot);
-    if (saturation !== 1) {
-      const luma = 0.2126 * x + 0.7152 * y + 0.0722 * z;
-      x = clamp01(luma + saturation * (x - luma));
-      y = clamp01(luma + saturation * (y - luma));
-      z = clamp01(luma + saturation * (z - luma));
+/** A tone mapper for one loaded look: reads r, g, b, writes display sRGB 0..1 to out[0..2]. No allocation per call. */
+function toneMapper(lut: AgxData): (r: number, g: number, b: number, out: number[]) => void {
+  const { toWorking: M, log2Min, log2Max, preLog2Max, tFloor } = lut.manifest;
+  const tScale = 1 / (log2Max - log2Min);
+  const sScale = 1 / (preLog2Max - log2Min);
+  const { base, pre } = lut;
+  const baseSize = lut.manifest.base.size;
+  const t = [0, 0, 0];
+  const warp = [0, 0, 0];
+  const s = [0, 0, 0];
+
+  const shaper = (e: number) => Math.max((Math.log2(Math.max(e, 1e-30)) - log2Min) * tScale, tFloor);
+  const preCoord = (v: number) => clamp01((Math.log2(Math.max(v, 1e-30)) - log2Min) * sScale);
+
+  const trilinear = (values: Float32Array, size: number, x: number, y: number, z: number, out: number[]) => {
+    const m = size - 1;
+    const ux = x * m, uy = y * m, uz = z * m;
+    const ix = Math.min(Math.floor(ux), m - 1), iy = Math.min(Math.floor(uy), m - 1), iz = Math.min(Math.floor(uz), m - 1);
+    const fx = ux - ix, fy = uy - iy, fz = uz - iz;
+    const sy = 3 * size, sz = 3 * size * size;
+    const o = ix * 3 + iy * sy + iz * sz;
+    for (let k = 0; k < 3; k++) {
+      const c00 = values[o + k] * (1 - fx) + values[o + 3 + k] * fx;
+      const c10 = values[o + sy + k] * (1 - fx) + values[o + sy + 3 + k] * fx;
+      const c01 = values[o + sz + k] * (1 - fx) + values[o + sz + 3 + k] * fx;
+      const c11 = values[o + sy + sz + k] * (1 - fx) + values[o + sy + sz + 3 + k] * fx;
+      out[k] = (c00 * (1 - fy) + c10 * fy) * (1 - fz) + (c01 * (1 - fy) + c11 * fy) * fz;
     }
-    if (power !== 1) { x **= power; y **= power; z **= power; }
-    x = poly(x); y = poly(y); z = poly(z);
-    const lin = (v: number) => Math.max(0, v) ** gamma;
-    const x2 = lin(O[0] * x + O[3] * y + O[6] * z), y2 = lin(O[1] * x + O[4] * y + O[7] * z), z2 = lin(O[2] * x + O[5] * y + O[8] * z);
-    out[0] = srgbEncode(clamp01(S[0] * x2 + S[3] * y2 + S[6] * z2));
-    out[1] = srgbEncode(clamp01(S[1] * x2 + S[4] * y2 + S[7] * z2));
-    out[2] = srgbEncode(clamp01(S[2] * x2 + S[5] * y2 + S[8] * z2));
+  };
+
+  // Tetrahedral: the cell's corners along the path from low to high, by descending fraction.
+  const tetrahedral = (x: number, y: number, z: number, out: number[]) => {
+    const m = baseSize - 1;
+    const ux = x * m, uy = y * m, uz = z * m;
+    const ix = Math.min(Math.floor(ux), m - 1), iy = Math.min(Math.floor(uy), m - 1), iz = Math.min(Math.floor(uz), m - 1);
+    let fa = ux - ix, fb = uy - iy, fc = uz - iz;
+    let ea = 3, eb = 3 * baseSize, ec = 3 * baseSize * baseSize;
+    let swap: number;
+    if (fa < fb) { swap = fa; fa = fb; fb = swap; swap = ea; ea = eb; eb = swap; }
+    if (fb < fc) { swap = fb; fb = fc; fc = swap; swap = eb; eb = ec; ec = swap; }
+    if (fa < fb) { swap = fa; fa = fb; fb = swap; swap = ea; ea = eb; eb = swap; }
+    const o = ix * 3 + iy * 3 * baseSize + iz * 3 * baseSize * baseSize;
+    const far = 3 + 3 * baseSize + 3 * baseSize * baseSize;
+    const w0 = 1 - fa, w1 = fa - fb, w2 = fb - fc;
+    for (let k = 0; k < 3; k++) {
+      out[k] = base[o + k] * w0 + base[o + ea + k] * w1 + base[o + ea + eb + k] * w2 + base[o + far + k] * fc;
+    }
+  };
+
+  return (r, g, b, out) => {
+    t[0] = shaper(M[0] * r + M[1] * g + M[2] * b);
+    t[1] = shaper(M[3] * r + M[4] * g + M[5] * b);
+    t[2] = shaper(M[6] * r + M[7] * g + M[8] * b);
+    if (pre !== null) {
+      s[0] = preCoord(r);
+      s[1] = preCoord(g);
+      s[2] = preCoord(b);
+      trilinear(pre.values, pre.size, s[0], s[1], s[2], warp);
+      t[0] += warp[0];
+      t[1] += warp[1];
+      t[2] += warp[2];
+    }
+    tetrahedral(clamp01(t[0]), clamp01(t[1]), clamp01(t[2]), warp);
+    for (let k = 0; k < 3; k++) out[k] = clamp01(srgbEncode(Math.max(warp[k], 0) ** 2.4));
   };
 }
 
-/** One linear RGB triple to display-referred sRGB, 0..1. */
-export function agx(rgb: readonly [number, number, number], look: AgxLook): [number, number, number] {
+/** One linear Rec.709 triple to display sRGB, 0..1, as Blender's AgX view with the look the data was loaded for. */
+export function agx(rgb: readonly [number, number, number], lut: AgxData): [number, number, number] {
   const out = [0, 0, 0];
-  toneMapper(look)(rgb[0], rgb[1], rgb[2], out);
+  toneMapper(lut)(rgb[0], rgb[1], rgb[2], out);
   return [out[0], out[1], out[2]];
 }
 
@@ -131,8 +248,8 @@ export function agx(rgb: readonly [number, number, number], look: AgxLook): [num
  * The whole frame to 8-bit sRGB RGBA, straight (not premultiplied) alpha as
  * canvases and PNG want it. Non-finite samples read as 0.
  */
-export function toneMapFrame(frame: RadianceFrame, look: AgxLook): Uint8ClampedArray {
-  const map = toneMapper(look);
+export function toneMapFrame(frame: RadianceFrame, lut: AgxData): Uint8ClampedArray {
+  const map = toneMapper(lut);
   const out = new Uint8ClampedArray(frame.width * frame.height * 4);
   const rgb = [0, 0, 0];
   const finite = (v: number) => (Number.isFinite(v) ? v : 0);
@@ -182,18 +299,18 @@ function paint(width: number, height: number, rgba: Uint8ClampedArray): Offscree
 
 /**
  * AgX with the film's look, sRGB encode, PNG. A transparent film keeps alpha;
- * an opaque one is written fully opaque.
+ * an opaque one is written fully opaque. Loads the look's LUT files on first use.
  * Denoising is not available yet: `film.denoise` and the frame's guides are
  * ignored, and the PNG is the undenoised frame.
  */
-export function develop(frame: RadianceFrame, film: FilmSection): Promise<Blob> {
-  const rgba = toneMapFrame(frame, film.look);
+export async function develop(frame: RadianceFrame, film: FilmSection): Promise<Blob> {
+  const rgba = toneMapFrame(frame, await loadAgx(film.look));
   if (!film.transparent) for (let i = 3; i < rgba.length; i += 4) rgba[i] = 255;
   return paint(frame.width, frame.height, rgba).convertToBlob({ type: "image/png" });
 }
 
-/** A quick displayable version of a partial frame, for progress. Same AgX, no denoise. */
-export function quickLook(frame: RadianceFrame, look: AgxLook, maxEdgePx: number): ImageBitmap {
+/** A quick displayable version of a partial frame, for progress. Same AgX, no denoise. `lut` is loadAgx(look). */
+export function quickLook(frame: RadianceFrame, lut: AgxData, maxEdgePx: number): ImageBitmap {
   const small = downscaleFrame(frame, maxEdgePx);
-  return paint(small.width, small.height, toneMapFrame(small, look)).transferToImageBitmap();
+  return paint(small.width, small.height, toneMapFrame(small, lut)).transferToImageBitmap();
 }
