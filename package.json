@@ -9,6 +9,8 @@
     "lint": "oxlint",
     "test": "vitest run",
     "typecheck": "tsc --noEmit -p tsconfig.app.json",
+    "typecheck:dev": "tsc --noEmit -p tsconfig.dev.json",
+    "ui:drive": "bun tools/ui/drive.ts",
     "preview": "vite preview"
   },
   "dependencies": {
