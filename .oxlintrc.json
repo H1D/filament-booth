@@ -17,6 +17,7 @@
   "ignorePatterns": [
     "public/slicer/**",
     "public/cycles/**",
+    "public/pyodide/**",
     "vendor/**",
     "dist/**"
   ]
