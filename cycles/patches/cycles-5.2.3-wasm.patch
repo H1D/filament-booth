@@ -1,0 +1,84 @@
+diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
+index 1d258cbce..5500ceced 100644
+--- a/src/CMakeLists.txt
++++ b/src/CMakeLists.txt
+@@ -67,6 +67,11 @@ if(WITH_CYCLES_NATIVE_ONLY)
+     endif()
+     string(APPEND CMAKE_CXX_FLAGS " ${MSVC_NATIVE_ARCH_FLAGS}")
+   endif()
++elseif(EMSCRIPTEN)
++  # WebAssembly has none of the x86 kernel variants: build the generic kernel only.
++  set(CXX_HAS_SSE42 FALSE)
++  set(CXX_HAS_AVX2 FALSE)
++  set(CXX_HAS_F16C FALSE)
+ elseif(SUPPORTS_NEON_BUILD AND SSE2NEON_FOUND)
+   # On ARM we use SSE2NEON to compile the cycles SSE kernels into native NEON instructions
+   # Disable the CXX_HAS_* flags so we don't add any SSE or AVX compiler flags.
+diff --git a/src/app/CMakeLists.txt b/src/app/CMakeLists.txt
+index a04fd6009..e5275fe59 100644
+--- a/src/app/CMakeLists.txt
++++ b/src/app/CMakeLists.txt
+@@ -68,6 +68,13 @@ endif()
+ 
+ # Application build targets
+ 
++# The photo booth's C API for the browser. Its sources live outside this tree.
++if(EMSCRIPTEN AND CYCLES_BOOTH_SOURCES)
++  add_executable(cycles_booth ${CYCLES_BOOTH_SOURCES})
++  target_link_libraries(cycles_booth PRIVATE ${LIB})
++  set_target_properties(cycles_booth PROPERTIES SUFFIX ".mjs" LINK_FLAGS "${CYCLES_BOOTH_LINK_FLAGS}")
++endif()
++
+ if(WITH_CYCLES_STANDALONE)
+   set(SRC
+     cycles_standalone.cpp
+diff --git a/src/cmake/configure_build.cmake b/src/cmake/configure_build.cmake
+index 3ee1f8b76..e3cb1e744 100644
+--- a/src/cmake/configure_build.cmake
++++ b/src/cmake/configure_build.cmake
+@@ -34,6 +34,12 @@ elseif(CMAKE_C_COMPILER_ID MATCHES "Clang")
+   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wno-sign-compare -Wno-invalid-offsetof -fno-strict-aliasing -std=c++17 -fPIC")
+ endif()
+ 
++if(EMSCRIPTEN)
++  # One static WebAssembly module: position independent code only adds indirection.
++  string(REPLACE " -fPIC" "" CMAKE_C_FLAGS "${CMAKE_C_FLAGS}")
++  string(REPLACE " -fPIC" "" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
++endif()
++
+ if(APPLE)
+   if(NOT ${CMAKE_GENERATOR} MATCHES "Xcode")
+     # force CMAKE_OSX_DEPLOYMENT_TARGET for makefiles, will not work else ( cmake bug ? )
+diff --git a/src/cmake/macros.cmake b/src/cmake/macros.cmake
+index 1b81b360e..edc6e60b0 100644
+--- a/src/cmake/macros.cmake
++++ b/src/cmake/macros.cmake
+@@ -126,7 +126,10 @@ function(cycles_external_libraries_append libraries)
+       list(APPEND ${libraries} "opengl32")
+     endif()
+   endif()
+-  if(UNIX AND NOT APPLE)
++  if(EMSCRIPTEN)
++    # Emscripten's libc has no libutil.
++    list(APPEND ${libraries} "-lm -lc")
++  elseif(UNIX AND NOT APPLE)
+     list(APPEND ${libraries} "-lm -lc -lutil")
+   endif()
+   list(APPEND ${libraries}
+diff --git a/src/util/stack_allocator.h b/src/util/stack_allocator.h
+index 7f9ee9258..7b68bb9cc 100644
+--- a/src/util/stack_allocator.h
++++ b/src/util/stack_allocator.h
+@@ -26,7 +26,11 @@ template<int SIZE, typename T> class ccl_try_align(16) StackAllocator {
+ 
+   StackAllocator() : pointer_(0), use_stack_(true) {}
+ 
+-  StackAllocator(const StackAllocator & /*unused*/) : pointer_(0), use_stack_(true) {}
++  /* A copy must not hand out its in-object storage, because the copy can be destroyed while
++   * the memory it allocated is still in use. The libc++ 23 of emsdk 7 grows a vector through a
++   * split buffer that holds the allocator by value: it allocates from that copy, moves the
++   * storage into the vector and destroys the split buffer. */
++  StackAllocator(const StackAllocator & /*unused*/) : pointer_(0), use_stack_(false) {}
+ 
+   template<class U>
+   StackAllocator(const StackAllocator<SIZE, U> & /*unused*/) : pointer_(0), use_stack_(false)
