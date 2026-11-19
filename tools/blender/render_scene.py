@@ -3,10 +3,10 @@
   blender -b --factory-startup --debug-cycles --python tools/blender/render_scene.py -- \\
       scene.json out.png [--bvh bvh2|embree] [--threads N] [--samples N]
 
-scene.json is sceneToJson's format: the Scene with every typed array replaced by
-{"buffer": name, "length": n}. Each buffer is a raw little-endian file next to the JSON, named
-<name> or <name>.bin. The image is written with the Standard view transform, 8 bit, RGBA when
-the film is transparent.
+scene.json is src/scene.ts exportScene's format: the Scene with every typed array replaced by
+{"buffer": name, "kind": "f32" | "i16" | "u32", "length": n}. Each buffer is a raw little-endian
+file named <name>.bin next to the JSON. The image is written with the Standard view transform,
+8 bit, RGBA when the film is transparent.
 
 The per-vertex part data (roughness, wall normals, plate mask) is derived here in NumPy,
 independently of src/photo/cycles-upload.ts, so a parity run checks that code as well. The node
@@ -38,7 +38,7 @@ RING_SEGMENTS = 256
 ELLIPSE_SEGMENTS = 64
 RING_LIFT_M = 1e-5
 
-INT16_FIELDS = ('part.mesh.normal', 'part.mesh.tangent')
+DTYPES = {'f32': np.float32, 'i16': np.int16, 'u32': np.uint32}
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
@@ -56,24 +56,20 @@ def load(path):
     """The scene with buffers resolved to NumPy arrays of the type their field has."""
     base = os.path.dirname(os.path.abspath(path))
 
-    def resolve(node, where):
+    def resolve(node):
         if isinstance(node, dict):
-            if set(node) == {'buffer', 'length'}:
+            if set(node) == {'buffer', 'kind', 'length'}:
                 name = node['buffer']
-                file = os.path.join(base, name)
-                if not os.path.exists(file):
-                    file += '.bin'
-                dtype = np.int16 if where in INT16_FIELDS else np.uint32 if where.endswith('index') else np.float32
-                arr = np.fromfile(file, dtype=dtype)
+                arr = np.fromfile(os.path.join(base, name + '.bin'), dtype=DTYPES[node['kind']])
                 assert arr.size == node['length'], f'{name}: {arr.size} values, expected {node["length"]}'
                 return arr
-            return {k: resolve(v, f'{where}.{k}' if where else k) for k, v in node.items()}
+            return {k: resolve(v) for k, v in node.items()}
         if isinstance(node, list):
-            return [resolve(v, where) for v in node]
+            return [resolve(v) for v in node]
         return node
 
     with open(path) as f:
-        return resolve(json.load(f), '')
+        return resolve(json.load(f))
 
 
 def node(nt, kind, **inputs):

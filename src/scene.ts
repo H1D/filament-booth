@@ -3,7 +3,7 @@
  *
  * A Scene is everything a renderer needs, already decided, in Blender's
  * frame (Z up), metres, watts and linear colour. The preview, the Cycles
- * engine, the raster photo engine and native Blender (through sceneToJson)
+ * engine, the raster photo engine and native Blender (through exportScene)
  * read it and resolve nothing themselves. Pose, camera fit, light placement,
  * kelvin, the gloss curve and the per-layer roughness each live here once.
  *
@@ -608,21 +608,48 @@ function sharedSweep(): ReturnType<typeof sweepMesh> {
 
 // ---- export ------------------------------------------------------------------
 
-/** Everything but the mesh buffers, for tools/blender/render_scene.py. Typed
- *  arrays are written next to it by the caller and referenced by name. */
-export function sceneToJson(scene: Scene): string {
-  const plain = (value: unknown, path: string): unknown => {
-    if (ArrayBuffer.isView(value)) {
-      const length = value instanceof DataView ? value.byteLength : Reflect.get(value, "length");
-      return { buffer: path, length };
+export type SceneBuffer = Float32Array | Int16Array | Uint32Array;
+export type BufferKind = "f32" | "i16" | "u32";
+
+function bufferKind(value: SceneBuffer): BufferKind {
+  if (value instanceof Float32Array) return "f32";
+  if (value instanceof Int16Array) return "i16";
+  return "u32";
+}
+
+function isSceneBuffer(value: unknown): value is SceneBuffer {
+  return value instanceof Float32Array || value instanceof Int16Array || value instanceof Uint32Array;
+}
+
+export interface SceneFile {
+  /** The scene with every typed array replaced by `{ buffer, kind, length }`. */
+  readonly json: string;
+  /** The arrays, by the dotted path from the scene root (`part.mesh.position`,
+   *  `lights.emitters.0.…`), which is also the `buffer` field that refers to them. */
+  readonly buffers: ReadonlyMap<string, SceneBuffer>;
+}
+
+/**
+ * The scene file for tools/blender/render_scene.py, and the only writer of
+ * it. The JSON holds everything but the typed arrays. The caller writes each
+ * array in `buffers` as raw little-endian values to `<name>.bin` next to the
+ * JSON. A reference carries its element type, so a reader needs no table of
+ * which field is which. The scene types hold no other kind of typed array.
+ */
+export function exportScene(scene: Scene): SceneFile {
+  const buffers = new Map<string, SceneBuffer>();
+  const walk = (value: unknown, path: string): unknown => {
+    if (isSceneBuffer(value)) {
+      buffers.set(path, value);
+      return { buffer: path, kind: bufferKind(value), length: value.length };
     }
-    if (Array.isArray(value)) return value.map((v, i) => plain(v, `${path}[${i}]`));
+    if (Array.isArray(value)) return value.map((v, i) => walk(v, `${path}.${i}`));
     if (typeof value === "object" && value !== null) {
-      return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, plain(v, path === "" ? k : `${path}.${k}`)]));
+      return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, walk(v, path === "" ? k : `${path}.${k}`)]));
     }
     return value;
   };
-  return JSON.stringify(plain(scene, ""), null, 2);
+  return { json: JSON.stringify(walk(scene, ""), null, 1), buffers };
 }
 
 export type { Metres, Studio };

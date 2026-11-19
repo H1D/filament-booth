@@ -16,10 +16,10 @@
 import { spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { exportScene, type Scene } from "../../src/scene";
 import { Browser, record, REPO, startVite } from "./browser";
 import { fixture, isFixtureName, type FixtureName } from "./fixtures";
 import { compare, decodePng, encodePng, sideBySide, standard, type Difference } from "./image";
-import { writeScene } from "./scene-json";
 
 const BLENDER = process.env.BLENDER ?? `${process.env.HOME}/apps/blender-5.2.3-linux-x64/blender`;
 const OUT = join(REPO, "tools/parity/out");
@@ -29,6 +29,14 @@ const opt = (name: string, fallback: string) => {
   return i >= 0 ? argv[i + 1] : fallback;
 };
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** The scene file: scene.json and one <name>.bin per buffer, the format src/scene.ts defines. */
+function writeScene(scene: Scene, dir: string): void {
+  mkdirSync(dir, { recursive: true });
+  const file = exportScene(scene);
+  for (const [name, data] of file.buffers) writeFileSync(join(dir, `${name}.bin`), new Uint8Array(data.buffer, data.byteOffset, data.byteLength));
+  writeFileSync(join(dir, "scene.json"), file.json);
+}
 
 // ---- reading the page --------------------------------------------------------------------
 

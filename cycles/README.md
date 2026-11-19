@@ -51,7 +51,7 @@ Build switches that matter, all in `build_cycles.sh`:
 | `src/photo/cycles-worker.ts` | Hosts the module for one render |
 | `src/photo/cycles.ts` | `cyclesEngine(): PhotoEngine` |
 | `tools/blender/render_scene.py` | The same scene in native Blender 5.2.3 |
-| `tools/parity/` | Fixtures, the sceneToJson writer, the browser and Blender parity run |
+| `tools/parity/` | Fixtures, the browser and Blender parity run |
 
 Settings the Scene does not name are what Blender 5.2.3's sync writes for a factory scene rendered
 with `blender -b`. Examples: blue-noise sampling, seed 0, light tree, glossy filter 1, approximate

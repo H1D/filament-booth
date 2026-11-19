@@ -36,7 +36,7 @@ Two independent design sketches reached the same core shape: one saved document,
 16. **Print state** (B): `PrintState` union `empty | loading | ready | error`, with the last good part kept on show during an error or a re-slice. `PrintPipeline` hides slicing, parsing, exposed-wall detection, sweeping, caching and supersession. The lite mesh reuses the cached centreline.
 17. **Plate face.** One constant `PLATE_EPS` in `print.ts`, tested on Z. Bed type comes from the document (`auto` reads the G-code's bed).
 18. **Branded unit types** (B) stay in `document.ts`.
-19. **Parity tooling.** `sceneToJson(scene)` plus mesh buffers feed `tools/blender/render_scene.py`, which rebuilds the scene in native Blender 5.2.3. `tools/compare` reports per-pixel statistics between that and a browser photo.
+19. **Parity tooling.** `exportScene(scene)` in `scene.ts` is the one writer of the scene file: the JSON, and next to it the list of buffers by dotted path (`part.mesh.position`) with their element type. The caller writes each as `<path>.bin`. `tools/blender/render_scene.py` reads that and rebuilds the scene in native Blender 5.2.3. `tools/compare` reports per-pixel statistics between that and a browser photo.
 
 20. **HDR images.** `presets.ts` holds the one table from `hdrId` to a file under `public/hdr/`. Both renderers load through it.
 
