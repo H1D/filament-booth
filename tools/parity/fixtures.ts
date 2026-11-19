@@ -331,6 +331,6 @@ export function fixture(name: FixtureName, o: FixtureOptions = {}): Scene {
 }
 
 export function isFixtureName(name: string): name is FixtureName {
-  return (FIXTURES as readonly string[]).includes(name);
+  return FIXTURES.some((f) => f === name);
 }
 
