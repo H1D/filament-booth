@@ -6,6 +6,8 @@
 import type { RadianceFrame } from "../src/film";
 import { cyclesEngine } from "../src/photo/cycles";
 import type { RenderStats } from "../src/photo/cycles-worker";
+import type { Scene } from "../src/scene";
+import { compiledFixture, digestOf, isCompiledName } from "../tools/parity/compiled";
 import { fixture, isFixtureName } from "../tools/parity/fixtures";
 
 interface RunResult {
@@ -28,6 +30,8 @@ interface PhotoPage {
   message: string;
   fits: string;
   buildMs: number;
+  /** SHA-256 of the scene file (src/scene.ts exportScene) for a compiled fixture, else empty. */
+  digest: string;
   triangles: number;
   width: number;
   height: number;
@@ -69,13 +73,27 @@ function draw(frame: RadianceFrame) {
   ctx.putImageData(img, 0, 0);
 }
 
+/** The hand-built fixtures, or a compiled one from the G-code at `gcode=` (a path the dev server serves). */
+async function build(name: string): Promise<{ scene: Scene; digest: string }> {
+  const options = { width: num("width", 640), height: num("height", 400), samples: num("samples", 256) };
+  if (isCompiledName(name)) {
+    const url = params.get("gcode");
+    if (!url) throw new Error(`fixture ${name} needs gcode=<url>`);
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`${url}: HTTP ${response.status}`);
+    const scene = await compiledFixture(name, await response.text(), options);
+    return { scene, digest: await digestOf(scene) };
+  }
+  if (!isFixtureName(name)) throw new Error(`no fixture ${name}`);
+  return { scene: fixture(name, options), digest: "" };
+}
+
 async function main() {
   const name = params.get("fixture") ?? "a";
-  if (!isFixtureName(name)) throw new Error(`no fixture ${name}`);
   const t0 = performance.now();
-  const scene = fixture(name, { width: num("width", 640), height: num("height", 400), samples: num("samples", 256) });
+  const { scene, digest } = await build(name);
   const page: PhotoPage = {
-    state: "building", message: name, fits: "", buildMs: performance.now() - t0,
+    state: "building", message: name, fits: "", buildMs: performance.now() - t0, digest,
     triangles: scene.part ? scene.part.mesh.index.length / 3 : 0,
     width: scene.film.width, height: scene.film.height, transparent: scene.film.transparent, runs: [], frame: null,
   };

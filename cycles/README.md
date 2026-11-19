@@ -101,19 +101,39 @@ coordinates, not along the print path its comment describes.
 
 ## Measured
 
-What limits these numbers: 16 hardware threads (8 cores with SMT, the machine otherwise idle
-before and after each run by `top`), one run per configuration except where two are listed,
-headless Chromium on localhost, native Blender 5.2.3 with its AVX2 kernel.
-
-Parity, `bun tools/parity/run.ts`, 640 x 400, 256 samples, adaptive threshold 0.004, Standard
-view transform, 8 bit. Fixture (d) is compared over 50 % grey because its film is transparent.
+Parity, `bun tools/parity/run.ts`, 256 samples, adaptive threshold 0.004, Standard view transform,
+8 bit. Fixtures a to d are hand-built scenes at 640 x 400. Fixtures e to g go `defaultDocument()`
+and two looks through the app's own path (G-code, print session, named edits, `compileScene`) on a
+real bead mesh, at 512 x 640 (the document's 4:5 at a 640 px long edge). Fixture (d) is compared
+over 50 % grey because its film is transparent.
 
 | Fixture | Checks | PSNR dB, native BVH2 | PSNR dB, native Embree | Mean abs diff /255 | Over 4/255 | Alpha mean abs diff /255 |
 |---|---|---|---|---|---|---|
 | a | bead material, per-vertex roughness, HDR world turned 30 degrees | 62.55 | 62.64 | 0.032 | 0.00 % | 0 |
 | b | ellipse key with spread 60, part-only rim with spread 40, part-only scrim | 57.86 | 57.92 | 0.050 | 0.22 % | 0 |
-| c | floor cards with a dark glossy part | 69.43 | 69.64 | 0.007 | 0.00 % | 0 |
+| c | floor cards (the faded disc) with a dark glossy part | 67.52 | not run | 0.010 | 0.00 % | 0 |
 | d | f/2.8 at 12 cm, transparent film, shadow catcher | 61.27 | 61.30 | 0.054 | 0.00 % | 0.014 |
+| e | the default document: PETG Basic under the studio look | 61.42 | not run | 0.039 | 0.01 % | 0 |
+| f | the dark look (part-only strips and scrims) with PLA Matte | 58.88 | not run | 0.032 | 0.04 % | 0 |
+| g | the gradient look (floor card ring), turntable 40 degrees, resting on the right face | 54.48 | not run | 0.184 | 0.05 % | 0 |
+
+Fixture (c) was 69.43 dB before the floor ring became the faded disc its contract describes (it
+was a hard-edged annulus). It moved because the scene changed, not the agreement: the table
+fixture's glossy reflections now carry a radial fade that both sides compute.
+
+What limits these numbers: 16 hardware threads (8 cores with SMT) shared with other work on the
+machine whose load was not measured, so the seconds are indicative and the image statistics are
+not affected, one run per configuration, headless Chromium on localhost, native Blender 5.2.3 with
+its AVX2 kernel. The browser renders are deterministic: fixtures a to d came out byte-identical
+across two builds of the tree. For e to g the part is
+`bsch04/sliced/plate_1.gcode` from the LEKV2 reference folder (8.66 million triangles), and Node
+and the page each compile the scene from that text. `run.ts` stops unless the SHA-256 of their two
+scene files is equal, so the compile cannot differ between them unseen. Fixture (g) is the highest
+at 0.184 because of its plate face: 157 of the 159 pixels over 4/255 lie in a box that is 9 % of
+the frame around that face, where the mean difference is 0.50 against 0.15 elsewhere. The face
+carries the grain, a Voronoi and noise bump at 6000 per metre on a 25 mm face. The likely cause is
+that the two kernels round that float arithmetic differently and the bump amplifies it. That is
+inferred from where the difference sits, not isolated.
 
 The BVH does not limit agreement: Embree and BVH2 agree to 0.2 dB. What differs is arithmetic.
 The native AVX2 kernel and the wasm kernel, auto-vectorised by a different compiler with a

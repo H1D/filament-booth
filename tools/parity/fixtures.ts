@@ -1,7 +1,7 @@
 /**
- * Parity fixtures, built by hand as Scene values because compileScene does not exist yet.
- * Pure and deterministic: the dev page builds them in the browser, write-fixture.ts writes the
- * same values for native Blender.
+ * Parity fixtures built by hand as Scene values, each isolating one renderer feature. compiled.ts has
+ * the ones that go through compileScene. Pure and deterministic: the dev page builds them in the
+ * browser and run.ts builds the same values for native Blender.
  */
 import { m, type Rgb, type Vec3 } from "../../src/document";
 import { packBeadWord, type BeadMesh } from "../../src/print";
