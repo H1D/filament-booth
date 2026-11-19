@@ -11,6 +11,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.app.json",
     "typecheck:dev": "tsc --noEmit -p tsconfig.dev.json",
     "ui:drive": "bun tools/ui/drive.ts",
+    "agent:drive": "bun tools/agent/drive.ts",
     "e2e": "bun tools/e2e/drive.ts",
     "preview": "vite preview"
   },
