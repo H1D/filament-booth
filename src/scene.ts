@@ -14,8 +14,8 @@
  * - This file is pure: no three.js, no DOM, no workers. It runs in Node.
  */
 import {
-  DEFAULT_GLOSS, m, mm,
-  type AgxLook, type BedType, type BoothDocument, type CameraSetup, type FeatureCode, type FilamentChoice,
+  DEFAULT_GLOSS, deg, m, mm,
+  type AgxLook, type BedType, type BoothDocument, type CameraSetup, type Degrees, type FeatureCode, type FilamentChoice,
   type Imperfections, type Metres, type Pose, type Rgb, type Studio, type StudioLight, type Vec3,
 } from "./document";
 import { BEAD_WORD, type BeadMesh, type LoadedPrint, type SlicedPrint } from "./print";
@@ -252,6 +252,24 @@ const clamp = (x: number, lo: number, hi: number): number => Math.min(hi, Math.m
 function sphericalOffset(azimuthDeg: number, elevationDeg: number, distance: number): V3 {
   const az = rad(azimuthDeg), el = rad(elevationDeg);
   return [distance * Math.sin(az) * Math.cos(el), -distance * Math.cos(az) * Math.cos(el), distance * Math.sin(el)];
+}
+
+/**
+ * The inverse of sphericalOffset: where `point` sits about `centre`. Azimuth
+ * is in (-180, 180], and 0 straight above or below the centre, where every
+ * azimuth names the same point. Throws a RangeError when the point is the centre.
+ */
+export function sphericalAbout(centre: V3, point: V3): { readonly azimuth: Degrees; readonly elevation: Degrees; readonly distance: Metres } {
+  const [x, y, z] = sub(point, centre);
+  const distance = Math.hypot(x, y, z);
+  if (distance === 0) throw new RangeError("the point is the centre, so it has no direction from it");
+  const flat = Math.hypot(x, y);
+  const azimuth = flat === 0 ? 0 : (Math.atan2(x, -y) * 180) / Math.PI;
+  return {
+    azimuth: deg(azimuth === -180 ? 180 : azimuth),
+    elevation: deg((Math.atan2(z, flat) * 180) / Math.PI),
+    distance: m(distance),
+  };
 }
 
 export function transformPoint(mat: Mat4, p: V3): V3 {

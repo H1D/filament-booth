@@ -58,6 +58,9 @@ export class Booth {
   #cancelReslice: (() => void) | null = null;
   /** Set while a save is pending. */
   #cancelSave: (() => void) | null = null;
+  /** Opens and re-slices that have not settled yet. */
+  #working = 0;
+  readonly #idleWaiters = new Set<() => void>();
 
   constructor(deps: BoothDeps) {
     this.#deps = deps;
@@ -69,6 +72,37 @@ export class Booth {
   get doc(): Readonly<BoothDocument> { return this.#doc; }
   get print(): PrintState { return this.#print; }
   get scene(): Scene { return this.#scene; }
+
+  /** The name of the part on show, without its print extension, or null with no part. */
+  get partName(): string | null {
+    return this.#shown === null ? null : partNameOf(this.#shown.source);
+  }
+
+  /**
+   * Resolves with the print state once no open or re-slice is pending or
+   * running, the 300 ms re-slice debounce and the job it starts included. A
+   * photo waits for it, so a slicing edit made just before is in the picture.
+   */
+  whenIdle(): Promise<PrintState> {
+    return new Promise((resolve) => {
+      const check = (): void => {
+        if (this.#working > 0 || this.#cancelReslice !== null || this.#print.status === "loading") return;
+        this.#idleWaiters.delete(check);
+        resolve(this.#print);
+      };
+      this.#idleWaiters.add(check);
+      check();
+    });
+  }
+
+  /**
+   * The scene the document would compile to after `mutate`, without
+   * committing it: nothing is saved, notified or re-sliced. An invalid result
+   * throws a DocumentError as update does.
+   */
+  sceneWith(mutate: (draft: BoothDocument) => void): Scene {
+    return compileScene(this.#revise(mutate), this.#shown, this.#rev, this.#scene);
+  }
 
   /**
    * Fires after any document or print change, with the scene already
@@ -115,7 +149,11 @@ export class Booth {
    * first, and a late result from the old file is dropped. A fresh part is
    * framed once and its focus point is cleared.
    */
-  async open(file: File): Promise<void> {
+  open(file: File): Promise<void> {
+    return this.#work(this.#open(file));
+  }
+
+  async #open(file: File): Promise<void> {
     const job = this.#supersede();
     let source: PrintSource;
     try {
@@ -130,13 +168,13 @@ export class Booth {
 
   openSample(url: string): Promise<void> {
     const job = this.#supersede();
-    return this.#load(job, { kind: "bin", url });
+    return this.#work(this.#load(job, { kind: "bin", url }));
   }
 
   /** Freezes the current scene into a photo run. */
   takePhoto(): PhotoRun {
     if (this.#shown === null) throw new Error("Open a part before taking a photo");
-    return this.#deps.takePhoto(this.#scene, partName(this.#shown.source));
+    return this.#deps.takePhoto(this.#scene, partNameOf(this.#shown.source));
   }
 
   exportJson(): string {
@@ -214,6 +252,17 @@ export class Booth {
 
   // ---- print -------------------------------------------------------------------
 
+  /** Counts print work while it runs, so whenIdle knows when none is left. */
+  async #work(job: Promise<void>): Promise<void> {
+    this.#working += 1;
+    try {
+      await job;
+    } finally {
+      this.#working -= 1;
+      for (const check of [...this.#idleWaiters]) check();
+    }
+  }
+
   /** Starts a new job number, so everything still in flight from before is stale. */
   #supersede(): number {
     this.#cancelPendingReslice();
@@ -263,7 +312,7 @@ export class Booth {
     this.#cancelPendingReslice();
     this.#cancelReslice = this.#schedule(() => {
       this.#cancelReslice = null;
-      void this.#reslice();
+      void this.#work(this.#reslice());
     }, RESLICE_QUIET_MS);
   }
 
@@ -292,7 +341,7 @@ export class Booth {
 
   /** Slicing was edited while a job ran with the older values: run again with the current ones. */
   #resliceIfStale(usedByJob: SliceSettings): void {
-    if (!same(usedByJob, this.#doc.slicing)) void this.#reslice();
+    if (!same(usedByJob, this.#doc.slicing)) void this.#work(this.#reslice());
   }
 
   // ---- persistence -------------------------------------------------------------
@@ -408,7 +457,7 @@ async function sha256Hex(file: File): Promise<string> {
 }
 
 /** The photo's file name stem: the file or sample name without its print extension. */
-function partName(source: PrintSource): string {
+function partNameOf(source: PrintSource): string {
   const raw = source.kind === "bin" ? (source.url.split(/[?#]/)[0].split("/").pop() ?? "") : source.file.name;
   return raw.replace(/\.(gcode\.3mf|3mf|gcode|stl|bin)$/i, "") || "part";
 }
