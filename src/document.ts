@@ -84,7 +84,11 @@ export type BedType = (typeof BED_TYPES)[number];
 export const DEFAULT_GLOSS = 0.5;
 
 export interface FilamentChoice {
-  presetId: FilamentPresetId | null; // null once any recipe field is edited
+  /** The preset the recipe was copied from. It stays when the recipe or gloss is
+   *  edited: `Booth.filamentModified` compares them with that preset's, so
+   *  editing a field back clears the mark. Null only for a document that names
+   *  no preset, which the panel shows as Custom. */
+  presetId: FilamentPresetId | null;
   recipe: FilamentRecipe;
   /** 0..1 UI slider, DEFAULT_GLOSS = the recipe as written. Not a blend
    *  between presets: scene.ts applies it as one monotonic curve over every

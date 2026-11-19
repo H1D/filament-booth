@@ -39,6 +39,7 @@ Two independent design sketches reached the same core shape: one saved document,
 19. **Parity tooling.** `exportScene(scene)` in `scene.ts` is the one writer of the scene file: the JSON, and next to it the list of buffers by dotted path (`part.mesh.position`) with their element type. The caller writes each as `<path>.bin`. `tools/blender/render_scene.py` reads that and rebuilds the scene in native Blender 5.2.3. `tools/compare` reports per-pixel statistics between that and a browser photo.
 
 20. **HDR images.** `presets.ts` holds the one table from `hdrId` to a file under `public/hdr/`. Both renderers load through it.
+21. **A preset is copied, never referenced.** Applying a filament preset or a look copies its values into the document and records where from (`filament.presetId`, `lookBase`). Editing the copy leaves that record alone. `Booth.filamentModified` and `Booth.lookModified` compare the copy with the preset on every read, so editing a field back to the preset's value clears the mark, and Reset applies the recorded preset again. `presetId` is null only for a document that names no preset, which the Filament panel shows as Custom. Each filament preset carries `calibrated`: false for the two whose numbers are estimates (PLA Basic, PLA Silk), which the panel marks "estimate".
 
 ## How the merge was judged
 
