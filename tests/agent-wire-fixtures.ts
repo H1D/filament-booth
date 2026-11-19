@@ -2,8 +2,10 @@
  * What the tab-side tests share: a socket the test plays the bridge on, and a
  * clock the test turns by hand. Neither touches a network or sleeps.
  */
+import type { ScriptRuntime } from "../src/agent/agent";
+import type { JobIo } from "../src/agent/host";
 import type { Bytes, SocketLike } from "../src/agent/link";
-import { PROTOCOL, parseTabMessage, type BridgeMessage, type TabMessage } from "../src/agent/protocol";
+import { PROTOCOL, parseTabMessage, type BridgeMessage, type ScriptOutcome, type TabMessage } from "../src/agent/protocol";
 import type { Schedule } from "../src/schedule";
 
 export type Sent =
@@ -99,5 +101,68 @@ export class ManualClock {
       next.fn();
     }
     this.#now = end;
+  }
+}
+
+export interface FakeScript {
+  readonly code: string;
+  readonly io: Omit<JobIo, "signal">;
+  /** Ends the script as Python would. */
+  end(outcome: ScriptOutcome): void;
+}
+
+/** A Python worker the test steers: start() waits for the test, and a script ends when the test or a cancel says so. */
+export class FakeRuntime implements ScriptRuntime {
+  starts = 0;
+  disposed = 0;
+  readonly cancels: ("agent" | "user")[] = [];
+  readonly scripts: FakeScript[] = [];
+  #ready: { resolve: () => void; reject: (error: Error) => void } | null = null;
+  #running: FakeScript | null = null;
+  #settle: ((outcome: ScriptOutcome) => void) | null = null;
+
+  start(): Promise<void> {
+    this.starts += 1;
+    return new Promise<void>((resolve, reject) => { this.#ready = { resolve, reject }; });
+  }
+
+  /** Python finished loading. */
+  loaded(): void { this.#ready?.resolve(); }
+
+  /** Python could not load. */
+  failToLoad(message: string): void { this.#ready?.reject(new Error(message)); }
+
+  run(code: string, io: Omit<JobIo, "signal">): Promise<ScriptOutcome> {
+    return new Promise<ScriptOutcome>((resolve) => {
+      const script: FakeScript = { code, io, end: (outcome) => { this.#finish(script, outcome); } };
+      this.#running = script;
+      this.#settle = resolve;
+      this.scripts.push(script);
+    });
+  }
+
+  cancel(by: "agent" | "user"): void {
+    if (this.#running === null) return;
+    this.cancels.push(by);
+    this.#finish(this.#running, { kind: "cancelled", by });
+  }
+
+  dispose(): void {
+    this.disposed += 1;
+    if (this.#running !== null) this.#finish(this.#running, { kind: "cancelled", by: "user" });
+  }
+
+  get script(): FakeScript {
+    const script = this.scripts[this.scripts.length - 1];
+    if (script === undefined) throw new Error("no script was run");
+    return script;
+  }
+
+  #finish(script: FakeScript, outcome: ScriptOutcome): void {
+    if (this.#running !== script) return;
+    const settle = this.#settle;
+    this.#running = null;
+    this.#settle = null;
+    settle?.(outcome);
   }
 }
