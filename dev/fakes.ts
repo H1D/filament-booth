@@ -158,6 +158,8 @@ class FakeRun implements PhotoRun {
   #timer: ReturnType<typeof setInterval> | null = null;
   #tick = 0;
   #over = false;
+  /** Finish now was pressed, so the photo holds the share of the samples taken so far. */
+  #early = false;
 
   constructor(scene: Scene, partName: string) {
     this.#scene = scene;
@@ -183,6 +185,7 @@ class FakeRun implements PhotoRun {
 
   finishNow(): void {
     if (this.#over || this.#timer === null) return;
+    this.#early = true;
     this.#stop();
     void this.#develop();
   }
@@ -232,9 +235,11 @@ class FakeRun implements PhotoRun {
     });
     if (this.#over) return;
     this.#over = true;
+    const target = this.#scene.film.samples;
+    const samples = this.#early ? Math.max(1, Math.min(target - 1, Math.round((target * this.#tick) / TICKS))) : target;
     const photo: Photo = {
       png, fileName: `${this.#partName}_${stamp()}.png`, width: this.#scene.film.width, height: this.#scene.film.height,
-      samples: this.#scene.film.samples, targetSamples: this.#scene.film.samples, stoppedBy: { kind: "samples" },
+      samples, targetSamples: target, stoppedBy: this.#early ? { kind: "user" } : { kind: "samples" },
       engine: "cycles", docRev: this.docRev,
     };
     this.#emit({ state: "done", photo });

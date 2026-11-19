@@ -314,7 +314,20 @@ try {
     await page.getByRole("button", { name: "Finish now" }).click();
     await until("done", async () => ((await text(page, ".photo-card .state").catch(() => "")) === "Done" ? true : null), 5000);
     photosTaken += 1;
-    return `done ${((Date.now() - started) / 1000).toFixed(1)} s after Finish now, tray holds ${await page.locator(".photo-card .thumbs li").count()}`;
+    const lines = (await page.locator(".photo-card .readout").allInnerTexts()).join(" | ");
+    expect(/\d+ of \d+ samples/.test(lines) && lines.includes("Finished early."), `the card reads "${lines}" after Finish now`);
+    return `done ${((Date.now() - started) / 1000).toFixed(1)} s after Finish now, tray holds ${await page.locator(".photo-card .thumbs li").count()}; the card reads "${lines}"`;
+  });
+
+  await check("the time limit offers nine choices and starts at 5 minutes", async () => {
+    const output = await openSection(page, "output");
+    const limit = output.getByRole("combobox", { name: "Time limit", exact: true });
+    const offered = await limit.locator("option").allInnerTexts();
+    expect(offered.length === 9 && offered[0] === "No limit" && offered[8] === "1 hour", `options: ${offered.join(", ")}`);
+    expect((await limit.inputValue()) === "300", `the limit starts at ${await limit.inputValue()} s`);
+    await limit.selectOption({ label: "10 minutes" });
+    await until("the setup to hold 600 s", async () => ((await limit.inputValue()) === "600" ? true : null), 3000);
+    return `options ${offered.join(", ")}; default 300 s; picked 10 minutes -> 600 s`;
   });
 
   await check("export then import restores an edited value", async () => {
