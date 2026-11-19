@@ -1,0 +1,22 @@
+{
+  "name": "@muon3d/slicer-engine-protocol",
+  "version": "2.4.0",
+  "description": "Protocol v2 of the Muon3D Slicer Engine: message and data types, capability names, transports (Web Worker, Node worker_threads, byte streams) and a small RPC client. No engine code.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Muon-3D/muon3d-slicer-engine.git",
+    "directory": "packages/protocol"
+  },
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./src/*": "./src/*"
+  },
+  "types": "./dist/index.d.ts",
+  "files": ["dist", "src", "env.d.ts", "LICENSE", "README.md"],
+  "sideEffects": false
+}

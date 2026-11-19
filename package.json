@@ -12,6 +12,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@muon3d/slicer-engine-protocol": "file:vendor/muon-protocol",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "three": "0.187.0"

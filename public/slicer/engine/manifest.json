@@ -1,0 +1,231 @@
+{
+  "manifest": 2,
+  "name": "muon3d-slicer-engine",
+  "version": "0.6.0-m1.1",
+  "protocol": {
+    "major": 2,
+    "minor": 4
+  },
+  "license": "AGPL-3.0-only",
+  "orcaVersion": "2.5.0-dev",
+  "orcaCommit": "2d1163eb6f5228de605150e3b4800081947070eb",
+  "builtAt": "2026-11-18T13:19:35.000Z",
+  "orca": {
+    "version": "2.5.0-dev",
+    "commit": "2d1163eb6f5228de605150e3b4800081947070eb",
+    "tag": "muon3d-wasm/2026-09-24",
+    "repository": "https://github.com/Muon-3D/OrcaSlicer",
+    "base": {
+      "repository": "https://github.com/OrcaSlicer/OrcaSlicer",
+      "ref": "refs/pull/13777/head",
+      "commit": "432debfc74a7e62e84b1af420804c47590ace43f"
+    }
+  },
+  "build": {
+    "engineCommit": "41c754ef12b18d4d24893898ef03d6b5b44a2919",
+    "emsdk": "6.0.10",
+    "builtAt": "2026-11-18T13:19:35.000Z"
+  },
+  "source": {
+    "url": "https://github.com/Muon-3D/muon3d-slicer-engine",
+    "tag": "v0.6.0-m1.1",
+    "commit": "41c754ef12b18d4d24893898ef03d6b5b44a2919",
+    "bundle": {
+      "file": "muon3d-slicer-engine-0.6.0-m1.1-source.tar.gz",
+      "url": "https://github.com/Muon-3D/muon3d-slicer-engine/releases/download/v0.6.0-m1.1/muon3d-slicer-engine-0.6.0-m1.1-source.tar.gz",
+      "sha256": "8ad42c282d68e8e138cfcdbcb8a5c6c9e27a7d2d2f254c2ce3e1cbd5b24a8449",
+      "bytes": 2050408
+    },
+    "orca": {
+      "file": "orcaslicer-2d1163eb6f-source.tar.xz",
+      "url": "https://github.com/Muon-3D/muon3d-slicer-engine/releases/download/v0.6.0-m1.1/orcaslicer-2d1163eb6f-source.tar.xz",
+      "sha256": "7b6f5e064057d7ff77268eedcc7bf60df351f0f993ea36d8dfc73f3a94137804",
+      "bytes": 138711328
+    },
+    "thirdParty": {
+      "file": "third-party-sources-348d374e2e28.tar",
+      "url": "https://github.com/Muon-3D/muon3d-slicer-engine/releases/download/v0.6.0-m1.1/third-party-sources-348d374e2e28.tar",
+      "sha256": "8b474c325188744b516690e56d8ac7adddbcd528ce260ef7c6272fe1fd28821c",
+      "bytes": 179865600
+    }
+  },
+  "host": {
+    "file": "host.446c6d131da98dbf.js",
+    "sha256": "446c6d131da98dbf2bbb5e102472ad6e3e192b0d7e8af19103070528d4a1a6f2",
+    "protocol": 2,
+    "protocolMinor": 4,
+    "canary": "muon3d-slicer-engine-host/844fdc97-4424-430e-9280-f7b49fa01568",
+    "engineCommit": "41c754ef12b18d4d24893898ef03d6b5b44a2919",
+    "chunks": [
+      {
+        "file": "host-service.1a427e617f5f4dbf.js",
+        "sha256": "1a427e617f5f4dbf3343d4f06c0bae079eee92d8d48c77aab18038bdaa7ad39d"
+      },
+      {
+        "file": "host-chunk.bd6a59f31a9394b2.js",
+        "sha256": "bd6a59f31a9394b26f524f5dfcf1e2757db814e437cb019f925acd89b0720b74"
+      }
+    ]
+  },
+  "variants": {
+    "mt": {
+      "mjs": "engine-mt.mjs",
+      "wasm": "engine-mt.wasm",
+      "wasmBytes": 11713964,
+      "wasmTransferBytes": 2423752,
+      "sha256": {
+        "mjs": "bc5e6f5115c536ce65a9b3bc8a8d2462948a99abfb009d80ba14e96df3a9c37c",
+        "wasm": "baebbbd9c9ed392c2d6585f788a4cc4c37ed82965fbddaa453a1ea08a6d58ac0"
+      },
+      "engineCommit": "41c754ef12b18d4d24893898ef03d6b5b44a2919"
+    },
+    "mt64": {
+      "mjs": "engine-mt64.mjs",
+      "wasm": "engine-mt64.wasm",
+      "wasmBytes": 12481806,
+      "wasmTransferBytes": 2508410,
+      "sha256": {
+        "mjs": "303b0f0d92883edbba3c5709595fe289a2895fa5c64b4fc75676c098764594d7",
+        "wasm": "e34d7b2ba1ac0fe95bed2c2a37a23b3a21f00c16182f6d500c39078ee8c98eb9"
+      },
+      "engineCommit": "41c754ef12b18d4d24893898ef03d6b5b44a2919"
+    },
+    "st": {
+      "mjs": "engine-st.mjs",
+      "wasm": "engine-st.wasm",
+      "wasmBytes": 11070968,
+      "wasmTransferBytes": 2340718,
+      "sha256": {
+        "mjs": "46602f1e095e45ddd8a96667486d0f4210dd967752e383e36207187474c5f53d",
+        "wasm": "290e5825b14a0e9cbed453304af32644c2f1e269e413cf0bf37d7efc5c1ab6ea"
+      },
+      "engineCommit": "41c754ef12b18d4d24893898ef03d6b5b44a2919"
+    }
+  },
+  "files": {
+    "LICENSE": {
+      "sha256": "57c8ff33c9c0cfc3ef00e650a1cc910d7ee479a8bc509f6c9209a7c2a11399d6",
+      "bytes": 34520
+    },
+    "NOTICE": {
+      "sha256": "47d74fd64af4e689f984d86e440b1dc7a63198a6a5a6cbc6e98be40b1b5951bc",
+      "bytes": 2594
+    },
+    "SOURCE.md": {
+      "sha256": "c5d0dd3dd65d201be06d690d4631f4141f584f95dcf0bcc2bf3e0715ae259c89",
+      "bytes": 6275
+    },
+    "THIRD-PARTY-NOTICES.md": {
+      "sha256": "de55c04a6156ae933a2219e3accc5a11149cfd4206d4fab74b03df48920f8fc6",
+      "bytes": 340463
+    },
+    "engine-mt.mjs": {
+      "sha256": "bc5e6f5115c536ce65a9b3bc8a8d2462948a99abfb009d80ba14e96df3a9c37c",
+      "bytes": 115492
+    },
+    "engine-mt.mjs.br": {
+      "sha256": "47479c14af80c24ab21cf8675f6a67dfd5749c4a11d75a28e345b7dbdd3e138d",
+      "bytes": 26949
+    },
+    "engine-mt.mjs.gz": {
+      "sha256": "8caead352007dba975fcf0c09bd44e89814d72285c42b8a519ff6a0fc2a27f45",
+      "bytes": 30806
+    },
+    "engine-mt.wasm": {
+      "sha256": "baebbbd9c9ed392c2d6585f788a4cc4c37ed82965fbddaa453a1ea08a6d58ac0",
+      "bytes": 11713964
+    },
+    "engine-mt.wasm.br": {
+      "sha256": "3440f85aebe31c1b97d193b50a6f0e61b811f78d1559297a9fc8d946ea45f170",
+      "bytes": 2423752
+    },
+    "engine-mt.wasm.gz": {
+      "sha256": "8d974f9e4717dbf0dc9d644647f15683c424369ee6bea6015ff50d7be0c30158",
+      "bytes": 3558529
+    },
+    "engine-mt64.mjs": {
+      "sha256": "303b0f0d92883edbba3c5709595fe289a2895fa5c64b4fc75676c098764594d7",
+      "bytes": 119032
+    },
+    "engine-mt64.mjs.br": {
+      "sha256": "0a91c70e8b60951dca30c6310589f4b5c9937c3c8a5cce7257a6f57d3380cae8",
+      "bytes": 27374
+    },
+    "engine-mt64.mjs.gz": {
+      "sha256": "1aac44dcc98f021b4fb25ebe2537f7c52a8a7a3a940bfdc3af6fcf124f31a0e3",
+      "bytes": 31327
+    },
+    "engine-mt64.wasm": {
+      "sha256": "e34d7b2ba1ac0fe95bed2c2a37a23b3a21f00c16182f6d500c39078ee8c98eb9",
+      "bytes": 12481806
+    },
+    "engine-mt64.wasm.br": {
+      "sha256": "40465f521dd6dfbeb1cbce8b1e4011bbb5d8e0622c0af9d74fef4104f1cd9a15",
+      "bytes": 2508410
+    },
+    "engine-mt64.wasm.gz": {
+      "sha256": "7166ac72757e393114635f54e8dcaf811c4e77101d36bc073dff1da3449fcc28",
+      "bytes": 3683893
+    },
+    "engine-st.mjs": {
+      "sha256": "46602f1e095e45ddd8a96667486d0f4210dd967752e383e36207187474c5f53d",
+      "bytes": 95015
+    },
+    "engine-st.mjs.br": {
+      "sha256": "801f8a1fe986a3350287a6af0471663f6a356bbad3fccaf60017a09308efba7c",
+      "bytes": 22870
+    },
+    "engine-st.mjs.gz": {
+      "sha256": "83d7e495a835cf5315b943e103642197f3583e82876f180f88f0f12b5cdee349",
+      "bytes": 25876
+    },
+    "engine-st.wasm": {
+      "sha256": "290e5825b14a0e9cbed453304af32644c2f1e269e413cf0bf37d7efc5c1ab6ea",
+      "bytes": 11070968
+    },
+    "engine-st.wasm.br": {
+      "sha256": "1b7a543d65ee032d7faa907c360c7fef32c5334eb9f3da490cfde0ec90fc9960",
+      "bytes": 2340718
+    },
+    "engine-st.wasm.gz": {
+      "sha256": "80d02488c47804d7a80c1abfb7bf8e5452e6d244e96f93d1aa532e96720147f1",
+      "bytes": 3418744
+    },
+    "host-chunk.bd6a59f31a9394b2.js": {
+      "sha256": "bd6a59f31a9394b26f524f5dfcf1e2757db814e437cb019f925acd89b0720b74",
+      "bytes": 905
+    },
+    "host-chunk.bd6a59f31a9394b2.js.br": {
+      "sha256": "2ea5496cc7c2567539797d101ac2a6c447201ef770973bb714111f310062b20d",
+      "bytes": 421
+    },
+    "host-chunk.bd6a59f31a9394b2.js.gz": {
+      "sha256": "ddb387b2722bb1f58cbda0792683a3d1676fad84992283a1ad285bf751e153c3",
+      "bytes": 513
+    },
+    "host-service.1a427e617f5f4dbf.js": {
+      "sha256": "1a427e617f5f4dbf3343d4f06c0bae079eee92d8d48c77aab18038bdaa7ad39d",
+      "bytes": 508740
+    },
+    "host-service.1a427e617f5f4dbf.js.br": {
+      "sha256": "0940baad6a9098da08c467be62c2f7d565a070cfaa8e23c3076c2cb018e09579",
+      "bytes": 84114
+    },
+    "host-service.1a427e617f5f4dbf.js.gz": {
+      "sha256": "6b3c94bbdbbe3553093c7da86bd552021ec3ef7c44c9892261ce669853a7209c",
+      "bytes": 108338
+    },
+    "host.446c6d131da98dbf.js": {
+      "sha256": "446c6d131da98dbf2bbb5e102472ad6e3e192b0d7e8af19103070528d4a1a6f2",
+      "bytes": 44263
+    },
+    "host.446c6d131da98dbf.js.br": {
+      "sha256": "cd4c5c0039dff0945c3574e55b92ecbcfbf10547349eb850dad4e522d909e65c",
+      "bytes": 11315
+    },
+    "host.446c6d131da98dbf.js.gz": {
+      "sha256": "312e37c5e72f3806a67d99c3479612fc504fb9969d9583cb7c7925484820066a",
+      "bytes": 12912
+    }
+  }
+}
