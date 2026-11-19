@@ -1,22 +1,44 @@
 /**
  * display.ts: accumulated linear light to the screen. Divides the sum by
- * its count, tone maps with the film's AgX look, lays a transparent film
- * over a checkerboard and dims the canvas outside the photo's crop.
+ * its count, tone maps through Blender's AgX tables exactly as film.ts's doc
+ * comment prescribes for a shader, lays a transparent film over a
+ * checkerboard and dims the canvas outside the photo's crop.
  */
-import { NoToneMapping, SRGBColorSpace, Vector4, type Node, type Texture } from "three/webgpu";
 import {
-  Fn, clamp, float, log2, max, mix, pow, renderOutput, screenCoordinate, screenUV, step, texture, uniform, vec3, vec4,
+  ClampToEdgeWrapping, Data3DTexture, DataUtils, HalfFloatType, LinearFilter, NearestFilter, NoToneMapping,
+  RGBAFormat, SRGBColorSpace, Vector3, Vector4, type MagnificationTextureFilter, type Node, type Texture,
+} from "three/webgpu";
+import {
+  Fn, clamp, float, ivec3, log2, max, mix, pow, renderOutput, screenCoordinate, screenUV, select, step, texture,
+  texture3D, uniform, vec3, vec4,
 } from "three/tsl";
 import type { AgxLook } from "../document";
-import { AGX } from "../film";
+import { loadAgx, type AgxData } from "../film";
 
 const OUTSIDE_CROP = 0.35;
 const CHECKER_PX = 12;
 const CHECKER = [0.62, 0.42] as const; // display-linear greys
+/** film.ts's guard before every log2. */
+const LOG_FLOOR = 1e-30;
 
-/** M v for a column-major 3x3, as three dot products. */
-const apply = (a: readonly number[], v: Node<"vec3">) =>
-  vec3(v.dot(vec3(a[0], a[3], a[6])), v.dot(vec3(a[1], a[4], a[7])), v.dot(vec3(a[2], a[5], a[8])));
+/** N^3 RGB float values, red fastest, as an RGBA half-float 3D texture with alpha 1. */
+function cube(values: Float32Array, size: number, filter: MagnificationTextureFilter): Data3DTexture {
+  const texels = size * size * size, data = new Uint16Array(texels * 4), one = DataUtils.toHalfFloat(1);
+  for (let i = 0; i < texels; i++) {
+    data[i * 4] = DataUtils.toHalfFloat(values[i * 3]);
+    data[i * 4 + 1] = DataUtils.toHalfFloat(values[i * 3 + 1]);
+    data[i * 4 + 2] = DataUtils.toHalfFloat(values[i * 3 + 2]);
+    data[i * 4 + 3] = one;
+  }
+  const t = new Data3DTexture(data, size, size, size);
+  t.format = RGBAFormat;
+  t.type = HalfFloatType;
+  t.minFilter = t.magFilter = filter;
+  t.wrapS = t.wrapT = t.wrapR = ClampToEdgeWrapping;
+  t.unpackAlignment = 1;
+  t.needsUpdate = true;
+  return t;
+}
 
 /** The controls the viewport turns. */
 export class Display {
@@ -25,8 +47,17 @@ export class Display {
   /** x0, y0, x1, y1 in screen UV. */
   readonly crop = uniform(new Vector4(0, 0, 1, 1));
   readonly transparent = uniform(0);
-  readonly #look = { contrast: uniform(1), pivot: uniform(0.606), saturation: uniform(1), power: uniform(1) };
   readonly node;
+  readonly #base = texture3D(cube(new Float32Array(3 * 8), 2, NearestFilter));
+  readonly #pre = texture3D(cube(new Float32Array(3 * 8), 2, LinearFilter));
+  readonly #u = {
+    rows: [uniform(new Vector3(1, 0, 0)), uniform(new Vector3(0, 1, 0)), uniform(new Vector3(0, 0, 1))],
+    log2Min: uniform(0), tScale: uniform(1), sScale: uniform(1), tFloor: uniform(0),
+    baseSize: uniform(2), preSize: uniform(2), hasPre: uniform(0),
+  };
+  /** The look on screen; null until the first table loads. */
+  #look: AgxLook | null = null;
+  #wanted: AgxLook | null = null;
 
   constructor() {
     const sum = this.shown, n = this.count.max(1);
@@ -41,12 +72,17 @@ export class Display {
     this.node = renderOutput(vec4(composed.mul(mix(float(OUTSIDE_CROP), float(1), inside)), 1), NoToneMapping, SRGBColorSpace);
   }
 
-  setLook(look: AgxLook): void {
-    const l = AGX.looks[look];
-    this.#look.contrast.value = l.contrast;
-    this.#look.pivot.value = l.pivot;
-    this.#look.saturation.value = l.saturation;
-    this.#look.power.value = l.power;
+  get look(): AgxLook | null {
+    return this.#look;
+  }
+
+  /** Loads the look's tables and swaps them in; the old look stays on screen until then. */
+  async setLook(look: AgxLook): Promise<void> {
+    this.#wanted = look;
+    const data = await loadAgx(look);
+    if (this.#wanted !== look) return;
+    this.#install(data);
+    this.#look = look;
   }
 
   show(source: Texture, count: number): void {
@@ -54,20 +90,59 @@ export class Display {
     this.count.value = count;
   }
 
-  /** film.ts's AGX table as a node, in the CPU path's order. Display-linear sRGB out; renderOutput encodes. */
-  #agx(c: Node<"vec3">) {
-    const { toRec2020, inset, outset, toSrgb, logMin, logMax, curve, gamma } = AGX;
-    const look = this.#look;
+  dispose(): void {
+    this.#base.value.dispose();
+    this.#pre.value.dispose();
+  }
+
+  #install(data: AgxData): void {
+    const m = data.manifest, u = this.#u;
+    const w = m.toWorking;
+    u.rows.forEach((row, i) => row.value.set(w[i * 3], w[i * 3 + 1], w[i * 3 + 2]));
+    u.log2Min.value = m.log2Min;
+    u.tScale.value = 1 / (m.log2Max - m.log2Min);
+    u.sScale.value = 1 / (m.preLog2Max - m.log2Min);
+    u.tFloor.value = m.tFloor;
+    this.#base.value.dispose();
+    this.#base.value = cube(data.base, m.base.size, NearestFilter);
+    u.baseSize.value = m.base.size;
+    if (data.pre) {
+      this.#pre.value.dispose();
+      this.#pre.value = cube(data.pre.values, data.pre.size, LinearFilter);
+      u.preSize.value = data.pre.size;
+    }
+    u.hasPre.value = data.pre ? 1 : 0;
+  }
+
+  /** Blender's AgX, per film.ts: shaper, the look's warp, tetrahedral cube, 2.4 power. renderOutput encodes sRGB. */
+  #agx(rgb: Node<"vec3">) {
+    const u = this.#u, base = this.#base, pre = this.#pre;
     return Fn(() => {
-      let x: Node<"vec3"> = apply(inset, apply(toRec2020, c)).max(1e-10);
-      x = clamp(log2(x).sub(logMin).div(logMax - logMin), 0, 1);
-      x = clamp(x.sub(look.pivot).mul(look.contrast).add(look.pivot), 0, 1);
-      const luma = x.dot(vec3(0.2126, 0.7152, 0.0722));
-      x = clamp(mix(vec3(luma), x, look.saturation), 0, 1);
-      x = pow(x, vec3(look.power));
-      let p: Node<"vec3"> = vec3(curve[0]);
-      for (const k of curve.slice(1)) p = p.mul(x).add(k);
-      return clamp(apply(toSrgb, pow(max(vec3(0), apply(outset, p)), vec3(gamma))), 0, 1);
+      const e = vec3(rgb.dot(u.rows[0]), rgb.dot(u.rows[1]), rgb.dot(u.rows[2]));
+      const t = max(log2(max(e, LOG_FLOOR)).sub(u.log2Min).mul(u.tScale), u.tFloor);
+      const s = clamp(log2(max(rgb, LOG_FLOOR)).sub(u.log2Min).mul(u.sScale), 0, 1);
+      // Texel centre of grid node k is (k + 0.5) / N; hardware trilinear is the warp's own interpolation.
+      const warp = pre.sample(s.mul(u.preSize.sub(1)).add(0.5).div(u.preSize)).rgb;
+      const x = clamp(t.add(warp.mul(u.hasPre)), 0, 1);
+      // Tetrahedral, never trilinear: the cube is clipped to the display gamut.
+      const g = x.mul(u.baseSize.sub(1));
+      const i = g.floor().min(u.baseSize.sub(2));
+      const f = g.sub(i);
+      let fa: Node<"float"> = f.x, fb: Node<"float"> = f.y, fc: Node<"float"> = f.z;
+      let ea: Node<"vec3"> = vec3(1, 0, 0), eb: Node<"vec3"> = vec3(0, 1, 0), ec: Node<"vec3"> = vec3(0, 0, 1);
+      const order = (a: Node<"float">, b: Node<"float">, da: Node<"vec3">, db: Node<"vec3">) => {
+        const swap = a.lessThan(b);
+        return [select(swap, b, a), select(swap, a, b), select(swap, db, da), select(swap, da, db)] as const;
+      };
+      [fa, fb, ea, eb] = order(fa, fb, ea, eb);
+      [fb, fc, eb, ec] = order(fb, fc, eb, ec);
+      [fa, fb, ea, eb] = order(fa, fb, ea, eb);
+      const at = (offset: Node<"vec3">) => base.load(ivec3(i.add(offset))).rgb;
+      const c = at(vec3(0)).mul(fa.oneMinus())
+        .add(at(ea).mul(fa.sub(fb)))
+        .add(at(ea.add(eb)).mul(fb.sub(fc)))
+        .add(at(vec3(1)).mul(fc));
+      return pow(max(c, vec3(0)), vec3(2.4));
     })();
   }
 }

@@ -71,6 +71,8 @@ const CLICK_SLOP_PX = 4;
 const PASS_EVERY_MS = 1000;
 const FOCUS_MATCH_M = 1e-3;
 const GPU_WINDOW = 30;
+/** The document's default look, loaded before the first frame so the display never waits on it. */
+const DEFAULT_LOOK = "medium-high-contrast";
 
 /** The frame loop's counters: one owner, reset by `dirty`. */
 class FrameState {
@@ -126,7 +128,9 @@ export class Viewport {
     renderer.shadowMap.type = VSMShadowMap;
     renderer.setClearColor(0x000000, 0);
     RectAreaLightNode.setLTC(RectAreaLightTexturesLib.init());
-    return new Viewport(renderer, canvas, events);
+    const viewport = new Viewport(renderer, canvas, events);
+    await viewport.#pipes.display.setLook(DEFAULT_LOOK);
+    return viewport;
   }
 
   private constructor(renderer: WebGPURenderer, canvas: HTMLCanvasElement, events: ViewportEvents) {
@@ -198,7 +202,8 @@ export class Viewport {
       fps: this.#frame.fps,
       gpuMs: gpu.length ? gpu.reduce((s, x) => s + x, 0) / gpu.length : null,
       quality: this.#quality.describe(),
-      converged: this.#lease === null && this.#frame.settled && this.#bakeMatches(this.#applied) && !this.#bake.busy,
+      converged: this.#lease === null && this.#frame.settled && this.#bakeMatches(this.#applied) && !this.#bake.busy
+        && this.#pipes.display.look === this.#applied?.film.look,
       lastBakeMs: this.#lastBakeMs,
       partBytes: this.#stage.partBytes,
       gpuMemory: { attributes: mem.attributesSize, indices: mem.indexAttributesSize, textures: mem.texturesSize, total: mem.total },
@@ -229,7 +234,8 @@ export class Viewport {
     if (prev?.lights !== scene.lights) stage.setLights(scene.lights);
     if (prev?.backdrop !== scene.backdrop) stage.setBackdrop(scene.backdrop);
     if (prev?.film !== scene.film) {
-      this.#pipes.display.setLook(scene.film.look);
+      this.#pipes.display.setLook(scene.film.look).then(() => this.#frame.dirty(), (err: unknown) =>
+        this.#events.onStatus(`could not load the AgX tables: ${err instanceof Error ? err.message : String(err)}`));
       this.#pipes.display.transparent.value = scene.film.transparent ? 1 : 0;
     }
     if (exact) this.#rig.hold(scene.camera);

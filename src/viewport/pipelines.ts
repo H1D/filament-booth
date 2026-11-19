@@ -94,6 +94,7 @@ export class Pipelines {
     this.#show.dispose();
     this.#movingTarget.dispose();
     this.accumulator.dispose();
+    this.display.dispose();
     this.ao.dispose();
   }
 }
