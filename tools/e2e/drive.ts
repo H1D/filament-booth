@@ -168,6 +168,13 @@ async function setOutput(longEdge: number, samples: number): Promise<void> {
   expect(film?.samples === samples, `the film has ${film?.samples} samples, not ${samples}`);
 }
 
+/** Picks a limit in the Output panel's Time limit control by its label ("No limit", "30 seconds", "5 minutes"). */
+async function setTimeLimit(label: string, seconds: number): Promise<void> {
+  const s = await openSection(page, "output");
+  await s.getByRole("combobox", { name: "Time limit", exact: true }).selectOption({ label });
+  await until(`the film to carry a ${seconds} s limit`, () => page.evaluate((v) => window.boothDev?.booth.scene.film.timeLimitS === v, seconds), 5000);
+}
+
 async function setSwitch(sectionId: string, name: string, on: boolean): Promise<void> {
   const s = await openSection(page, sectionId);
   const sw = s.getByRole("switch", { name, exact: true });
@@ -210,6 +217,10 @@ interface Shot {
   readonly readout: string;
   readonly engine: string;
   readonly samples: number;
+  /** What the card says ended sampling, "samples" when it says nothing. */
+  readonly stoppedBy: string;
+  /** The card's sentence about it, "" when there is none. */
+  readonly stopText: string;
   readonly ms: number;
   readonly sawRefining: boolean;
   readonly refiningLuma: number | null;
@@ -268,7 +279,10 @@ async function photo(name: string, ms = 600_000, during?: (state: string) => Pro
     await during?.(state);
     return state === "Done";
   }, ms, 200);
-  const readout = await page.locator(".photo-card .readout").innerText();
+  const readout = await page.locator(".photo-card .readout").first().innerText();
+  const stopLine = page.locator(".photo-card .readout[data-stopped-by]");
+  const stoppedBy = (await stopLine.count()) > 0 ? ((await stopLine.getAttribute("data-stopped-by")) ?? "?") : "samples";
+  const stopText = (await stopLine.count()) > 0 ? await stopLine.innerText() : "";
   const preparing = await page.evaluate(() => {
     const seen: unknown = Reflect.get(window, "e2ePreparing");
     return Array.isArray(seen) ? seen.map(String) : [];
@@ -276,8 +290,8 @@ async function photo(name: string, ms = 600_000, during?: (state: string) => Pro
   const [download] = await Promise.all([page.waitForEvent("download"), page.locator(".photo-card").getByRole("button", { name: "Save" }).click()]);
   const path = join(OUT, `${name}.png`);
   await download.saveAs(path);
-  const m = /(\d+) samples, (\w+)/.exec(readout);
-  return { path, img: readPng(path), readout, engine: m?.[2] ?? "?", samples: Number(m?.[1] ?? NaN), ms: Date.now() - t0, sawRefining, refiningLuma, preparing };
+  const m = /(\d+)(?: of \d+)? samples, (\w+)/.exec(readout);
+  return { path, img: readPng(path), readout, engine: m?.[2] ?? "?", samples: Number(m?.[1] ?? NaN), stoppedBy, stopText, ms: Date.now() - t0, sawRefining, refiningLuma, preparing };
 }
 
 async function closeCard(): Promise<void> {
@@ -525,8 +539,9 @@ try {
       await page.locator(".photo-card").getByRole("button", { name: "Finish now" }).click();
     });
     expect(shot.samples < film && shot.samples > 0, `Finish now gave ${shot.readout}, the film asks ${film}`);
+    expect(shot.stoppedBy === "user" && shot.stopText === "Finished early.", `the card says "${shot.stopText}" (${shot.stoppedBy}) after Finish now`);
     expect(meanLuma(shot.img) > 20, "the early photo is black");
-    return `PHOTO usable ${usableMs} ms after Cancel (card: ${state}); Finish now: ${shot.readout} of ${film}, ${(shot.ms / 1000).toFixed(1)} s`;
+    return `PHOTO usable ${usableMs} ms after Cancel (card: ${state}); Finish now: ${shot.readout}; the card says "${shot.stopText}"; ${(shot.ms / 1000).toFixed(1)} s`;
   });
 
   await flow("8", "Cycles unavailable falls back to the raster engine", async () => {
@@ -639,16 +654,36 @@ try {
   await flow("12", "LEKV2 at 1600x2000, 256 samples through Cycles", async () => {
     await load("", true);
     const parseMs = await openPart(LEKV2, "plate_1.gcode");
+    // The default limit is 5 minutes and this photo takes about 40. It must run to its samples.
+    await setTimeLimit("No limit", 0);
     const tris = await page.evaluate(() => window.boothDev?.booth.scene.part?.mesh.tris ?? 0);
     await previewShot("12-lekv2-preview");
     const shot = await photo("12-lekv2-cycles", 3_600_000);
     const stats = await page.evaluate(() => window.boothDev?.cyclesStats.at(-1) ?? null);
     expect(shot.engine === "Cycles" && stats !== null, `${shot.readout}; the photo said: ${shot.preparing.join(" | ")}`);
     expect(meanLuma(shot.img) > 20, "the LEKV2 photo is black");
+    expect(shot.stoppedBy === "samples", `the LEKV2 photo says it stopped by ${shot.stoppedBy}: ${shot.stopText}`);
     const s = stats ?? { syncMs: NaN, bvhMs: NaN, samplingMs: NaN, heapBytes: NaN, cyclesPeakBytes: NaN, threads: NaN };
     return `${tris} triangles; G-code parsed and meshed in ${(parseMs / 1000).toFixed(1)} s; ${shot.readout}; press to saved ${(shot.ms / 1000).toFixed(0)} s; `
       + `start to first sample ${(s.syncMs / 1000).toFixed(1)} s of which BVH ${(s.bvhMs / 1000).toFixed(1)} s, sampling ${(s.samplingMs / 1000).toFixed(1)} s, `
       + `wasm heap ${(s.heapBytes / 2 ** 20).toFixed(0)} MiB, Cycles peak ${(s.cyclesPeakBytes / 2 ** 20).toFixed(0)} MiB, ${s.threads} threads`;
+  });
+
+  await flow("13", "a 30 second time limit cuts a 64 sample photo short", async () => {
+    // 64 samples at 800x1000 take about 53 s unlimited. The control offers 30 seconds, not 20.
+    await withBsch04(true);
+    await setOutput(1000, 64);
+    await setTimeLimit("30 seconds", 30);
+    const control = await page.evaluate(() => window.boothDev?.booth.doc.output.timeLimitS);
+    expect(control === 30, `the document holds a ${control} s limit`);
+    const shot = await photo("13-time-limit", 180_000);
+    expect(shot.engine === "Cycles", `engine ${shot.engine}: ${shot.readout}`);
+    expect(shot.samples >= 1 && shot.samples < 64, `the photo holds ${shot.samples} samples of 64: ${shot.readout}`);
+    expect(shot.ms < 40_000, `press to saved took ${(shot.ms / 1000).toFixed(1)} s against a 30 s limit`);
+    expect(shot.stoppedBy === "time-limit" && shot.stopText === "Stopped at the 30 second limit.", `the card says "${shot.stopText}" (${shot.stoppedBy})`);
+    const all = meanLuma(shot.img);
+    expect(all > 20, `the saved PNG is blank: mean luma ${f1(all)}`);
+    return `${shot.readout}; the card says "${shot.stopText}"; press to saved ${(shot.ms / 1000).toFixed(1)} s; PNG ${shot.img.width}x${shot.img.height} mean luma ${f1(all)}`;
   });
 
   await flow("hero", "the old LEKV2 hero_light still against the preview of the same shot", async () => {
