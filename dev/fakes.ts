@@ -299,6 +299,8 @@ export class StandInViewport implements ViewportLike {
     this.#draw();
   }
 
+  setLiteMesh(): void {}
+
   setFocusTool(active: boolean): void {
     this.#focusTool = active;
     this.#canvas.dataset.focusTool = String(active);

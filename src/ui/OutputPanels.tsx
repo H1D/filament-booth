@@ -50,8 +50,6 @@ export function OutputPanel() {
       <Switch label="Transparent background" checked={output.transparentBackground}
         hint="Keeps the part and its shadow and drops the backdrop."
         onChange={(on) => { edit((d) => { d.output.transparentBackground = on; }); }} />
-      <Switch label="Denoise" checked={output.denoise}
-        onChange={(on) => { edit((d) => { d.output.denoise = on; }); }} />
     </>
   );
 }

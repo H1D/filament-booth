@@ -186,6 +186,13 @@ describe("the output section", () => {
     typeInto(input(container, "Long edge value, px"), "1000");
     expect(container.querySelector(".readout.size")?.textContent).toContain("800 by 1000 px");
   });
+
+  test("offers no denoise switch, because no denoiser exists yet", () => {
+    const { booth } = boothWith();
+    const { container } = mount(booth, <OutputPanel />);
+    const switches = [...container.querySelectorAll('[role="switch"]')].map((el) => el.getAttribute("aria-label"));
+    expect(switches).toEqual(["Transparent background"]);
+  });
 });
 
 describe("the filament section", () => {

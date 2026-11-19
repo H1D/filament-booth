@@ -149,6 +149,32 @@ rendered twice in one page:
 | 1 | 8.2 s | 10.1 s | 52.0 s | 2539 MiB | 855 MiB |
 | 2 | 8.1 s | 9.8 s | 51.4 s | 2539 MiB | 855 MiB |
 
+Why the proof sampled the same triangle count in 24 s and this engine takes about 52 s. One run
+each of `run.ts --scale --repeat 1 --query <change>`; three baseline runs gave 52.1 to 56.9 s, so
+differences under about 5 s are noise on this shared machine. The proof's own page, rerun the
+same day, still sampled its scene in 22.5 and 22.8 s, so the machine is not the difference.
+
+| Change from the scale fixture | Sampling, 64 spp |
+|---|---|
+| none | 52.1 to 56.9 s |
+| adaptive sampling off | 53.1 s |
+| every bounce limit 8, as the proof | 51.9 s |
+| pixel filter 1.0 px | 58.5 s |
+| mottle amplitude 0 (the noise node stays in the graph) | 51.8 s |
+| no plate bump (Voronoi and noise height) | 47.4 s |
+| world strength 0 | 45.6 s |
+| adaptive off, bounces 8, no plate bump | 48.3 s |
+| anisotropy 0, mottle 0, no plate bump, world 0 | 36.8 s |
+| camera 2.5 times further back | 31.9 s |
+
+Bounces, the adaptive threshold and the pixel filter cost nothing measurable. What the time is
+made of is the scene: how much of the frame, and of the bounce rays off the sweep, lands on the
+10-million-triangle part (the fixture's camera fills the frame with it; the proof's vase stood
+on a plane under an empty sky), and the bead shader with the HDR world (anisotropic GGX, the plate
+bump evaluated on every bead hit, world importance sampling) against the proof's plain Principled
+BSDF and constant world. The plate bump is computed everywhere and only shows on the plate face;
+dropping it would save about a tenth but would change the photo wherever the plate is seen.
+
 Cancel, `bun tools/parity/run.ts --cancel`, Chromium's CPU time sampled every 50 ms: with 13 to
 18 cores busy before the abort, Chromium is under one core 130 ms after a cancel while sampling
 and 138 ms after a cancel during the 10-million-triangle BVH build. The promise settles in under

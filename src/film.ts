@@ -288,10 +288,14 @@ export function downscaleFrame(frame: RadianceFrame, maxEdgePx: number): Radianc
   return { width, height, samples: frame.samples, rgba };
 }
 
-/** Pixels on an OffscreenCanvas of the frame's size, from 8-bit RGBA. */
+/**
+ * Pixels on an OffscreenCanvas of the frame's size, from 8-bit RGBA. The
+ * canvas exists only to be encoded or handed on, so it asks to stay on the
+ * CPU: where the GPU 2D path cannot read back, a GPU canvas encodes zeros.
+ */
 function paint(width: number, height: number, rgba: Uint8ClampedArray): OffscreenCanvas {
   const canvas = new OffscreenCanvas(width, height);
-  const ctx = canvas.getContext("2d");
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
   if (ctx === null) throw new Error("no 2d context on OffscreenCanvas");
   ctx.putImageData(new ImageData(new Uint8ClampedArray(rgba), width, height), 0, 0);
   return canvas;

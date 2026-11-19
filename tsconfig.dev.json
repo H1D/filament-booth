@@ -4,5 +4,5 @@
     "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.dev.tsbuildinfo",
     "types": ["vite/client", "node"]
   },
-  "include": ["src", "dev", "tools/ui", "tests/ui*"]
+  "include": ["src", "dev", "tools/ui", "tools/e2e", "tests/ui*"]
 }

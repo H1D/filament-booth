@@ -26,6 +26,10 @@ export function cyclesEngine(options: CyclesEngineOptions = {}): PhotoEngine {
   return {
     id: "cycles",
     fits: async (scene) => {
+      // Development only: lets tools/e2e/drive.ts check the fallback on a machine where Cycles runs.
+      if (import.meta.env.DEV && typeof location !== "undefined" && new URLSearchParams(location.search).has("no-cycles")) {
+        return { reason: "switched off by ?no-cycles" };
+      }
       const machine = await machineFits();
       if (machine !== true) return machine;
       const need = estimateHeapBytes(scene.part ? scene.part.mesh.index.length / 3 : 0, scene.film.width * scene.film.height);

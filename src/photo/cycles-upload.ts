@@ -143,31 +143,40 @@ function check(M: CyclesModule, rc: number, what: string): number {
   return rc;
 }
 
+/**
+ * A view of `count` floats at `ptr` on the wasm heap. Exported C functions hand
+ * pointers to JavaScript as signed 32-bit numbers, so one above 2 GiB arrives
+ * negative; it is read back as the unsigned byte offset it is.
+ */
+export function heapFloats(memory: WebAssembly.Memory, ptr: number, count: number): Float32Array {
+  return new Float32Array(memory.buffer, ptr >>> 0, count);
+}
+
 /** Allocates `count` floats (or 32-bit ints) on the wasm heap, lets `fill` write them, calls
- *  `use` with the pointer and frees. Filling in place keeps the 10-million-triangle upload from
+ *  `withPtr` with the pointer and frees. Filling in place keeps the 10-million-triangle upload from
  *  holding a second JavaScript copy of every derived array. */
-function onHeap<T>(M: CyclesModule, count: number, fill: (view: Float32Array) => void, use: (ptr: number) => T): T {
+function onHeap<T>(M: CyclesModule, count: number, fill: (view: Float32Array) => void, withPtr: (ptr: number) => T): T {
   const ptr = M._malloc(count * 4);
   if (!ptr) throw new Error(`malloc of ${count * 4} bytes failed: the wasm heap is full`);
   try {
-    fill(new Float32Array(M.wasmMemory.buffer, ptr, count));
-    return use(ptr);
+    fill(heapFloats(M.wasmMemory, ptr, count));
+    return withPtr(ptr);
   } finally {
     M._free(ptr);
   }
 }
 
-function copyToHeap<T>(M: CyclesModule, data: Float32Array | Uint32Array, use: (ptr: number) => T): T {
+function copyToHeap<T>(M: CyclesModule, data: Float32Array | Uint32Array, withPtr: (ptr: number) => T): T {
   const bytes = new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
-  return onHeap(M, data.length, (view) => new Uint8Array(view.buffer, view.byteOffset, bytes.length).set(bytes), use);
+  return onHeap(M, data.length, (view) => new Uint8Array(view.buffer, view.byteOffset, bytes.length).set(bytes), withPtr);
 }
 
-function heapString<T>(M: CyclesModule, text: string, use: (ptr: number) => T): T {
+function heapString<T>(M: CyclesModule, text: string, withPtr: (ptr: number) => T): T {
   const bytes = M.lengthBytesUTF8(text) + 1;
   const ptr = M._malloc(bytes);
   try {
     M.stringToUTF8(text, ptr, bytes);
-    return use(ptr);
+    return withPtr(ptr);
   } finally {
     M._free(ptr);
   }
@@ -254,7 +263,7 @@ export function readPasses(M: CyclesModule, width: number, height: number): Pass
   try {
     const copy = (which: number) => {
       const ptr = M._cb_pass(which);
-      return ptr ? new Float32Array(M.wasmMemory.buffer, ptr, n).slice() : null;
+      return ptr ? heapFloats(M.wasmMemory, ptr, n).slice() : null;
     };
     const rgba = copy(PASS_RGBA);
     return rgba && { samples, rgba, albedo: copy(PASS_ALBEDO), normal: copy(PASS_NORMAL) };

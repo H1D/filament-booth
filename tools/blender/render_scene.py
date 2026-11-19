@@ -1,12 +1,13 @@
 """Rebuild a booth Scene in native Blender 5.2.3 and render it with Cycles.
 
   blender -b --factory-startup --debug-cycles --python tools/blender/render_scene.py -- \\
-      scene.json out.png [--bvh bvh2|embree] [--threads N] [--samples N]
+      scene.json out.png [--bvh bvh2|embree] [--threads N] [--samples N] [--view standard|film]
 
 scene.json is src/scene.ts exportScene's format: the Scene with every typed array replaced by
 {"buffer": name, "kind": "f32" | "i16" | "u32", "length": n}. Each buffer is a raw little-endian
 file named <name>.bin next to the JSON. The image is written with the Standard view transform,
-8 bit, RGBA when the film is transparent.
+8 bit, RGBA when the film is transparent. `--view film` writes it as the app develops a photo
+instead: AgX with the film's look.
 
 The per-vertex part data (roughness, wall normals, plate mask) is derived here in NumPy,
 independently of src/photo/cycles-upload.ts, so a parity run checks that code as well. The node
@@ -38,6 +39,16 @@ RING_SEGMENTS = 256
 ELLIPSE_SEGMENTS = 64
 RING_LIFT_M = 1e-5
 
+# Mirror of tools/blender/bake_agx.py LOOKS: app look id to Blender look name.
+AGX_LOOKS = {
+    'none': 'None',
+    'punchy': 'AgX - Punchy',
+    'low-contrast': 'AgX - Low Contrast',
+    'medium-low-contrast': 'AgX - Medium Low Contrast',
+    'medium-high-contrast': 'AgX - Medium High Contrast',
+    'high-contrast': 'AgX - High Contrast',
+}
+
 DTYPES = {'f32': np.float32, 'i16': np.int16, 'u32': np.uint32}
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -49,6 +60,7 @@ def args():
     a.add_argument('--bvh', choices=('bvh2', 'embree'), default='bvh2')
     a.add_argument('--threads', type=int, default=0)
     a.add_argument('--samples', type=int, default=0)
+    a.add_argument('--view', choices=('standard', 'film'), default='standard')
     return a.parse_args(sys.argv[sys.argv.index('--') + 1:])
 
 
@@ -413,8 +425,12 @@ def setup_render(f, a, out):
     if a.threads > 0:
         sc.render.threads_mode = 'FIXED'
         sc.render.threads = a.threads
-    sc.view_settings.view_transform = 'Standard'
-    sc.view_settings.look = 'None'
+    if a.view == 'film':
+        sc.view_settings.view_transform = 'AgX'
+        sc.view_settings.look = AGX_LOOKS[f['look']]
+    else:
+        sc.view_settings.view_transform = 'Standard'
+        sc.view_settings.look = 'None'
     sc.view_settings.exposure = 0.0
     sc.view_settings.gamma = 1.0
     sc.display_settings.display_device = 'sRGB'
