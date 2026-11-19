@@ -2,6 +2,7 @@ import { useRef } from "react";
 import { LOOK_IDS } from "../document";
 import { applyLook } from "../edits";
 import { LOOK_PRESETS } from "../presets";
+import { AgentBadge } from "./AgentPanel";
 import { useDoc, useEdit, useHost, useLookModified, usePhotoSession, usePrint } from "./hooks";
 import { Icon, Mark } from "./icons";
 
@@ -46,6 +47,8 @@ export function TopBar() {
       </div>
 
       <div className="spacer" />
+
+      <AgentBadge />
 
       <button type="button" className="photo" disabled={!hasPart || rendering}
         title={!hasPart ? "Open a part first" : rendering ? "A photo is rendering" : "Render a photo of what the preview shows"}

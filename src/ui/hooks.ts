@@ -5,6 +5,7 @@
  * edit from escaping as an exception.
  */
 import { createContext, use, useCallback, useSyncExternalStore } from "react";
+import type { AgentControl, AgentState } from "../agent/agent";
 import type { Booth } from "../booth";
 import { DocumentError, type BoothDocument } from "../document";
 import type { Edit } from "../edits";
@@ -17,6 +18,7 @@ export interface Host {
   readonly booth: Booth;
   readonly ui: Ui;
   readonly photos: PhotoSession;
+  readonly agent: AgentControl;
 }
 
 export const HostContext = createContext<Host | null>(null);
@@ -58,6 +60,10 @@ export function useFilamentModified(): boolean {
 
 export function useUi(): UiState {
   return useStore(useHost().ui.state);
+}
+
+export function useAgent(): AgentState {
+  return useStore(useHost().agent.state);
 }
 
 export function usePhotoSession(): SessionState {

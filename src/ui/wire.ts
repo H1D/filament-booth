@@ -3,15 +3,20 @@
  * main.tsx uses them with the real parts and dev/panels.tsx with stand-ins,
  * so the page the tests drive is wired the way the app is.
  */
+import { AgentControl } from "../agent/agent";
+import { AgentHost, jpegThumbnail } from "../agent/host";
+import { PythonRuntime, pythonUnavailable } from "../agent/python";
 import type { Booth } from "../booth";
 import { m } from "../document";
 import { focusAt } from "../edits";
+import { develop } from "../film";
 import { cyclesEngine, type CyclesEngineOptions } from "../photo/cycles";
 import { PhotoDesk, type PhotoTools } from "../photo/photo";
 import { rasterEngine } from "../photo/raster";
 import type { BeadMesh, LoadedPrint } from "../print";
 import type { Viewport, ViewportEvents } from "../viewport/viewport";
 import type { Scene } from "../scene";
+import type { PhotoSession } from "./photo-session";
 import type { Ui } from "./store";
 
 /** What the app asks of a viewport. The real Viewport and the stand-in both have it. */
@@ -29,6 +34,29 @@ export interface ViewportLike {
  */
 export function photoDesk(viewport: Pick<Viewport, "accumulate"> | null, tools?: PhotoTools, cycles?: CyclesEngineOptions): PhotoDesk {
   return new PhotoDesk(viewport === null ? [cyclesEngine(cycles)] : [cyclesEngine(cycles), rasterEngine(viewport)], tools);
+}
+
+/**
+ * Agent control over the real parts: the host that interprets bpy against the
+ * booth, the Python worker, and the switch. The preview port is the raster
+ * engine on the live preview, and null where the page has none. Nothing starts
+ * until the user turns the switch on.
+ */
+export function agentControl(
+  parts: {
+    readonly booth: Booth;
+    readonly photos: PhotoSession;
+    readonly viewport: Pick<Viewport, "accumulate"> | null;
+    readonly storage: Pick<Storage, "getItem" | "setItem">;
+  },
+): AgentControl {
+  const { booth, photos, viewport, storage } = parts;
+  const host = new AgentHost({
+    booth, photos, develop, thumbnail: jpegThumbnail,
+    raster: viewport === null ? null : rasterEngine(viewport),
+  });
+  const runtime = new PythonRuntime(host, () => new Worker(new URL("../agent/py-worker.ts", import.meta.url), { type: "module" }));
+  return new AgentControl({ storage, runtime, unavailable: pythonUnavailable, pageId: crypto.randomUUID() });
 }
 
 /** Orbiting and focus picks become document edits. A pick ends the focus tool, so the next click orbits again. */

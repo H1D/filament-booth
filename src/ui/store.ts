@@ -37,10 +37,12 @@ export interface UiState {
   readonly notice: string | null;
   /** The error state the user dismissed, compared by identity so the next error shows again. */
   readonly dismissedPrint: PrintState | null;
+  /** A pairing link was opened, so the Agent section starts open and in view. */
+  readonly showAgent: boolean;
 }
 
 export class Ui {
-  readonly state = new Store<UiState>({ focusTool: false, viewportStatus: "", notice: null, dismissedPrint: null });
+  readonly state = new Store<UiState>({ focusTool: false, viewportStatus: "", notice: null, dismissedPrint: null, showAgent: false });
 
   #patch(patch: Partial<UiState>): void {
     this.state.set({ ...this.state.get(), ...patch });
@@ -50,4 +52,5 @@ export class Ui {
   setViewportStatus(text: string): void { this.#patch({ viewportStatus: text }); }
   setNotice(text: string | null): void { this.#patch({ notice: text }); }
   dismissPrintError(print: PrintState): void { this.#patch({ dismissedPrint: print }); }
+  revealAgent(): void { this.#patch({ showAgent: true }); }
 }

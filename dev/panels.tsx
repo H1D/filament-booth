@@ -10,7 +10,7 @@ import { Booth } from "../src/booth";
 import "../src/index.css";
 import { PhotoSession } from "../src/ui/photo-session";
 import { Ui } from "../src/ui/store";
-import { connectViewport, viewportEvents } from "../src/ui/wire";
+import { agentControl, connectViewport, viewportEvents } from "../src/ui/wire";
 import { FakePrint, StandInViewport, fakeTakePhoto, type StandInReadout } from "./fakes";
 
 declare global {
@@ -27,13 +27,14 @@ const ui = new Ui();
 const canvas = document.createElement("canvas");
 const booth = new Booth({ storage: localStorage, print: new FakePrint(), takePhoto: fakeTakePhoto });
 const photos = new PhotoSession(() => booth.takePhoto());
+const agent = agentControl({ booth, photos, viewport: null, storage: localStorage });
 const standIn = new StandInViewport(canvas, viewportEvents(booth, ui));
 connectViewport(booth, ui, standIn);
 window.standIn = () => standIn.readout;
 
 createRoot(root).render(
   <StrictMode>
-    <App host={{ booth, ui, photos }} canvas={canvas} />
+    <App host={{ booth, ui, photos, agent }} canvas={canvas} />
   </StrictMode>,
 );
 

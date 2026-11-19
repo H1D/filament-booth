@@ -421,6 +421,27 @@ progress:indeterminate::-webkit-progress-bar {
   box-shadow: 0 10px 28px oklch(0 0 0 / 0.5);
 }
 
+/* ---- agent control (the rail section and the top bar badge with its native popover) ---- */
+
+.agent { display: grid; gap: 0.5rem; }
+.agent-status { max-width: 60ch; overflow-wrap: anywhere; }
+.agent-badge { anchor-name: --agent-badge; }
+.agent-badge .dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--text-faint); }
+.agent-badge[data-status="connected"] .dot { background: var(--accent); }
+.agent-badge[data-status="refused"] .dot, .agent-badge[data-status="unavailable"] .dot { background: var(--warn); }
+.agent-badge[data-running] .dot { background: var(--accent); animation: agent-pulse 1.2s ease-in-out infinite; }
+@keyframes agent-pulse { 50% { opacity: 0.3; } }
+.agent-menu {
+  position-anchor: --agent-badge;
+  inset: auto; top: anchor(bottom); right: anchor(right); margin: 0.35rem 0 0;
+  position-try-fallbacks: flip-block;
+  width: 19rem; padding: 0.75rem; display: grid; gap: 0.75rem;
+  background: var(--panel); color: var(--text);
+  border: 1px solid var(--line); border-radius: 8px;
+  box-shadow: 0 10px 28px oklch(0 0 0 / 0.5);
+}
+.agent-running { color: var(--text-dim); overflow-wrap: anywhere; }
+
 /* ---- narrow windows ------------------------------------------------------------------ */
 
 @media (max-width: 52rem) {

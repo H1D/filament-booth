@@ -12,7 +12,7 @@ import { useEdit } from "../src/ui/hooks";
 import { HostProvider } from "../src/ui/host";
 import { PhotoSession } from "../src/ui/photo-session";
 import { Ui } from "../src/ui/store";
-import { boothWith } from "./ui-fixtures";
+import { agentWith, boothWith } from "./ui-fixtures";
 
 declare global {
   var IS_REACT_ACT_ENVIRONMENT: boolean;
@@ -35,7 +35,7 @@ function mount(booth: Booth, node: ReactNode): { container: HTMLElement; ui: Ui 
   host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
-  act(() => { root?.render(<HostProvider host={{ booth, ui, photos }}>{node}</HostProvider>); });
+  act(() => { root?.render(<HostProvider host={{ booth, ui, photos, agent: agentWith().agent }}>{node}</HostProvider>); });
   return { container: host, ui };
 }
 

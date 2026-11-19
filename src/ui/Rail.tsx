@@ -1,7 +1,9 @@
+import { AgentPanel } from "./AgentPanel";
 import { CameraPanel } from "./CameraPanel";
 import { FilamentPanel } from "./FilamentPanel";
 import { LightsPanel } from "./LightsPanel";
 import { OutputPanel, PosePanel } from "./OutputPanels";
+import { useUi } from "./hooks";
 import { PartPanel } from "./PartPanel";
 import { Section } from "./Section";
 import { SetupPanel } from "./SetupPanel";
@@ -9,6 +11,7 @@ import { WorldPanel } from "./WorldPanel";
 
 /** The control rail. Lights opens first: it is what a photographer reaches for. */
 export function Rail() {
+  const { showAgent } = useUi();
   return (
     <aside className="rail" aria-label="Controls">
       <Section id="part" open><PartPanel /></Section>
@@ -19,6 +22,7 @@ export function Rail() {
       <Section id="pose"><PosePanel /></Section>
       <Section id="output"><OutputPanel /></Section>
       <Section id="setup"><SetupPanel /></Section>
+      <Section id="agent" open={showAgent}><AgentPanel /></Section>
     </aside>
   );
 }
