@@ -39,9 +39,10 @@ export type Json = null | boolean | number | string | readonly Json[] | { readon
 /**
  * How Python wraps a value it reads. A mathutils value or an array is bound to
  * its owner, so `obj.location.z += 0.1` writes the whole vector back as one
- * assignment. `struct` turns a handle key into that struct.
+ * assignment. `float` keeps a whole number a float, as Blender's 85.0 mm lens
+ * is, since JSON cannot tell. `struct` turns a handle key into that struct.
  */
-export type Wrap = "Vector" | "Euler" | "Color" | "array" | { readonly struct: RnaTypeName } | null;
+export type Wrap = "Vector" | "Euler" | "Color" | "array" | "float" | { readonly struct: RnaTypeName } | null;
 
 export type PyErrorType = "AttributeError" | "ValueError" | "TypeError" | "KeyError" | "IndexError" | "RuntimeError" | "ReferenceError";
 
@@ -422,7 +423,7 @@ const lightUseTemperature: Codec<StudioLight> = {
 };
 
 const lightTemperature: Codec<StudioLight> = {
-  type: "float K, setting it turns use_temperature on", wrap: null, fields: ["color.kind", "color.kelvin"], bounds: "kelvin",
+  type: "float K, setting it turns use_temperature on", wrap: "float", fields: ["color.kind", "color.kelvin"], bounds: "kelvin",
   get: (light) => (light.color.kind === "kelvin" ? light.color.kelvin : DEFAULT_KELVIN),
   set: (light, value) => {
     light.color = { kind: "kelvin", kelvin: kelvin(numberOf(value)) };
@@ -466,7 +467,7 @@ const cameraRotation: Codec<CameraSetup> = {
 };
 
 const focusDistance: Codec<CameraSetup> = {
-  type: "float m, from the camera along its view", wrap: null, fields: ["focusPartPoint"],
+  type: "float m, from the camera along its view", wrap: "float", fields: ["focusPartPoint"],
   get: (_, ctx) => ctx.scene.camera.focusDistanceM,
   set: (cam, value, ctx) => {
     const d = numberOf(value);
@@ -841,7 +842,7 @@ export const RNA: { readonly [K in RnaTypeName]: RnaType } = {
     lens_unit: fixed("MILLIMETERS"),
     sensor_width: fixed(36, "the booth's sensor is 36 mm"),
     sensor_fit: fixed("AUTO"),
-    clip_start: p.codec({ type: "float m", wrap: null, fields: [], readOnly: "fixed by the booth", get: (_, ctx) => ctx.scene.camera.clipStartM }),
+    clip_start: p.codec({ type: "float m", wrap: "float", fields: [], readOnly: "fixed by the booth", get: (_, ctx) => ctx.scene.camera.clipStartM }),
     dof: ptr("CameraDOF"),
     angle: missing("set the field of view with lens (mm)"),
   })),

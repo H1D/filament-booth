@@ -16,7 +16,7 @@
  * bpy.context.object) lives here, so it survives a restarted interpreter.
  */
 import type { Booth } from "../booth";
-import { DocumentError, m, type BoothDocument } from "../document";
+import { BOUNDS, DocumentError, m, type BoothDocument, type Bounds } from "../document";
 import { addLight } from "../edits";
 import type { RadianceFrame } from "../film";
 import { PhotoCancelled, type Photo, type PhotoEngine, type PhotoProgress } from "../photo/photo";
@@ -76,7 +76,7 @@ export const PREVIEW_SAMPLES = 16;
 
 /** What Python gets back from a read: a plain or wrapped value, a struct, or a collection. */
 export type PyValue =
-  | { readonly v: Json; readonly wrap: "Vector" | "Euler" | "Color" | "array" | null }
+  | { readonly v: Json; readonly wrap: "Vector" | "Euler" | "Color" | "array" | "float" | null }
   | { readonly struct: string; readonly type: RnaTypeName }
   | { readonly coll: CollectionName; readonly owner: string };
 
@@ -161,7 +161,10 @@ export class AgentHost {
     const prop = this.#prop(t, typeName, handle, attr);
     const node = this.#node(t, handle, this.#ports.booth.doc);
     switch (prop.kind) {
-      case "num": return { v: (node[prop.key] as number) * prop.scale, wrap: null };
+      case "num": {
+        const bounds: Bounds = BOUNDS[prop.bounds];
+        return { v: (node[prop.key] as number) * prop.scale, wrap: bounds.int === true ? null : "float" };
+      }
       case "bool": return { v: prop.invert !== (node[prop.key] as boolean), wrap: null };
       case "choice": return { v: Object.keys(prop.map).find((k) => prop.map[k] === node[prop.key]) ?? null, wrap: null };
       case "text": return { v: this.#members(prop.unique).find((mb) => sameHandle(mb.handle, handle))?.name ?? (node[prop.key] as string), wrap: null };
