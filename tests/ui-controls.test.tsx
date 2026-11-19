@@ -3,7 +3,8 @@ import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { BOUNDS } from "../src/document";
-import { ColorField, Scope, Segmented, Slider, Switch, ladder, linear, logarithmic } from "../src/ui/controls";
+import { ColorField, Scope, Segmented, Slider, Switch } from "../src/ui/controls";
+import { ladder, linear, logarithmic } from "../src/ui/mappings";
 
 declare global {
   var IS_REACT_ACT_ENVIRONMENT: boolean;

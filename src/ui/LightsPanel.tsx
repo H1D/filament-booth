@@ -4,8 +4,9 @@ import { addLight, applyLook, patchLight, removeLight, type LightPatch } from ".
 import { LOOK_PRESETS } from "../presets";
 import { kelvinToRgb } from "../scene";
 import { kelvinTrack, hexToLinear, linearToHex, nearestKelvin } from "./color";
-import { ColorField, Scope, Segmented, Select, Slider, Switch, linear, type Option } from "./controls";
-import { useDoc, useEdit, useHost, useLookModified } from "./host";
+import { ColorField, Scope, Segmented, Select, Slider, Switch, type Option } from "./controls";
+import { linear } from "./mappings";
+import { useDoc, useEdit, useHost, useLookModified } from "./hooks";
 import { Icon } from "./icons";
 import { lookLight } from "./model";
 

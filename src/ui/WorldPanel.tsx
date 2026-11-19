@@ -1,7 +1,8 @@
 import { BOUNDS, deg, type Studio } from "../document";
 import { hexToLinear, linearToHex } from "./color";
-import { ColorField, Group, Slider, Switch, linear } from "./controls";
-import { useDoc, useEdit } from "./host";
+import { ColorField, Group, Slider, Switch } from "./controls";
+import { linear } from "./mappings";
+import { useDoc, useEdit } from "./hooks";
 import { lookStudio } from "./model";
 
 const ROUGHNESS = linear(BOUNDS.backdropRoughness);

@@ -1,8 +1,9 @@
 import {
   BOUNDS, DEFAULT_SLICE, SEAM_POSITIONS, TOP_SURFACE_PATTERNS, mm, type SliceSettings,
 } from "../document";
-import { Group, Note, Select, Slider, linear, type Option } from "./controls";
-import { useDoc, useEdit, usePrint, useScene } from "./host";
+import { Group, Note, Select, Slider, type Option } from "./controls";
+import { linear } from "./mappings";
+import { useDoc, useEdit, usePrint, useScene } from "./hooks";
 import { printSource, slicingEditable, sourceName, stageLabel, titleCase } from "./model";
 import type { SlicedPrint } from "../print";
 

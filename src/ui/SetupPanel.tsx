@@ -2,7 +2,7 @@ import { useId, useRef } from "react";
 import { defaultDocument } from "../document";
 import { framePart } from "../scene";
 import { downloadAs } from "./download";
-import { describeError, useEdit, useHost } from "./host";
+import { describeError, useEdit, useHost } from "./hooks";
 import { Icon } from "./icons";
 
 const SETUP_FILE = "booth-setup.json";

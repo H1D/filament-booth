@@ -2,8 +2,9 @@ import { BOUNDS, deg, m } from "../document";
 import { focusAt, setFocal } from "../edits";
 import { ASPECT_PRESETS, FOCAL_PRESETS_MM } from "../presets";
 import { framePart } from "../scene";
-import { Fold, Group, Note, Segmented, Slider, ladder, linear, type Option } from "./controls";
-import { useDoc, useEdit, useHost, useScene, useUi } from "./host";
+import { Fold, Group, Note, Segmented, Slider, type Option } from "./controls";
+import { ladder, linear } from "./mappings";
+import { useDoc, useEdit, useHost, useScene, useUi } from "./hooks";
 import { Icon } from "./icons";
 import { DEFAULTS } from "./model";
 

@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import { PhotoCard } from "./PhotoCard";
-import { useHost, usePrint, useScene, useUi } from "./host";
+import { useHost, usePrint, useScene, useUi } from "./hooks";
 import { Icon } from "./icons";
 import { sourceName, stageLabel } from "./model";
 import { ACCEPTED_FILES } from "./TopBar";

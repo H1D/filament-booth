@@ -198,3 +198,10 @@ export function sectionState(id: SectionId, ctx: SectionContext): SectionState {
       return { modified: false, reset: null };
   }
 }
+
+export function formatEta(seconds: number): string {
+  const s = Math.max(1, Math.round(seconds));
+  if (s < 60) return `about ${s} s left`;
+  const min = Math.floor(s / 60);
+  return `about ${min} min ${s % 60} s left`;
+}

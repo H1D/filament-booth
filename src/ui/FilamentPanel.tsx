@@ -4,8 +4,9 @@ import {
 } from "../document";
 import { applyFilamentPreset } from "../edits";
 import { FILAMENT_PRESETS } from "../presets";
-import { ColorField, Fold, Group, Scope, Select, Slider, linear, type Option } from "./controls";
-import { useDoc, useEdit } from "./host";
+import { ColorField, Fold, Group, Scope, Select, Slider, type Option } from "./controls";
+import { linear } from "./mappings";
+import { useDoc, useEdit } from "./hooks";
 import { titleCase } from "./model";
 
 const GLOSS = linear(BOUNDS.gloss);

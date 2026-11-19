@@ -1,18 +1,12 @@
 import { useEffect, useRef } from "react";
 import type { Photo } from "../photo/photo";
 import { downloadAs } from "./download";
-import { useHost, usePhotoSession } from "./host";
+import { useHost, usePhotoSession } from "./hooks";
 import { Icon } from "./icons";
+import { formatEta } from "./model";
 import type { LiveProgress, Shot } from "./photo-session";
 
 const ENGINE_NAMES = { cycles: "Cycles", raster: "Raster" } as const satisfies Record<Photo["engine"], string>;
-
-export function formatEta(seconds: number): string {
-  const s = Math.max(1, Math.round(seconds));
-  if (s < 60) return `about ${s} s left`;
-  const min = Math.floor(s / 60);
-  return `about ${min} min ${s % 60} s left`;
-}
 
 const STATE_LABELS: Record<LiveProgress["state"], string> = {
   preparing: "Preparing", rendering: "Rendering", developing: "Developing",

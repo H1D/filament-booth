@@ -1,4 +1,4 @@
-import { useHost, usePrint, useScene, useUi } from "./host";
+import { useHost, usePrint, useScene, useUi } from "./hooks";
 import { sourceName, stageLabel } from "./model";
 
 /** One line at the foot of the window: what the booth is doing, then what the viewport says, then the film size. */

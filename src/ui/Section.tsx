@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { useDoc, useEdit, useFilamentModified, usePrint } from "./host";
+import { useDoc, useEdit, useFilamentModified, usePrint } from "./hooks";
 import { Icon } from "./icons";
 import { SECTION_TITLES, sectionState, type SectionId } from "./model";
 

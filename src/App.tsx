@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
-import { HostProvider, useHost, useUi, type Host } from "./ui/host";
+import { useHost, useUi, type Host } from "./ui/hooks";
+import { HostProvider } from "./ui/host";
 import { Rail } from "./ui/Rail";
 import { Stage } from "./ui/Stage";
 import { StatusLine } from "./ui/StatusLine";

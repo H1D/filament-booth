@@ -2,7 +2,7 @@ import { useRef } from "react";
 import { LOOK_IDS } from "../document";
 import { applyLook } from "../edits";
 import { LOOK_PRESETS } from "../presets";
-import { useDoc, useEdit, useHost, useLookModified, usePhotoSession, usePrint } from "./host";
+import { useDoc, useEdit, useHost, useLookModified, usePhotoSession, usePrint } from "./hooks";
 import { Icon, Mark } from "./icons";
 
 export const ACCEPTED_FILES = ".stl,.gcode,.3mf";

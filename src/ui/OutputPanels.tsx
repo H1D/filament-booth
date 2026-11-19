@@ -1,6 +1,7 @@
 import { AGX_LOOKS, BOUNDS, REST_FACES, deg, type AgxLook, type Pose } from "../document";
-import { Select, Slider, Switch, linear, logarithmic, type Option } from "./controls";
-import { useDoc, useEdit, useScene } from "./host";
+import { Select, Slider, Switch, type Option } from "./controls";
+import { linear, logarithmic } from "./mappings";
+import { useDoc, useEdit, useScene } from "./hooks";
 import { DEFAULTS, titleCase } from "./model";
 
 const TURNTABLE = linear(BOUNDS.turntableDeg);
