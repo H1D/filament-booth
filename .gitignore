@@ -22,3 +22,6 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# The vendored slicer protocol ships prebuilt.
+!vendor/muon-protocol/dist
