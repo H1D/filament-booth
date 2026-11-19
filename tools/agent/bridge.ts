@@ -12,7 +12,7 @@
  *   --app <origin>                       a booth origin to accept (repeatable); the first one is also the pairing link's base
  *   --allow <dir>                        another folder the tab may read and write (repeatable)
  *
- * Register it:  claude mcp add --scope user booth -- bun <checkout>/tools/agent/bridge.ts
+ * Register it:  claude mcp add booth -- bun <checkout>/tools/agent/bridge.ts
  *
  * MCP owns stdout. Every log line goes to stderr.
  */

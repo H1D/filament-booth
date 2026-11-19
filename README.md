@@ -38,11 +38,16 @@ computer.
    bun run dev        # http://localhost:5173
    ```
 
-2. Register the bridge with your agent. Use the absolute path of this checkout.
+2. Register the bridge with your agent, in the project folder you will ask it from. Use the absolute
+   path of this checkout.
 
    ```sh
-   claude mcp add --scope user booth -- bun /path/to/filament-booth/tools/agent/bridge.ts
+   claude mcp add booth -- bun /path/to/filament-booth/tools/agent/bridge.ts
    ```
+
+   Each agent session starts its own bridge, and one bridge holds the port at a time. Registering
+   the bridge for every project (`--scope user`) lets an unrelated session hold the port, and the
+   session you are working in then reports that the port is busy.
 
    Codex reads `~/.codex/config.toml`.
 
