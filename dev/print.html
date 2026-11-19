@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Print pipeline</title>
+    <style>
+      :root { color-scheme: light dark; font: 14px/1.4 system-ui, sans-serif; }
+      body { margin: 16px; max-width: 60rem; }
+      #drop { border: 2px dashed gray; padding: 24px; text-align: center; }
+      #drop.over { border-color: royalblue; }
+      fieldset { margin: 12px 0; }
+      label { display: inline-block; margin-right: 12px; }
+      input[type="number"] { width: 5rem; }
+      pre { white-space: pre-wrap; border: 1px solid gray; padding: 8px; min-height: 8rem; }
+    </style>
+  </head>
+  <body>
+    <h1>Print pipeline</h1>
+    <div id="drop">Drop an .stl, .gcode or .gcode.3mf here, or <input id="file" type="file" multiple accept=".stl,.gcode,.3mf,.bin" /></div>
+    <fieldset>
+      <legend>Slicing (STL only)</legend>
+      <label>layer height <input id="layerHeight" type="number" step="0.01" value="0.2" /></label>
+      <label>walls <input id="wallCount" type="number" step="1" value="2" /></label>
+      <label>top shell layers <input id="topShellLayers" type="number" step="1" value="5" /></label>
+      <label>outer width <input id="outerLineWidth" type="number" step="0.01" value="0.42" /></label>
+      <label>inner width <input id="innerLineWidth" type="number" step="0.01" value="0.45" /></label>
+      <label>top pattern
+        <select id="topSurfacePattern"><option>monotonic</option><option>monotonic-line</option><option>concentric</option><option>zigzag</option></select>
+      </label>
+      <label>seam
+        <select id="seamPosition"><option>aligned</option><option>nearest</option><option>back</option><option>random</option></select>
+      </label>
+    </fieldset>
+    <p>
+      <button id="open">Open first file</button>
+      <button id="reslice">Re-slice</button>
+      <button id="lite">Lite mesh</button>
+    </p>
+    <pre id="out"></pre>
+    <script type="module" src="/dev/print.ts"></script>
+  </body>
+</html>

@@ -15,6 +15,8 @@
  * three.js lives in viewport.ts; Cycles consumes the mesh as-is.
  */
 import type { BedType, Mm, SliceSettings } from "./document";
+import { PrintSession } from "./print/session";
+import type { Job, Stage } from "./print/session";
 
 // ---- source: the editable/frozen distinction is a type, not a flag ---------
 
@@ -101,16 +103,17 @@ type PrintRequest =
   | { id: number; op: "reslice"; settings: SliceSettings } // STL only; reuses the cached file
   | { id: number; op: "lite" };                             // sweep cached centreline, lite rings
 type PrintReply =
-  | { id: number; stage: "reading" | "slicing" | "parsing" | "walls" | "sweeping" }
-  | { id: number; sliced: SlicedPrint; mesh: BeadMesh }     // buffers transferred
-  | { id: number; mesh: BeadMesh }                          // lite reply
-  | { id: number; error: string };
+  | { id: number; kind: "stage"; stage: Stage }
+  | { id: number; kind: "opened"; sliced: SlicedPrint; mesh: BeadMesh } // buffers transferred
+  | { id: number; kind: "lite"; mesh: BeadMesh }                        // buffers transferred
+  | { id: number; kind: "error"; message: string };
+type Finished = Extract<PrintReply, { kind: "opened" | "lite" }>;
 
 export interface LoadedPrint {
   source: PrintSource;
   sliced: SlicedPrint;
   mesh: BeadMesh;
-  /** Lazily built, cached; null until first resolved. Moving-frames only. */
+  /** Lazily built, cached. Moving-frames only. Rejects with Superseded once a newer open or reslice has begun. */
   liteMesh(): Promise<BeadMesh>;
 }
 
@@ -120,6 +123,17 @@ export type PrintState =
   | { status: "ready"; loaded: LoadedPrint }
   | { status: "error"; message: string; loaded: LoadedPrint | null }; // keep last good part on show
 
+export class Superseded extends Error {
+  override name = "Superseded";
+}
+
+interface LiveJob {
+  id: number;
+  onStage: (stage: string) => void;
+  resolve: (reply: Finished) => void;
+  reject: (error: Error) => void;
+}
+
 /**
  * PrintPipeline — the domain face of the worker. Deep interface: three
  * calls hide slicing (the Muon3D Orca engine in WASM, one fresh worker per slice), parsing, exposedInner,
@@ -128,22 +142,162 @@ export type PrintState =
  * the superseded promise rejects with Superseded and its reply is dropped.
  */
 export class PrintPipeline {
+  private readonly spawn: () => Worker;
+  private worker: Worker | null = null;
+  /** The worker has been sent a source, so a reslice can name only the settings. */
+  private warm = false;
+  private job: LiveJob | null = null;
+  private nextId = 1;
+  /** Bumped by every open and reslice; a LoadedPrint of an older generation is stale. */
+  private generation = 0;
+  private source: PrintSource | null = null;
+
   constructor(spawn: () => Worker) {
-    throw new Error("not implemented");
+    this.spawn = spawn;
   }
+
   /** STL sliced with `settings`; G-code/3mf parsed; .bin read. */
-  open(src: PrintSource, settings: SliceSettings, onStage: (s: string) => void): Promise<LoadedPrint> {
-    throw new Error("not implemented");
-    // TODO: post {op:"open"}; wire stage replies; transfer nothing back except mesh buffers
+  async open(src: PrintSource, settings: SliceSettings, onStage: (s: string) => void): Promise<LoadedPrint> {
+    this.generation++;
+    this.source = src;
+    this.warm = true;
+    return this.load(src, await this.start((id) => ({ id, op: "open", src, settings }), onStage));
   }
+
   /** Only reachable when source.kind === "stl" — Booth enforces; the type
    *  of `src` there makes the G-code case unrepresentable in the panel. */
-  reslice(settings: SliceSettings, onStage: (s: string) => void): Promise<LoadedPrint> {
-    throw new Error("not implemented");
+  async reslice(settings: SliceSettings, onStage: (s: string) => void): Promise<LoadedPrint> {
+    const src = this.source;
+    if (!src || src.kind !== "stl") throw new Error("only an opened STL can be re-sliced");
+    this.generation++;
+    const resend = !this.warm; // the worker was lost: it has to be told the file again
+    this.warm = true;
+    return this.load(src, await this.start((id) => (resend ? { id, op: "open", src, settings } : { id, op: "reslice", settings }), onStage));
   }
-  dispose(): void { throw new Error("not implemented"); }
+
+  dispose(): void {
+    this.generation++;
+    this.job?.reject(new Superseded("the print pipeline was disposed"));
+    this.job = null;
+    this.discardWorker();
+  }
+
+  private load(source: PrintSource, reply: Finished): LoadedPrint {
+    if (reply.kind !== "opened") throw new Error("the print worker answered an open with a lite mesh");
+    const generation = this.generation;
+    let lite: Promise<BeadMesh> | null = null;
+    return {
+      source, sliced: reply.sliced, mesh: reply.mesh,
+      liteMesh: () => {
+        if (generation !== this.generation) return Promise.reject(new Superseded("a newer print replaced this one"));
+        lite ??= this.start((id) => ({ id, op: "lite" }), () => {}).then((r) => {
+          if (r.kind !== "lite") throw new Error("the print worker answered a lite request with a full mesh");
+          return r.mesh;
+        }, (err: unknown) => { lite = null; throw err; });
+        return lite;
+      },
+    };
+  }
+
+  private start(request: (id: number) => PrintRequest, onStage: (s: string) => void): Promise<Finished> {
+    this.job?.reject(new Superseded("a newer print request began"));
+    this.job = null;
+    const worker = this.worker ?? this.spawnWorker();
+    return new Promise<Finished>((resolve, reject) => {
+      const id = this.nextId++;
+      this.job = { id, onStage, resolve, reject };
+      try {
+        worker.postMessage(request(id));
+      } catch (err) {
+        this.job = null;
+        reject(err instanceof Error ? err : new Error(String(err)));
+      }
+    });
+  }
+
+  private spawnWorker(): Worker {
+    const worker = this.spawn();
+    worker.onmessage = (ev: MessageEvent<PrintReply>) => {
+      const reply = ev.data, job = this.job;
+      if (!job || reply.id !== job.id) return; // late reply of a superseded job
+      if (reply.kind === "stage") { job.onStage(reply.stage); return; }
+      this.job = null;
+      if (reply.kind === "error") job.reject(new Error(reply.message));
+      else job.resolve(reply);
+    };
+    worker.onerror = (ev: ErrorEvent) => {
+      const job = this.job;
+      this.job = null;
+      this.discardWorker();
+      job?.reject(new Error(ev.message || "the print worker crashed"));
+    };
+    this.worker = worker;
+    return worker;
+  }
+
+  private discardWorker(): void {
+    this.worker?.terminate();
+    this.worker = null;
+    this.warm = false;
+  }
 }
-export class Superseded extends Error {}
+
+// ---- worker side ----
+
+/** The slice of a worker's global scope (or of a MessagePort) that the print protocol uses. */
+interface Port {
+  onmessage: ((ev: MessageEvent<PrintRequest>) => void) | null;
+  postMessage(message: PrintReply, options: { transfer: ArrayBuffer[] }): void;
+}
+
+function transferable(buffer: ArrayBufferLike): ArrayBuffer {
+  if (buffer instanceof ArrayBuffer) return buffer;
+  throw new Error("a mesh buffer is shared memory and cannot be transferred");
+}
+const meshBuffers = (m: BeadMesh): ArrayBuffer[] =>
+  [m.position, m.normal, m.tangent, m.word, m.index].map((a) => transferable(a.buffer));
+
+/**
+ * Answers print requests on `port`. A request arriving while a job runs aborts
+ * it: the engine worker of a slice is terminated, and the aborted job sends
+ * nothing more.
+ */
+export function servePrint(port: Port): void {
+  const session = new PrintSession();
+  let live: AbortController | null = null;
+  const send = (reply: PrintReply, transfer: ArrayBuffer[] = []): void => port.postMessage(reply, { transfer });
+
+  const run = async (req: PrintRequest, ctl: AbortController): Promise<void> => {
+    const job: Job = {
+      signal: ctl.signal,
+      stage: (stage) => { if (!ctl.signal.aborted) send({ id: req.id, kind: "stage", stage }); },
+      checkpoint: async () => {
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        ctl.signal.throwIfAborted();
+      },
+    };
+    try {
+      if (req.op === "lite") {
+        const mesh = await session.lite(job);
+        ctl.signal.throwIfAborted();
+        send({ id: req.id, kind: "lite", mesh }, meshBuffers(mesh));
+      } else {
+        const opened = await (req.op === "open" ? session.open(req.src, req.settings, job) : session.reslice(req.settings, job));
+        ctl.signal.throwIfAborted();
+        send({ id: req.id, kind: "opened", ...opened }, meshBuffers(opened.mesh));
+      }
+    } catch (err) {
+      if (ctl.signal.aborted) return;
+      send({ id: req.id, kind: "error", message: err instanceof Error ? err.message : String(err) });
+    }
+  };
+
+  port.onmessage = (ev) => {
+    live?.abort();
+    live = new AbortController();
+    void run(ev.data, live);
+  };
+}
 
 /** Worker-side entry (src/print/worker.ts calls this). Ported from the old
  *  beads-worker.js: parse, exposedInner, centreline, ringTables, sweep,
@@ -153,5 +307,7 @@ export class Superseded extends Error {}
  *      in a fresh worker per slice, and its G-code carries LINE_WIDTH tags;
  *  (3) the centreline is cached so the lite mesh never re-slices.
  *  The calibration constants (BULGE 0.045, TOP_R 0.04, JITTER 0.004, ...) sit
- *  in one block at the top of the worker, checked by the parity test. */
-export function runPrintWorker(): void { throw new Error("not implemented"); }
+ *  in one block, src/print/calibration.ts, checked by the parity test. */
+export function runPrintWorker(): void {
+  servePrint(self);
+}
