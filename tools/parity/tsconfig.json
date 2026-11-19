@@ -1,0 +1,9 @@
+{
+  "extends": "../../tsconfig.app.json",
+  "compilerOptions": {
+    "tsBuildInfoFile": "../../node_modules/.tmp/tsconfig.parity.tsbuildinfo",
+    "types": ["vite/client", "node"],
+    "lib": ["ES2023", "DOM"]
+  },
+  "include": [".", "../../dev", "../../tests/cycles-upload.test.ts", "../../tests/cycles-wasm.test.ts", "../../src/photo/cycles.ts", "../../src/photo/cycles-worker.ts", "../../src/photo/cycles-upload.ts"]
+}

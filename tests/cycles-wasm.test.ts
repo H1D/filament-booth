@@ -1,0 +1,127 @@
+/**
+ * The Cycles module itself, under Node's worker threads: a few tiny renders that check what the
+ * scene means (light linking, the floor ring, progressive passes) and the session lifecycle.
+ */
+import { readFileSync } from "node:fs";
+import { beforeAll, expect, test } from "vitest";
+import { decodeRgbe, loadCycles, readPasses, RenderState, uploadScene, type CyclesModule, type Passes, type WorldImage } from "../src/photo/cycles-upload";
+import type { Scene } from "../src/scene";
+import { beadMesh, fixture } from "../tools/parity/fixtures";
+
+let M: CyclesModule;
+let world: WorldImage;
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+beforeAll(async () => {
+  M = await loadCycles(new URL("../public/cycles/cycles_booth.mjs", import.meta.url).href, 20);
+  world = decodeRgbe(new Uint8Array(readFileSync(new URL("../public/hdr/studio_small_09_1k.hdr", import.meta.url))));
+}, 60_000);
+
+async function render(scene: Scene, during?: () => void): Promise<{ passes: Passes; state: number; snapshots: number }> {
+  uploadScene(M, scene, world);
+  expect(M._cb_render_start()).toBe(0);
+  let snapshots = 0;
+  let version = 0;
+  while (M._cb_render_state() === RenderState.running) {
+    await wait(5);
+    if (M._cb_passes_version() !== version) {
+      version = M._cb_passes_version();
+      snapshots++;
+      during?.();
+    }
+  }
+  const state = M._cb_render_state();
+  const passes = readPasses(M, scene.film.width, scene.film.height);
+  M._cb_session_free();
+  if (!passes) throw new Error("no passes");
+  return { passes, state, snapshots };
+}
+
+/** Mean of rgba over pixels whose albedo pass is grey (the backdrop) or not (the part). */
+function meanWhere(p: Passes, backdrop: boolean): number {
+  if (!p.albedo) throw new Error("no albedo pass");
+  let sum = 0;
+  let n = 0;
+  for (let i = 0; i < p.rgba.length; i += 4) {
+    const grey = Math.abs(p.albedo[i] - p.albedo[i + 2]) < 0.01 && p.albedo[i] > 0.2;
+    if (grey === backdrop) {
+      sum += p.rgba[i] + p.rgba[i + 1] + p.rgba[i + 2];
+      n++;
+    }
+  }
+  return sum / n / 3;
+}
+
+const small = { width: 96, height: 60, samples: 16 };
+
+test("the bead fixture renders progressively with albedo and normal guides", async () => {
+  const { passes, state, snapshots } = await render(fixture("a", small));
+  expect(state).toBe(RenderState.done);
+  expect(passes.samples).toBe(16);
+  expect(snapshots).toBeGreaterThanOrEqual(1);
+  expect(passes.rgba.every(Number.isFinite)).toBe(true);
+  expect(meanWhere(passes, false)).toBeGreaterThan(0.01);
+  const normal = passes.normal;
+  if (!normal) throw new Error("no normal pass");
+  const floor = (58 * 96 + 2) * 4;
+  expect(Math.hypot(normal[floor], normal[floor + 1], normal[floor + 2])).toBeCloseTo(1, 2);
+}, 60_000);
+
+test("a part-only light reaches the part and not the backdrop", async () => {
+  const base = fixture("b", small);
+  const only = (partOnly: boolean): Scene => ({
+    ...base,
+    world: { ...base.world, strength: 0 },
+    lights: { ...base.lights, emitters: base.lights.emitters.filter((e) => e.id === "key").map((e) => ({ ...e, partOnly })) },
+  });
+  const linked = (await render(only(true))).passes;
+  const open = (await render(only(false))).passes;
+  expect(meanWhere(linked, true)).toBeLessThan(0.1 * meanWhere(open, true));
+  expect(meanWhere(linked, false)).toBeGreaterThan(0.5 * meanWhere(open, false));
+}, 60_000);
+
+test("the floor cards show in the part's reflections only", async () => {
+  const withRing = fixture("c", small);
+  const without: Scene = { ...withRing, lights: { ...withRing.lights, floorCards: null } };
+  const lit = (await render(withRing)).passes;
+  const dark = (await render(without)).passes;
+  expect(meanWhere(lit, false)).toBeGreaterThan(2 * meanWhere(dark, false));
+  expect(meanWhere(lit, true)).toBeCloseTo(meanWhere(dark, true), 2);
+}, 60_000);
+
+test("finish keeps the samples rendered so far", async () => {
+  const scene = fixture("a", { ...small, samples: 100_000 });
+  const { passes, state } = await render(scene, () => M._cb_finish());
+  expect(state).toBe(RenderState.done);
+  expect(passes.samples).toBeGreaterThan(0);
+  expect(passes.samples).toBeLessThan(100_000);
+}, 60_000);
+
+test("cancel returns within a second while sampling and while building the BVH", async () => {
+  for (const phase of ["sampling", "bvh"] as const) {
+    const base = fixture("a", { ...small, samples: 100_000 });
+    const scene: Scene = phase === "bvh" && base.part
+      ? { ...base, part: { ...base.part, mesh: beadMesh({ layers: 120, perimeters: 2, segments: 600, ringVerts: 12, halfSizeM: [0.016, 0.011], layerHeightM: 0.0002, beadWidthM: 0.00045 }) } }
+      : base;
+    uploadScene(M, scene, world);
+    M._cb_render_start();
+    if (phase === "sampling") while (M._cb_render_sample() < 1) await wait(5);
+    else await wait(300);
+    expect(M._cb_render_sample() > 0).toBe(phase === "sampling");
+    const t0 = performance.now();
+    M._cb_cancel();
+    expect(performance.now() - t0).toBeLessThan(1000);
+    while (M._cb_render_state() === RenderState.running) await wait(1);
+    expect(M._cb_render_state()).toBe(RenderState.cancelled);
+    M._cb_session_free();
+  }
+}, 120_000);
+
+test("repeated sessions in one module reuse the heap", async () => {
+  const heaps: number[] = [];
+  for (let i = 0; i < 3; i++) {
+    await render(fixture("a", small));
+    heaps.push(M._cb_heap_bytes());
+  }
+  expect(heaps[2]).toBe(heaps[1]);
+}, 120_000);
