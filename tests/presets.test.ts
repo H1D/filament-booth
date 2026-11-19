@@ -117,6 +117,10 @@ describe("filament presets", () => {
     expect(albedoOf("pla-matte")).toBeCloseTo(0.022, 3);
   });
 
+  test("only the two presets a Cycles still was matched to are calibrated", () => {
+    expect(FILAMENT_PRESET_IDS.filter((id) => FILAMENT_PRESETS[id].calibrated)).toEqual(["petg-basic", "pla-matte"]);
+  });
+
   test("every preset id has an entry, with every roughness a valid 0..1 value", () => {
     for (const id of FILAMENT_PRESET_IDS) {
       expect(FILAMENT_PRESETS[id].label).not.toBe("");

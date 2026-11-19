@@ -198,6 +198,18 @@ try {
     return `${labels.length} patterns (${labels.join(", ")}); Hilbert curve chosen and the section marked modified`;
   });
 
+  await check("a filament preset nobody calibrated is marked as an estimate", async () => {
+    const filament = await openSection(page, "filament");
+    const select = filament.locator('select[aria-label="Preset"]');
+    const labels = await select.locator("option").allInnerTexts();
+    expect(labels.join("|") === "PETG Basic|PLA Basic (estimate)|PLA Matte|PLA Silk (estimate)", `the presets read ${labels.join(", ")}`);
+    await select.selectOption("pla-silk");
+    const shown = await select.evaluate((el) => (el instanceof HTMLSelectElement ? (el.selectedOptions[0]?.textContent ?? "") : ""));
+    await select.selectOption("petg-basic");
+    expect(shown === "PLA Silk (estimate)", `with PLA Silk chosen the select reads ${shown}`);
+    return `presets read ${labels.join(", ")}; PLA Silk chosen reads "${shown}"`;
+  });
+
   await check("a focal preset keeps the framing", async () => {
     await openSection(page, "camera");
     const before = await standIn(page);

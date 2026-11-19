@@ -3,6 +3,7 @@ import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, test } from "vitest";
 import type { Booth } from "../src/booth";
+import { FilamentPanel } from "../src/ui/FilamentPanel";
 import { LightsPanel } from "../src/ui/LightsPanel";
 import { OutputPanel } from "../src/ui/OutputPanels";
 import { PartPanel } from "../src/ui/PartPanel";
@@ -184,6 +185,14 @@ describe("the output section", () => {
     expect(container.querySelector(".readout.size")?.textContent).toContain("1600 by 2000 px");
     typeInto(input(container, "Long edge value, px"), "1000");
     expect(container.querySelector(".readout.size")?.textContent).toContain("800 by 1000 px");
+  });
+});
+
+describe("the filament section", () => {
+  test("marks the presets no still has been matched to as estimates", () => {
+    const { booth } = boothWith();
+    const { container } = mount(booth, <FilamentPanel />);
+    expect(optionLabels(select(container, "Preset"))).toEqual(["PETG Basic", "PLA Basic (estimate)", "PLA Matte", "PLA Silk (estimate)"]);
   });
 });
 

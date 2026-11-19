@@ -18,7 +18,10 @@ const IMPERFECTION = linear(BOUNDS.imperfection);
 const COOLING_TAU = linear(BOUNDS.coolingTauS);
 const FAN = linear(BOUNDS.fanCooling);
 
-const PRESETS: Option<(typeof FILAMENT_PRESET_IDS)[number]>[] = FILAMENT_PRESET_IDS.map((id) => ({ value: id, label: FILAMENT_PRESETS[id].label }));
+const PRESETS: Option<(typeof FILAMENT_PRESET_IDS)[number]>[] = FILAMENT_PRESET_IDS.map((id) => {
+  const { label, calibrated } = FILAMENT_PRESETS[id];
+  return { value: id, label: calibrated ? label : `${label} (estimate)` };
+});
 const BEDS: Option<FilamentChoice["bed"]>[] = [
   { value: "auto", label: "Auto, from the file" },
   ...BED_TYPES.map((value) => ({ value, label: value === "textured-pei" ? "Textured PEI" : "Smooth" })),
@@ -40,7 +43,7 @@ export function FilamentPanel() {
   return (
     <>
       <Select label="Preset" value={f.presetId ?? ""} options={PRESETS}
-        hint="Copies the preset's colour, finish and gloss in. Edits afterwards keep the preset as the thing to reset to."
+        hint="Copies the preset's colour, finish and gloss in. Edits afterwards keep the preset as the thing to reset to. An estimate has not been matched to a photograph of the real filament."
         onChange={(id) => { edit(applyFilamentPreset(id)); }} />
       <ColorField label="Colour" value={f.recipe.colorHex} onChange={(hex) => { setRecipe((r) => { r.colorHex = hex; }); }} />
       <Slider label="Gloss" mapping={GLOSS} value={f.gloss} defaultValue={DEFAULT_GLOSS}
