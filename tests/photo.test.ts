@@ -395,6 +395,7 @@ describe("cancel", () => {
 
     expect(await run.result).toBe(photo);
     expect(seen.at(-1)?.state).toBe("done");
+    expect(cycles.signal?.aborted).toBe(false);
   });
 
   test("after a failure it changes nothing", async () => {
