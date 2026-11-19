@@ -234,7 +234,8 @@ class FakeRun implements PhotoRun {
     this.#over = true;
     const photo: Photo = {
       png, fileName: `${this.#partName}_${stamp()}.png`, width: this.#scene.film.width, height: this.#scene.film.height,
-      samples: this.#scene.film.samples, engine: "cycles", docRev: this.docRev,
+      samples: this.#scene.film.samples, targetSamples: this.#scene.film.samples, stoppedBy: { kind: "samples" },
+      engine: "cycles", docRev: this.docRev,
     };
     this.#emit({ state: "done", photo });
     this.#resolve(photo);

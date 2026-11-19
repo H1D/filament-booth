@@ -3,10 +3,17 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import { defaultDocument } from "../src/document";
 import { parseManifest, type AgxData, type RadianceFrame } from "../src/film";
 import { PhotoCancelled, PhotoDesk, photoFileName, type PhotoEngine, type PhotoProgress, type PhotoRun, type PhotoTools } from "../src/photo/photo";
-import { compileScene, type FilmSection } from "../src/scene";
+import { compileScene, type FilmSection, type Scene } from "../src/scene";
 
 const manifest = parseManifest(JSON.parse(readFileSync(new URL("../public/lut/manifest.json", import.meta.url), "utf8")));
 const scene = compileScene(defaultDocument(), null, 7);
+
+/** The default scene with another time limit, in seconds. 0 is no limit. */
+function sceneWithLimit(timeLimitS: number): Scene {
+  const doc = defaultDocument();
+  doc.output.timeLimitS = timeLimitS;
+  return compileScene(doc, null, 7);
+}
 
 interface Deferred<T> {
   readonly promise: Promise<T>;
@@ -37,6 +44,9 @@ interface FakeBitmap extends ImageBitmap {
 /** The browser-only steps, the clock, and a record of what the desk asked of them. */
 class Bench {
   nowMs = new Date(2026, 10, 19, 14, 5).getTime();
+  /** Timers the desk armed and has not cancelled or seen fire, as due times. */
+  readonly timers = new Map<symbol, { at: number; fn: () => void }>();
+  armed = 0;
   readonly log: string[] = [];
   readonly bitmaps: FakeBitmap[] = [];
   readonly developed: RadianceFrame[] = [];
@@ -74,10 +84,27 @@ class Bench {
       return this.developGate ? this.developGate.promise : this.png;
     },
     now: () => this.nowMs,
+    schedule: (fn, ms) => {
+      const id = Symbol("timer");
+      this.armed++;
+      this.timers.set(id, { at: this.nowMs + ms, fn });
+      return () => {
+        this.timers.delete(id);
+      };
+    },
   };
 
+  /** Moves the clock and fires the timers that fall due, in order. */
   advance(ms: number): void {
-    this.nowMs += ms;
+    const target = this.nowMs + ms;
+    for (;;) {
+      const due = [...this.timers.entries()].filter(([, t]) => t.at <= target).sort(([, a], [, b]) => a.at - b.at)[0];
+      if (due === undefined) break;
+      this.timers.delete(due[0]);
+      this.nowMs = Math.max(this.nowMs, due[1].at);
+      due[1].fn();
+    }
+    this.nowMs = target;
   }
 
   get open(): number {
@@ -576,7 +603,7 @@ describe("quick looks", () => {
 
   test("estimates the time left from the pass rate, not from the start of the render", async () => {
     const { bench, engines: [cycles], desk } = setup();
-    const run = desk.take(scene, "bracket");
+    const run = desk.take(sceneWithLimit(0), "bracket");
     const seen = watch(run);
     await tick();
     bench.advance(30_000);
@@ -740,5 +767,194 @@ describe("image bitmaps", () => {
     expect(bench.open).toBe(0);
     raster.complete(16);
     await run.result;
+  });
+});
+
+describe("the photo time limit", () => {
+  test("reached mid-render, it develops the frame so far and says the limit stopped it", async () => {
+    const { bench, engines: [cycles], desk } = setup();
+    const run = desk.take(sceneWithLimit(120), "bracket");
+    const seen = watch(run);
+    await tick();
+    cycles.pass(12, 0.19);
+    bench.advance(100_000);
+    cycles.pass(20, 0.31);
+    expect(cycles.signal?.aborted).toBe(false);
+    bench.advance(20_000);
+    const photo = await run.result;
+
+    expect(cycles.signal?.reason).toBe("finish");
+    expect(photo).toMatchObject({ samples: 20, targetSamples: scene.film.samples, stoppedBy: { kind: "time-limit", limitS: 120 } });
+    expect(bench.developed.map((f) => f.samples)).toEqual([20]);
+    expect(states(seen)).toEqual(["preparing", "rendering", "developing", "done"]);
+  });
+
+  test("reached before the first pass, it waits for that pass and then finishes", async () => {
+    const { bench, engines: [cycles], desk } = setup();
+    const run = desk.take(sceneWithLimit(30), "bracket");
+    const seen = watch(run);
+    await tick();
+    bench.advance(45_000);
+    expect(cycles.signal?.aborted).toBe(false);
+    expect(states(seen)).toEqual(["preparing", "rendering"]);
+    cycles.pass(1, 0.004);
+    const photo = await run.result;
+
+    expect(cycles.signal?.reason).toBe("finish");
+    expect(photo).toMatchObject({ samples: 1, stoppedBy: { kind: "time-limit", limitS: 30 } });
+  });
+
+  test("a sample target reached before the limit says so", async () => {
+    const { bench, engines: [cycles], desk } = setup();
+    const run = desk.take(sceneWithLimit(300), "bracket");
+    await tick();
+    cycles.pass(128, 0.5);
+    bench.advance(10_000);
+    cycles.complete(scene.film.samples);
+    const photo = await run.result;
+
+    expect(cycles.signal?.aborted).toBe(false);
+    expect(photo).toMatchObject({ samples: scene.film.samples, targetSamples: scene.film.samples, stoppedBy: { kind: "samples" } });
+  });
+
+  test("a limit that fires as the last sample lands does not claim the stop", async () => {
+    const { bench, engines: [cycles], desk } = setup();
+    const run = desk.take(sceneWithLimit(10), "bracket");
+    await tick();
+    cycles.pass(scene.film.samples, 1);
+    bench.advance(11_000);
+    // The last sample was already in the frame when the stop arrived.
+    expect(cycles.signal?.reason).toBe("finish");
+    expect((await run.result).stoppedBy).toEqual({ kind: "samples" });
+  });
+
+  test("Finish now says the user stopped it", async () => {
+    const { bench, engines: [cycles], desk } = setup();
+    const run = desk.take(sceneWithLimit(300), "bracket");
+    await tick();
+    cycles.pass(20, 0.31);
+    bench.advance(5_000);
+    run.finishNow();
+    const photo = await run.result;
+    expect(photo).toMatchObject({ samples: 20, stoppedBy: { kind: "user" } });
+  });
+
+  test("Finish now first keeps the user as the reason when the limit follows", async () => {
+    const { bench, engines: [cycles], desk } = setup();
+    const run = desk.take(sceneWithLimit(10), "bracket");
+    await tick();
+    cycles.pass(20, 0.31);
+    run.finishNow();
+    bench.advance(20_000);
+    expect((await run.result).stoppedBy).toEqual({ kind: "user" });
+  });
+
+  test("0 means no limit: no timer is ever armed and the bar follows the samples", async () => {
+    const { bench, engines: [cycles], desk } = setup();
+    const run = desk.take(sceneWithLimit(0), "bracket");
+    const seen = watch(run);
+    await tick();
+    cycles.pass(16, 0.25);
+    bench.advance(3_600_000);
+    cycles.pass(32, 0.5);
+    cycles.complete(64);
+    const photo = await run.result;
+
+    expect(bench.armed).toBe(0);
+    expect(renderings(seen).map((p) => p.fraction)).toEqual([0, 0.25, 0.5]);
+    expect(photo.stoppedBy).toEqual({ kind: "samples" });
+  });
+
+  test("cancel wins over a pending limit", async () => {
+    const { bench, engines: [cycles], desk } = setup();
+    const run = desk.take(sceneWithLimit(30), "bracket");
+    await tick();
+    cycles.pass(8, 0.1);
+    run.cancel();
+    bench.advance(60_000);
+
+    await expect(run.result).rejects.toBeInstanceOf(PhotoCancelled);
+    expect(cycles.signal?.reason).toBe("cancel");
+    expect(bench.developed).toEqual([]);
+  });
+
+  test("the timer is disarmed when the run ends, however it ends", async () => {
+    const finished = setup();
+    const done = finished.desk.take(sceneWithLimit(300), "bracket");
+    await tick();
+    expect(finished.bench.timers.size).toBe(1);
+    finished.engines[0].complete(64);
+    await done.result;
+    expect(finished.bench.timers.size).toBe(0);
+
+    const cancelled = setup();
+    const gone = cancelled.desk.take(sceneWithLimit(300), "bracket");
+    await tick();
+    gone.cancel();
+    expect(cancelled.bench.timers.size).toBe(0);
+    await gone.result.catch(() => {});
+
+    const failed = setup();
+    const broke = failed.desk.take(sceneWithLimit(300), "bracket");
+    await tick();
+    failed.engines[0].crash("wasm trap");
+    await broke.result.catch(() => {});
+    expect(failed.bench.timers.size).toBe(0);
+  });
+
+  test("the clock starts when the engine starts, not while the run waits for the one before it", async () => {
+    const { bench, engines: [cycles], desk } = setup();
+    bench.loadGate = deferred<void>();
+    const run = desk.take(sceneWithLimit(60), "bracket");
+    await tick();
+    expect(bench.armed).toBe(0);
+    bench.advance(50_000);
+    bench.loadGate.resolve();
+    await tick();
+    expect(bench.armed).toBe(1);
+    cycles.pass(4, 0.06);
+    bench.advance(50_000);
+    expect(cycles.signal?.aborted).toBe(false);
+    bench.advance(10_001);
+    expect((await run.result).stoppedBy).toEqual({ kind: "time-limit", limitS: 60 });
+  });
+
+  test("the bar fills with the limit and the estimate is the smaller of the samples and the time left", async () => {
+    const { bench, engines: [cycles], desk } = setup();
+    const run = desk.take(sceneWithLimit(100), "bracket");
+    const seen = watch(run);
+    await tick();
+    expect(renderings(seen)[0]).toMatchObject({ fraction: 0, etaS: 100 });
+    cycles.pass(2, 0.01);
+    bench.advance(10_000);
+    // 1% of the samples in 10 s says 990 s more. The limit says 80 s.
+    cycles.pass(4, 0.02);
+    expect(renderings(seen).at(-1)).toMatchObject({ fraction: expect.closeTo(0.1, 5), etaS: expect.closeTo(90, 5) });
+    bench.advance(20_000);
+    // Samples that run ahead of the limit keep the bar and the estimate with the samples.
+    cycles.pass(200, 0.9);
+    expect(renderings(seen).at(-1)).toMatchObject({ fraction: 0.9, etaS: expect.closeTo((30 * 0.1) / 0.89, 5) });
+    cycles.complete(64);
+    await run.result;
+  });
+
+  test("a fallback engine inherits what is left of the clock and does not start a new one", async () => {
+    const { bench, engines: [cycles, raster], desk } = setup(["cycles", "raster"]);
+    const run = desk.take(sceneWithLimit(100), "bracket");
+    const seen = watch(run);
+    await tick();
+    cycles.pass(10, 0.1);
+    bench.advance(60_000);
+    cycles.crash("wasm trap");
+    await tick();
+
+    expect(bench.armed).toBe(1);
+    expect(renderings(seen).at(-1)).toMatchObject({ fraction: expect.closeTo(0.6, 5), etaS: expect.closeTo(40, 5) });
+    bench.advance(50_000);
+    expect(raster.signal?.aborted).toBe(false);
+    raster.pass(3, 0.05);
+    const photo = await run.result;
+    expect(raster.signal?.reason).toBe("finish");
+    expect(photo).toMatchObject({ engine: "raster", samples: 3, stoppedBy: { kind: "time-limit", limitS: 100 } });
   });
 });

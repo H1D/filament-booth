@@ -11,13 +11,25 @@
 import type { AgxLook } from "../document";
 import { develop, loadAgx, quickLook, type AgxData, type RadianceFrame } from "../film";
 import type { FilmSection, Scene } from "../scene";
+import { setTimer, type Schedule } from "../schedule";
+
+/** What ended sampling. A photo that ran to its target says so too. */
+export type StoppedBy =
+  | { readonly kind: "samples" }
+  /** limitS is the limit the photo was taken under, so the card still says it after the setting changes. */
+  | { readonly kind: "time-limit"; readonly limitS: number }
+  | { readonly kind: "user" };
 
 export interface Photo {
   readonly png: Blob;
   readonly fileName: string;
   readonly width: number;
   readonly height: number;
+  /** Samples the developed frame holds. */
   readonly samples: number;
+  /** Samples the photo was asked for. `samples` is lower when sampling stopped early. */
+  readonly targetSamples: number;
+  readonly stoppedBy: StoppedBy;
   /** A label for the status line. */
   readonly engine: "cycles" | "raster";
   readonly docRev: number;
@@ -25,7 +37,13 @@ export interface Photo {
 
 export type PhotoProgress =
   | { readonly state: "preparing"; readonly message: string }
-  /** fraction is by samples. It restarts from 0 if the desk falls back to another engine. */
+  /**
+   * fraction is the larger of the share of samples taken and the share of the
+   * time limit used, so the bar is full when either stop is reached. etaS is the
+   * smaller of the sample estimate and the time left on the limit. The sample
+   * share restarts from 0 if the desk falls back to another engine. The time
+   * share does not, because the limit is for the whole photo.
+   */
   | { readonly state: "rendering"; readonly fraction: number; readonly image: ImageBitmap | null; readonly etaS: number | null }
   | { readonly state: "developing" }
   | { readonly state: "done"; readonly photo: Photo }
@@ -56,8 +74,8 @@ export interface PhotoEngine {
 }
 
 /**
- * The steps that need a browser (canvas, fetch) and the clock. The defaults are
- * film.ts and Date.now; tests pass fakes.
+ * The steps that need a browser (canvas, fetch) and the clocks. The defaults are
+ * film.ts, Date.now and setTimeout; tests pass fakes.
  */
 export interface PhotoTools {
   readonly loadAgx: (look: AgxLook) => Promise<AgxData>;
@@ -65,9 +83,11 @@ export interface PhotoTools {
   readonly develop: (frame: RadianceFrame, film: FilmSection) => Promise<Blob>;
   /** Milliseconds since the epoch. */
   readonly now: () => number;
+  /** Arms the photo time limit. */
+  readonly schedule: Schedule;
 }
 
-const BROWSER_TOOLS: PhotoTools = { loadAgx: (look) => loadAgx(look), quickLook, develop, now: Date.now };
+const BROWSER_TOOLS: PhotoTools = { loadAgx: (look) => loadAgx(look), quickLook, develop, now: Date.now, schedule: setTimer };
 
 const QUICK_LOOK_INTERVAL_MS = 500;
 const QUICK_LOOK_EDGE_PX = 512;
@@ -137,6 +157,17 @@ class Run implements PhotoRun {
   #settled = false;
   #finishing = false;
   #hasPass = false;
+  /** Why sampling was stopped early, set when the abort with reason "finish" is sent. */
+  #stopReason: "user" | "time-limit" | null = null;
+  /**
+   * The time limit's clock. It starts once, when the first engine starts, so
+   * scene upload and the BVH build count. A fallback engine inherits what is
+   * left of it, because the limit caps the whole photo. If it already ran out,
+   * the fallback engine stops after its first pass.
+   */
+  #clockStartedAt: number | null = null;
+  #limitReached = false;
+  #disarmClock: (() => void) | null = null;
   #resolve: (photo: Photo) => void = () => {};
   #reject: (error: Error) => void = () => {};
 
@@ -171,14 +202,42 @@ class Run implements PhotoRun {
   }
 
   finishNow(): void {
-    const state = this.#latest.state;
-    if (this.#settled || this.#finishing || state === "developing") return;
-    if (state !== "rendering" || !this.#hasPass) {
-      this.cancel();
-      return;
-    }
+    if (this.#settled || this.#finishing || this.#latest.state === "developing") return;
+    if (!this.#stopSampling("user")) this.cancel();
+  }
+
+  /** False when there is nothing to develop yet. */
+  #stopSampling(reason: "user" | "time-limit"): boolean {
+    if (this.#settled || this.#finishing || this.#latest.state !== "rendering" || !this.#hasPass) return false;
     this.#finishing = true;
+    this.#stopReason = reason;
     this.#abort.abort("finish");
+    return true;
+  }
+
+  #startClock(): void {
+    const { timeLimitS } = this.#scene.film;
+    if (timeLimitS <= 0 || this.#clockStartedAt !== null) return;
+    this.#clockStartedAt = this.#tools.now();
+    this.#disarmClock = this.#tools.schedule(() => {
+      this.#disarmClock = null;
+      this.#limitReached = true;
+      // With no pass yet there is nothing to develop. The first pass to arrive stops the run.
+      this.#stopSampling("time-limit");
+    }, timeLimitS * 1000);
+  }
+
+  #stopClock(): void {
+    this.#disarmClock?.();
+    this.#disarmClock = null;
+  }
+
+  /** How much of the time limit is used and how many seconds are left, or null with no limit. */
+  #limitShare(): { readonly fraction: number; readonly leftS: number } | null {
+    if (this.#clockStartedAt === null) return null;
+    const limitMs = this.#scene.film.timeLimitS * 1000;
+    const usedMs = Math.max(0, this.#tools.now() - this.#clockStartedAt);
+    return { fraction: Math.min(1, usedMs / limitMs), leftS: Math.max(0, limitMs - usedMs) / 1000 };
   }
 
   async #pipeline(previous: Promise<void>): Promise<void> {
@@ -224,11 +283,14 @@ class Run implements PhotoRun {
     let first: { readonly at: number; readonly fraction: number } | null = null;
     let lastLookAt = -Infinity;
     this.#hasPass = false;
-    this.#publish({ state: "rendering", fraction: 0, image: null, etaS: null });
+    this.#startClock();
+    const share = this.#limitShare();
+    this.#publish({ state: "rendering", fraction: share?.fraction ?? 0, image: null, etaS: share?.leftS ?? null });
 
     const onPass = (frame: RadianceFrame, fraction: number) => {
       if (!live || this.#settled) return;
       this.#hasPass = true;
+      if (this.#limitReached && this.#stopSampling("time-limit")) return;
       const at = this.#tools.now();
       first ??= { at, fraction };
       if (at - lastLookAt < QUICK_LOOK_INTERVAL_MS) return;
@@ -241,11 +303,17 @@ class Run implements PhotoRun {
         // A missing preview must not cost the photo.
         console.error("quick look failed", error);
       }
-      const etaS =
+      const sampleEtaS =
         fraction > first.fraction && at > first.at
           ? (((at - first.at) / 1000) * Math.max(0, 1 - fraction)) / (fraction - first.fraction)
           : null;
-      this.#publish({ state: "rendering", fraction, image, etaS });
+      const share = this.#limitShare();
+      this.#publish({
+        state: "rendering",
+        fraction: share === null ? fraction : Math.max(fraction, share.fraction),
+        image,
+        etaS: share === null ? sampleEtaS : Math.min(sampleEtaS ?? Infinity, share.leftS),
+      });
     };
 
     try {
@@ -258,6 +326,7 @@ class Run implements PhotoRun {
   }
 
   async #develop(engine: PhotoEngine, frame: RadianceFrame): Promise<void> {
+    this.#stopClock();
     this.#publish({ state: "developing" });
     let png: Blob;
     try {
@@ -274,10 +343,18 @@ class Run implements PhotoRun {
         width: frame.width,
         height: frame.height,
         samples: frame.samples,
+        targetSamples: this.#scene.film.samples,
+        stoppedBy: this.#stoppedBy(frame),
         engine: engine.id,
         docRev: this.#scene.docRev,
       },
     });
+  }
+
+  #stoppedBy(frame: RadianceFrame): StoppedBy {
+    // A stop that arrived after the last sample changed nothing.
+    if (this.#stopReason === null || frame.samples >= this.#scene.film.samples) return { kind: "samples" };
+    return this.#stopReason === "user" ? { kind: "user" } : { kind: "time-limit", limitS: this.#scene.film.timeLimitS };
   }
 
   /** Ignored once the run has ended, so late work from an engine cannot reopen it. */
@@ -289,6 +366,7 @@ class Run implements PhotoRun {
   #end(final: Terminal): void {
     if (this.#settled) return;
     this.#settled = true;
+    this.#stopClock();
     this.#deliver(final);
     if (final.state === "done") this.#resolve(final.photo);
     else this.#reject(final.state === "cancelled" ? new PhotoCancelled("The photo was cancelled") : new Error(final.message));

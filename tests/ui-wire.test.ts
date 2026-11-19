@@ -19,6 +19,7 @@ const tools: PhotoTools = {
   quickLook: () => ({ width: 1, height: 1, close() {} }),
   develop: async () => new Blob(["png"]),
   now: () => 0,
+  schedule: () => () => {},
 };
 
 // Node is not cross-origin isolated, so Cycles reports that it does not fit and the desk goes on to the next engine.
