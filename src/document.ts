@@ -234,8 +234,64 @@ function array(v: unknown, path: string, length?: number): unknown[] {
   if (length !== undefined && v.length !== length) return fail(path, `expected ${length} items, got ${v.length}`);
   return v;
 }
-interface NumBounds { min?: number; max?: number; gt?: number; int?: boolean }
-function num(v: unknown, path: string, b: NumBounds = {}): number {
+/**
+ * What a number may be. `min`, `max`, `gt` and `int` are enforced by
+ * parseDocument. `step` and `slider` only steer a slider: a slider spans
+ * `slider` (or the hard range when it is finite) while a typed value may use
+ * the whole hard range, because a field like power is valid up to a million
+ * watts and no slider should travel that far.
+ */
+export interface Bounds {
+  readonly min?: number;
+  readonly max?: number;
+  readonly gt?: number;
+  readonly int?: boolean;
+  readonly step?: number;
+  readonly slider?: { readonly min: number; readonly max: number };
+}
+
+const UNIT = { min: 0, max: 1, step: 0.01 } as const;
+
+/** Every numeric range in the document, written once. The panels' sliders read this table too. */
+export const BOUNDS = {
+  layerHeight: { min: 0.04, max: 1, step: 0.01, slider: { min: 0.05, max: 0.4 } },
+  lineWidth: { min: 0.1, max: 2, step: 0.01, slider: { min: 0.2, max: 1 } },
+  wallCount: { int: true, min: 1, max: 20, step: 1, slider: { min: 1, max: 8 } },
+  topShellLayers: { int: true, min: 0, max: 50, step: 1, slider: { min: 0, max: 12 } },
+
+  ior: { min: 1, max: 3, step: 0.01 },
+  anisotropy: UNIT,
+  roughness: UNIT,
+  vary: { min: 0, max: 2, step: 0.01 },
+  gloss: UNIT,
+  imperfection: UNIT,
+  coolingTauS: { gt: 0, max: 3600, step: 0.5, slider: { min: 1, max: 60 } },
+  fanCooling: { min: 0, max: 20, step: 0.05, slider: { min: 0, max: 3 } },
+
+  kelvin: { min: 1000, max: 40000, step: 50, slider: { min: 2000, max: 12000 } },
+  azimuth: { min: -360, max: 360, step: 1, slider: { min: -180, max: 180 } },
+  elevation: { min: -90, max: 90, step: 1 },
+  lightDistance: { gt: 0, max: 100, step: 0.01, slider: { min: 0.3, max: 4 } },
+  lightSize: { gt: 0, max: 100, step: 0.01, slider: { min: 0.05, max: 3 } },
+  powerW: { min: 0, max: 1e6, step: 0.1, slider: { min: 0, max: 60 } },
+  spreadDeg: { min: 1, max: 180, step: 1 },
+  radiance: { min: 0, max: 1e6, step: 0.05, slider: { min: 0, max: 8 } },
+  colorChannel: { min: 0 },
+  backdropRoughness: UNIT,
+  worldStrength: { min: 0, max: 1e4, step: 0.005, slider: { min: 0, max: 1 } },
+  worldRotationDeg: { min: -360, max: 360, step: 1, slider: { min: -180, max: 180 } },
+
+  cameraDistance: { gt: 0, max: 1000, step: 0.01, slider: { min: 0.1, max: 4 } },
+  focalMm: { min: 8, max: 800, step: 1, slider: { min: 14, max: 200 } },
+  fStop: { min: 0.7, max: 64 },
+  turntableDeg: { min: -3600, max: 3600, step: 1, slider: { min: -180, max: 180 } },
+
+  aspectSide: { gt: 0, max: 1000 },
+  longEdgePx: { int: true, min: 16, max: 16384, step: 16, slider: { min: 512, max: 6144 } },
+  samples: { int: true, min: 1, max: 65536, step: 1, slider: { min: 16, max: 4096 } },
+} as const satisfies Record<string, Bounds>;
+
+function num(v: unknown, path: string, b: Bounds = {}): number {
   if (typeof v !== "number" || !Number.isFinite(v)) return fail(path, "expected a finite number");
   if (b.int && !Number.isInteger(v)) return fail(path, `expected an integer, got ${v}`);
   if (b.min !== undefined && v < b.min) return fail(path, `must be at least ${b.min}, got ${v}`);
@@ -259,18 +315,16 @@ function vec3(v: unknown, path: string): Vec3 {
 }
 function rgb(v: unknown, path: string): Rgb {
   const a = array(v, path, 3);
-  return [num(a[0], at(path, 0), { min: 0 }), num(a[1], at(path, 1), { min: 0 }), num(a[2], at(path, 2), { min: 0 })];
+  return [num(a[0], at(path, 0), BOUNDS.colorChannel), num(a[1], at(path, 1), BOUNDS.colorChannel), num(a[2], at(path, 2), BOUNDS.colorChannel)];
 }
-const unit = { min: 0, max: 1 } as const;
-
 function parseSlicing(v: unknown, path: string): SliceSettings {
   const o = object(v, path);
   return {
-    layerHeight: mm(num(o.layerHeight, at(path, "layerHeight"), { min: 0.04, max: 1 })),
-    outerLineWidth: mm(num(o.outerLineWidth, at(path, "outerLineWidth"), { min: 0.1, max: 2 })),
-    innerLineWidth: mm(num(o.innerLineWidth, at(path, "innerLineWidth"), { min: 0.1, max: 2 })),
-    wallCount: num(o.wallCount, at(path, "wallCount"), { int: true, min: 1, max: 20 }),
-    topShellLayers: num(o.topShellLayers, at(path, "topShellLayers"), { int: true, min: 0, max: 50 }),
+    layerHeight: mm(num(o.layerHeight, at(path, "layerHeight"), BOUNDS.layerHeight)),
+    outerLineWidth: mm(num(o.outerLineWidth, at(path, "outerLineWidth"), BOUNDS.lineWidth)),
+    innerLineWidth: mm(num(o.innerLineWidth, at(path, "innerLineWidth"), BOUNDS.lineWidth)),
+    wallCount: num(o.wallCount, at(path, "wallCount"), BOUNDS.wallCount),
+    topShellLayers: num(o.topShellLayers, at(path, "topShellLayers"), BOUNDS.topShellLayers),
     topSurfacePattern: oneOf(o.topSurfacePattern, at(path, "topSurfacePattern"), TOP_SURFACE_PATTERNS),
     seamPosition: oneOf(o.seamPosition, at(path, "seamPosition"), SEAM_POSITIONS),
   };
@@ -284,26 +338,26 @@ function parseRecipe(v: unknown, path: string): FilamentRecipe {
   const r = object(o.roughness, rp);
   return {
     colorHex: hex,
-    ior: num(o.ior, at(path, "ior"), { min: 1, max: 3 }),
-    anisotropy: num(o.anisotropy, at(path, "anisotropy"), unit),
+    ior: num(o.ior, at(path, "ior"), BOUNDS.ior),
+    anisotropy: num(o.anisotropy, at(path, "anisotropy"), BOUNDS.anisotropy),
     roughness: {
-      0: num(r[0], at(rp, 0), unit), 1: num(r[1], at(rp, 1), unit),
-      2: num(r[2], at(rp, 2), unit), 3: num(r[3], at(rp, 3), unit),
+      0: num(r[0], at(rp, 0), BOUNDS.roughness), 1: num(r[1], at(rp, 1), BOUNDS.roughness),
+      2: num(r[2], at(rp, 2), BOUNDS.roughness), 3: num(r[3], at(rp, 3), BOUNDS.roughness),
     },
-    vary: num(o.vary, at(path, "vary"), { min: 0, max: 2 }),
-    peiRough: num(o.peiRough, at(path, "peiRough"), unit),
-    peiFarRough: num(o.peiFarRough, at(path, "peiFarRough"), unit),
+    vary: num(o.vary, at(path, "vary"), BOUNDS.vary),
+    peiRough: num(o.peiRough, at(path, "peiRough"), BOUNDS.roughness),
+    peiFarRough: num(o.peiFarRough, at(path, "peiFarRough"), BOUNDS.roughness),
   };
 }
 
 function parseImperfections(v: unknown, path: string): Imperfections {
   const o = object(v, path);
   return {
-    heatGloss: num(o.heatGloss, at(path, "heatGloss"), unit),
-    softLines: num(o.softLines, at(path, "softLines"), unit),
-    speedGloss: num(o.speedGloss, at(path, "speedGloss"), unit),
-    tauS: num(o.tauS, at(path, "tauS"), { gt: 0, max: 3600 }),
-    fanCooling: num(o.fanCooling, at(path, "fanCooling"), { min: 0, max: 20 }),
+    heatGloss: num(o.heatGloss, at(path, "heatGloss"), BOUNDS.imperfection),
+    softLines: num(o.softLines, at(path, "softLines"), BOUNDS.imperfection),
+    speedGloss: num(o.speedGloss, at(path, "speedGloss"), BOUNDS.imperfection),
+    tauS: num(o.tauS, at(path, "tauS"), BOUNDS.coolingTauS),
+    fanCooling: num(o.fanCooling, at(path, "fanCooling"), BOUNDS.fanCooling),
     overlay: oneOf(o.overlay, at(path, "overlay"), OVERLAYS),
   };
 }
@@ -314,7 +368,7 @@ function parseFilament(v: unknown, path: string): FilamentChoice {
   return {
     presetId,
     recipe: parseRecipe(o.recipe, at(path, "recipe")),
-    gloss: num(o.gloss, at(path, "gloss"), unit),
+    gloss: num(o.gloss, at(path, "gloss"), BOUNDS.gloss),
     imperfections: parseImperfections(o.imperfections, at(path, "imperfections")),
     bed: oneOf(o.bed, at(path, "bed"), ["auto", ...BED_TYPES]),
   };
@@ -324,7 +378,7 @@ function parseColor(v: unknown, path: string): LightColor {
   const o = object(v, path);
   const kind = oneOf(o.kind, at(path, "kind"), ["rgb", "kelvin"] as const);
   if (kind === "rgb") return { kind, rgb: rgb(o.rgb, at(path, "rgb")) };
-  return { kind, kelvin: kelvin(num(o.kelvin, at(path, "kelvin"), { min: 1000, max: 40000 })) };
+  return { kind, kelvin: kelvin(num(o.kelvin, at(path, "kelvin"), BOUNDS.kelvin)) };
 }
 
 function parseLight(v: unknown, path: string): StudioLight {
@@ -334,26 +388,26 @@ function parseLight(v: unknown, path: string): StudioLight {
     id: text(o.id, at(path, "id")),
     name: typeof o.name === "string" ? o.name : fail(at(path, "name"), "expected a string"),
     on: bool(o.on, at(path, "on")),
-    azimuth: deg(num(o.azimuth, at(path, "azimuth"), { min: -360, max: 360 })),
-    elevation: deg(num(o.elevation, at(path, "elevation"), { min: -90, max: 90 })),
-    distance: m(num(o.distance, at(path, "distance"), { gt: 0, max: 100 })),
+    azimuth: deg(num(o.azimuth, at(path, "azimuth"), BOUNDS.azimuth)),
+    elevation: deg(num(o.elevation, at(path, "elevation"), BOUNDS.elevation)),
+    distance: m(num(o.distance, at(path, "distance"), BOUNDS.lightDistance)),
     shape: oneOf(o.shape, at(path, "shape"), ["rect", "ellipse"] as const),
-    width: m(num(o.width, at(path, "width"), { gt: 0, max: 100 })),
-    height: m(num(o.height, at(path, "height"), { gt: 0, max: 100 })),
+    width: m(num(o.width, at(path, "width"), BOUNDS.lightSize)),
+    height: m(num(o.height, at(path, "height"), BOUNDS.lightSize)),
     color: parseColor(o.color, at(path, "color")),
     partOnly: bool(o.partOnly, at(path, "partOnly")),
   };
   if (kind === "area") {
     return {
       kind, ...base,
-      powerW: watts(num(o.powerW, at(path, "powerW"), { min: 0, max: 1e6 })),
-      spreadDeg: deg(num(o.spreadDeg, at(path, "spreadDeg"), { min: 1, max: 180 })),
+      powerW: watts(num(o.powerW, at(path, "powerW"), BOUNDS.powerW)),
+      spreadDeg: deg(num(o.spreadDeg, at(path, "spreadDeg"), BOUNDS.spreadDeg)),
     };
   }
   return {
     kind, ...base,
-    topRadiance: num(o.topRadiance, at(path, "topRadiance"), { min: 0, max: 1e6 }),
-    bottomRadiance: num(o.bottomRadiance, at(path, "bottomRadiance"), { min: 0, max: 1e6 }),
+    topRadiance: num(o.topRadiance, at(path, "topRadiance"), BOUNDS.radiance),
+    bottomRadiance: num(o.bottomRadiance, at(path, "bottomRadiance"), BOUNDS.radiance),
   };
 }
 
@@ -375,18 +429,18 @@ function parseStudio(v: unknown, path: string): Studio {
   if (o.floorCards !== null) {
     const f = object(o.floorCards, fp);
     floorCards = {
-      keySide: num(f.keySide, at(fp, "keySide"), { min: 0, max: 1e6 }),
-      farSide: num(f.farSide, at(fp, "farSide"), { min: 0, max: 1e6 }),
-      azimuth: deg(num(f.azimuth, at(fp, "azimuth"), { min: -360, max: 360 })),
+      keySide: num(f.keySide, at(fp, "keySide"), BOUNDS.radiance),
+      farSide: num(f.farSide, at(fp, "farSide"), BOUNDS.radiance),
+      azimuth: deg(num(f.azimuth, at(fp, "azimuth"), BOUNDS.azimuth)),
     };
   }
   return {
     lights,
-    backdrop: { color: rgb(b.color, at(bp, "color")), roughness: num(b.roughness, at(bp, "roughness"), unit) },
+    backdrop: { color: rgb(b.color, at(bp, "color")), roughness: num(b.roughness, at(bp, "roughness"), BOUNDS.backdropRoughness) },
     world: {
       hdrId: text(w.hdrId, at(wp, "hdrId")),
-      strength: num(w.strength, at(wp, "strength"), { min: 0, max: 1e4 }),
-      rotationDeg: deg(num(w.rotationDeg, at(wp, "rotationDeg"), { min: -360, max: 360 })),
+      strength: num(w.strength, at(wp, "strength"), BOUNDS.worldStrength),
+      rotationDeg: deg(num(w.rotationDeg, at(wp, "rotationDeg"), BOUNDS.worldRotationDeg)),
     },
     floorCards,
   };
@@ -395,12 +449,12 @@ function parseStudio(v: unknown, path: string): Studio {
 function parseCamera(v: unknown, path: string): CameraSetup {
   const o = object(v, path);
   return {
-    azimuth: deg(num(o.azimuth, at(path, "azimuth"), { min: -360, max: 360 })),
-    elevation: deg(num(o.elevation, at(path, "elevation"), { min: -90, max: 90 })),
-    distance: m(num(o.distance, at(path, "distance"), { gt: 0, max: 1000 })),
+    azimuth: deg(num(o.azimuth, at(path, "azimuth"), BOUNDS.azimuth)),
+    elevation: deg(num(o.elevation, at(path, "elevation"), BOUNDS.elevation)),
+    distance: m(num(o.distance, at(path, "distance"), BOUNDS.cameraDistance)),
     target: vec3(o.target, at(path, "target")),
-    focalMm: mm(num(o.focalMm, at(path, "focalMm"), { min: 8, max: 800 })),
-    fStop: num(o.fStop, at(path, "fStop"), { min: 0.7, max: 64 }),
+    focalMm: mm(num(o.focalMm, at(path, "focalMm"), BOUNDS.focalMm)),
+    fStop: num(o.fStop, at(path, "fStop"), BOUNDS.fStop),
     focusPartPoint: o.focusPartPoint === null ? null : vec3(o.focusPartPoint, at(path, "focusPartPoint")),
   };
 }
@@ -408,7 +462,7 @@ function parseCamera(v: unknown, path: string): CameraSetup {
 function parsePose(v: unknown, path: string): Pose {
   const o = object(v, path);
   return {
-    turntableDeg: deg(num(o.turntableDeg, at(path, "turntableDeg"), { min: -3600, max: 3600 })),
+    turntableDeg: deg(num(o.turntableDeg, at(path, "turntableDeg"), BOUNDS.turntableDeg)),
     restFace: oneOf(o.restFace, at(path, "restFace"), REST_FACES),
   };
 }
@@ -421,9 +475,9 @@ function parseOutput(v: unknown, path: string): OutputSetup {
   const vt = object(o.viewTransform, vp);
   oneOf(vt.kind, at(vp, "kind"), ["agx"] as const);
   return {
-    aspect: { w: num(a.w, at(ap, "w"), { gt: 0, max: 1000 }), h: num(a.h, at(ap, "h"), { gt: 0, max: 1000 }) },
-    longEdgePx: num(o.longEdgePx, at(path, "longEdgePx"), { int: true, min: 16, max: 16384 }),
-    samples: num(o.samples, at(path, "samples"), { int: true, min: 1, max: 65536 }),
+    aspect: { w: num(a.w, at(ap, "w"), BOUNDS.aspectSide), h: num(a.h, at(ap, "h"), BOUNDS.aspectSide) },
+    longEdgePx: num(o.longEdgePx, at(path, "longEdgePx"), BOUNDS.longEdgePx),
+    samples: num(o.samples, at(path, "samples"), BOUNDS.samples),
     transparentBackground: bool(o.transparentBackground, at(path, "transparentBackground")),
     viewTransform: { kind: "agx", look: oneOf(vt.look, at(vp, "look"), AGX_LOOKS) },
     denoise: bool(o.denoise, at(path, "denoise")),

@@ -25,3 +25,4 @@ dist-ssr
 
 # The vendored slicer protocol ships prebuilt.
 !vendor/muon-protocol/dist
+tools/ui/out/
