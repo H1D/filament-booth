@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import App from "./App";
 import { Booth } from "./booth";
 import "./index.css";
+import type { RenderStats } from "./photo/cycles-worker";
 import { PrintPipeline } from "./print";
 import { PhotoSession } from "./ui/photo-session";
 import { Ui } from "./ui/store";
@@ -34,8 +35,21 @@ async function startViewport(): Promise<Viewport | null> {
 // The raster engine renders on the preview's renderer, so the desk is built once the preview exists.
 // Nothing can press PHOTO before the render below, so `desk` is set by then.
 const viewport = await startViewport();
-const desk = photoDesk(viewport);
+const cyclesStats: RenderStats[] = [];
+const desk = photoDesk(viewport, undefined, import.meta.env.DEV ? { onStats: (s) => { cyclesStats.push(s); } } : {});
 if (viewport !== null) connectViewport(booth, ui, viewport);
+
+declare global {
+  interface Window {
+    /** Development builds only: the live parts, for tools/e2e/drive.ts to read state and measure. */
+    boothDev?: {
+      readonly booth: Booth; readonly viewport: Viewport | null; readonly ui: Ui; readonly photos: PhotoSession;
+      /** One entry per finished Cycles render. */
+      readonly cyclesStats: readonly RenderStats[];
+    };
+  }
+}
+if (import.meta.env.DEV) window.boothDev = { booth, viewport, ui, photos, cyclesStats };
 
 createRoot(root).render(
   <StrictMode>
