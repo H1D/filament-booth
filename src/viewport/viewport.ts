@@ -30,12 +30,14 @@ import { Stage } from "./stage";
 export const PREVIEW_APPROXIMATIONS = [
   "the part is lit by a cube map baked from emissive quads, not by shadowed direct light",
   "the backdrop is lit by RectAreaLights in the bake plus one live shadow-casting key",
-  "a spread under 180 degrees boosts baked radiance by 1 / sin^2(spread / 2); the live key ignores spread",
+  "a spread under 180 degrees boosts baked radiance by 1 / sin^2(spread / 2); RectAreaLights ignore the cone",
+  "the live key is a spot light at the card's centre: intensity P / (pi sin^2(spread / 2)), a smoothstep cone of half the spread",
   "GTAO at radius 0.03 m stands in for contact shadowing and bounce light",
   "BAKE_GAIN scales the baked emitters to match the Cycles reference stills",
   "a scrim lights the backdrop as a RectAreaLight of its mean radiance, and an ellipse as a rectangle of equal area",
-  "the live key is a directional light of the emitter's on-axis irradiance at the floor below the aim",
-  "the bead material ignores anisotropy and the plate's bump distance",
+  "layers under 1.5 px at rest (3 px moving) give up their profile normals for an anisotropic lobe across the path",
+  "three.js's image-based anisotropy bends the normal; it is not Cycles' anisotropic GGX",
+  "the plate's grain is a normal perturbation at the old viewer's slope, not a bump of bumpDistanceM",
   "per-layer sheen comes from the table, mottle from three's MaterialX noise, not Cycles' noise",
 ] as const;
 

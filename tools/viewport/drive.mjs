@@ -221,6 +221,19 @@ const scenarios = {
     log("focus", { point: await page.evaluate(() => window.viewportDev.focusPartPoint()), focusDistanceM: (await page.evaluate(() => window.viewportDev.camera())).focusDistanceM, settleMs: await page.evaluate(() => window.viewportDev.waitConverged()), path: await shot("focus-marker") });
   },
 
+  /** The settled preview against a photo of the same view at the crop's own size. */
+  async still() {
+    await openPage(opt.query);
+    log("open", await open(0));
+    const preview = await shot("still-preview");
+    const p = await page.evaluate(() => window.viewportDev.photo());
+    if (p.error) throw new Error(p.error);
+    writeFileSync(`${out}/${tag}-still-photo.png`, Buffer.from(p.png, "base64"));
+    const crop = await page.evaluate(() => window.viewportDev.cropOnCanvas());
+    log("photo-vs-preview", { samples: p.samples, size: [p.width, p.height], ...(await page.evaluate(([a, b, w, h]) => window.viewportDev.difference(a, b, w, h),
+      [p.png, readFileSync(preview).toString("base64"), Math.round(crop.width), Math.round(crop.height)])) });
+  },
+
   async zoom() {
     await openPage(opt.query ?? "look=studio&turntable=80&el=10");
     log("open", await open(0));

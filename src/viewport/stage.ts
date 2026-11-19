@@ -5,19 +5,20 @@
  *
  * The part is lit only by the studio bake (bead-material.ts). The sweep is
  * lit by the world, by a RectAreaLight per emitter that reaches it, and by
- * one shadow-casting key that stands in for the strongest of those.
+ * one shadow-casting key that stands in for the strongest of those: a spot
+ * light at its card, aimed along its normal, with the spread as its cone.
  */
 import {
-  Box3, BufferAttribute, BufferGeometry, Color, DirectionalLight, DoubleSide, FloatType, Mesh, MeshBasicNodeMaterial,
+  Box3, BufferAttribute, BufferGeometry, Color, DoubleSide, FloatType, Mesh, MeshBasicNodeMaterial,
   MeshStandardNodeMaterial, NearestFilter, Object3D, PerspectiveCamera, RectAreaLight, RenderTarget, Scene,
-  ShadowNodeMaterial, SphereGeometry, Sphere, Texture, Vector3, type WebGPURenderer,
+  ShadowNodeMaterial, SphereGeometry, Sphere, SpotLight, Texture, Vector3, type WebGPURenderer,
 } from "three/webgpu";
 import { pmremTexture, positionLocal, uniform, vec4 } from "three/tsl";
 import type { BeadMesh } from "../print";
 import type { BackdropSection, LightsSection, PartSection, WorldSection } from "../scene";
 import { BeadShading } from "./bead-material";
 import { backdropLight, blenderRoot, sweepGeometry, worldNode } from "./bake";
-import { keyEmitter, keyIrradiance } from "./radiance";
+import { keyConeRad, keyEmitter, keyIntensity } from "./radiance";
 import type { V3 } from "./frame";
 
 const SHADOW_MAP_PX = 2048;
@@ -44,9 +45,9 @@ export class Stage {
   #worldHdr: Texture | null = null;
   #transparent = false;
 
-  readonly #key = new DirectionalLight(0xffffff, 0);
+  readonly #key = new SpotLight(0xffffff, 0, 0, Math.PI / 2, 1, 2);
   readonly #keyTarget = new Object3D();
-  #keySoft: { centre: V3; x: V3; y: V3; w: number; h: number } | null = null;
+  #keySoft: { centre: V3; x: V3; y: V3; normal: V3; w: number; h: number } | null = null;
   #rects: RectAreaLight[] = [];
 
   readonly #marker = new Mesh(new SphereGeometry(1, 16, 12), new MeshBasicNodeMaterial({ color: new Color(6, 1.6, 0.25), depthTest: false }));
@@ -146,12 +147,10 @@ export class Stage {
       k.intensity = 0;
       this.#keySoft = null;
     } else {
-      const floor: V3 = [lights.aim[0], lights.aim[1], 0];
-      k.intensity = keyIrradiance(key, floor);
+      k.intensity = keyIntensity(key);
+      k.angle = keyConeRad(key);
       k.color.setRGB(key.color[0], key.color[1], key.color[2]);
-      this.#keySoft = { centre: key.centre, x: key.xAxis, y: key.yAxis, w: key.sizeM[0], h: key.sizeM[1] };
-      this.#keyTarget.position.set(...floor);
-      this.#keyTarget.updateMatrixWorld();
+      this.#keySoft = { centre: key.centre, x: key.xAxis, y: key.yAxis, normal: key.normal, w: key.sizeM[0], h: key.sizeM[1] };
     }
     this.softKey(null);
   }
@@ -161,11 +160,13 @@ export class Stage {
     const s = this.#keySoft;
     if (!s) return;
     const [u, v] = offset ?? [0, 0];
-    this.#key.position.set(
+    const p = this.#key.position.set(
       s.centre[0] + s.x[0] * u * s.w + s.y[0] * v * s.h,
       s.centre[1] + s.x[1] * u * s.w + s.y[1] * v * s.h,
       s.centre[2] + s.x[2] * u * s.w + s.y[2] * v * s.h,
     );
+    this.#keyTarget.position.set(p.x + s.normal[0], p.y + s.normal[1], p.z + s.normal[2]);
+    this.#keyTarget.updateMatrixWorld();
     this.#fitShadow();
   }
 
@@ -277,17 +278,19 @@ export class Stage {
     }
   }
 
-  /** The key's shadow box: the posed part, reaching far enough for a grazing key's long shadow. */
+  /** The key's shadow frustum: just the posed part, reaching far enough for a grazing key's long shadow. */
   #fitShadow(): void {
-    const part = this.#partSection, cam = this.#key.shadow.camera;
+    const part = this.#partSection, k = this.#key;
     const bounds = part
       ? new Box3(new Vector3(...part.worldBounds.min), new Vector3(...part.worldBounds.max))
       : new Box3(new Vector3(-0.1, -0.1, 0), new Vector3(0.1, 0.1, 0.2));
-    const r = bounds.getBoundingSphere(new Sphere()).radius * 1.2;
-    const d = this.#key.position.distanceTo(this.#keyTarget.position);
-    Object.assign(cam, { left: -r, right: r, top: r, bottom: -r, near: Math.max(0.01, d - 2 * r), far: d + SHADOW_REACH_M });
-    cam.updateProjectionMatrix();
-    this.#key.shadow.needsUpdate = true;
+    const sphere = bounds.getBoundingSphere(new Sphere()), r = sphere.radius * 1.2;
+    const d = Math.max(r * 1.01, k.position.distanceTo(sphere.center));
+    // The shadow covers the part, not the whole cone: the part's half-angle as a share of the cone's.
+    k.shadow.focus = Math.min(1, Math.asin(r / d) / k.angle);
+    k.shadow.camera.near = Math.max(0.01, d - 2 * r);
+    k.shadow.camera.far = d + SHADOW_REACH_M;
+    k.shadow.needsUpdate = true;
   }
 }
 

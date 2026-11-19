@@ -1,8 +1,8 @@
 import { describe, expect, test } from "vitest";
-import { defaultDocument, m, type Vec3 } from "../src/document";
+import { defaultDocument } from "../src/document";
 import { applyLook } from "../src/edits";
 import { compileScene, type AreaEmitter, type Emitter } from "../src/scene";
-import { areaRadiance, emitterArea, keyEmitter, keyIrradiance, meanRadiance, rectStandIn } from "../src/viewport/radiance";
+import { areaRadiance, emitterArea, keyConeRad, keyEmitter, keyIntensity, meanRadiance, rectStandIn } from "../src/viewport/radiance";
 
 function emitters(look: Parameters<typeof applyLook>[0]): readonly Emitter[] {
   const doc = defaultDocument();
@@ -52,14 +52,13 @@ describe("the live key", () => {
     expect(keyEmitter(emitters("gradient").filter((e) => e.kind === "scrim"))).toBeNull();
   });
 
-  test("on axis its irradiance is P / (pi d^2), falling with the cosine at the card", () => {
-    const v = (x: number, y: number, z: number): Vec3 => [m(x), m(y), m(z)];
-    const base: AreaEmitter = {
-      kind: "area", id: "k", centre: v(0, 0, 2), xAxis: v(1, 0, 0), yAxis: v(0, 1, 0),
-      normal: v(0, 0, -1), sizeM: [1, 1], shape: "rect", color: [1, 1, 1], partOnly: false, powerW: 10, spreadRad: Math.PI,
-    };
-    expect(keyIrradiance(base, [0, 0, 0])).toBeCloseTo(10 / (Math.PI * 4), 12);
-    const tilted = { ...base, normal: v(0, Math.sin(Math.PI / 3), -Math.cos(Math.PI / 3)) };
-    expect(keyIrradiance(tilted, [0, 0, 0])).toBeCloseTo(10 / (Math.PI * 4) / 2, 12);
+  test("as a spot light its intensity is L A: P / pi at full spread, so irradiance on axis is P / (pi d^2)", () => {
+    const top = area(byId(emitters("studio"), "top"));
+    expect(keyIntensity(top)).toBeCloseTo(12.5 / Math.PI, 12);
+    expect(keyConeRad(top)).toBeCloseTo(Math.PI / 2, 12);
+    // 3 W at 60 degrees spread: P / (pi sin^2(30 deg)) = 3.81972 W/sr, inside a 30 degree half-angle cone.
+    const dark = area(byId(emitters("dark"), "top"));
+    expect(keyIntensity(dark)).toBeCloseTo(3.81972, 5);
+    expect(keyConeRad(dark)).toBeCloseTo(Math.PI / 6, 12);
   });
 });
