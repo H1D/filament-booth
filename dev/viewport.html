@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Viewport</title>
+    <link rel="icon" href="data:," />
+    <style>
+      :root { color-scheme: light dark; font: 13px/1.4 system-ui, sans-serif; }
+      html, body { margin: 0; height: 100%; overflow: hidden; background: #202020; }
+      canvas { display: block; position: fixed; inset: 0; width: 100vw; height: 100vh; }
+      #bar { position: fixed; left: 8px; right: 8px; bottom: 8px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+      #bar button, #bar label { padding: 4px 10px; border-radius: 6px; border: 1px solid #0003; background: #fffd; color: #111; cursor: pointer; }
+      #bar [aria-pressed="true"] { background: #222; color: #fff; }
+      #status { position: fixed; left: 8px; top: 8px; padding: 4px 8px; border-radius: 6px; background: #000a; color: #ddd; font: 12px ui-monospace, monospace; }
+      #file { width: 0; height: 0; opacity: 0; position: absolute; }
+    </style>
+  </head>
+  <body>
+    <canvas id="view"></canvas>
+    <div id="status">starting</div>
+    <div id="bar">
+      <label>Open<input id="file" type="file" multiple accept=".stl,.gcode,.3mf,.bin" /></label>
+      <input id="driverFiles" type="file" multiple hidden />
+      <span id="looks"></span>
+      <span id="filaments"></span>
+      <button id="turn" type="button">Turntable +15</button>
+      <button id="fstop" type="button">f/</button>
+      <button id="focus" type="button" aria-pressed="false">Focus tool</button>
+      <button id="transparent" type="button" aria-pressed="false">Transparent</button>
+      <button id="photo" type="button">Photo</button>
+    </div>
+    <script type="module" src="/dev/viewport.ts"></script>
+  </body>
+</html>
