@@ -204,6 +204,8 @@ export interface OutputSetup {
   aspect: { w: number; h: number };
   longEdgePx: number;
   samples: number;            // engine-agnostic target (Cycles or raster)
+  /** Sampling stops after this many seconds and the photo is developed from what has been sampled. 0 means no limit, as Blender's time_limit. */
+  timeLimitS: number;
   transparentBackground: boolean;
   viewTransform: { kind: "agx"; look: AgxLook };
   denoise: boolean;
@@ -294,6 +296,7 @@ export const BOUNDS = {
   aspectSide: { gt: 0, max: 1000 },
   longEdgePx: { int: true, min: 16, max: 16384, step: 16, slider: { min: 512, max: 6144 } },
   samples: { int: true, min: 1, max: 65536, step: 1, slider: { min: 16, max: 4096 } },
+  timeLimitS: { int: true, min: 0, max: 86400, step: 1 },
 } as const satisfies Record<string, Bounds>;
 
 function num(v: unknown, path: string, b: Bounds = {}): number {
@@ -483,6 +486,8 @@ function parseOutput(v: unknown, path: string): OutputSetup {
     aspect: { w: num(a.w, at(ap, "w"), BOUNDS.aspectSide), h: num(a.h, at(ap, "h"), BOUNDS.aspectSide) },
     longEdgePx: num(o.longEdgePx, at(path, "longEdgePx"), BOUNDS.longEdgePx),
     samples: num(o.samples, at(path, "samples"), BOUNDS.samples),
+    // Setups saved before the time limit existed have no such field. They take the default and stay version 1.
+    timeLimitS: o.timeLimitS === undefined ? DEFAULT_PHOTO_TIME_LIMIT_S : num(o.timeLimitS, at(path, "timeLimitS"), BOUNDS.timeLimitS),
     transparentBackground: bool(o.transparentBackground, at(path, "transparentBackground")),
     viewTransform: { kind: "agx", look: oneOf(vt.look, at(vp, "look"), AGX_LOOKS) },
     denoise: bool(o.denoise, at(path, "denoise")),
@@ -508,6 +513,9 @@ export function parseDocument(json: unknown): BoothDocument {
   };
 }
 
+/** Five minutes: a full-size photo of a big part otherwise runs for half an hour. */
+export const DEFAULT_PHOTO_TIME_LIMIT_S = 300;
+
 /** PETG Basic under the studio look, the hero_light camera, 4:5 at 2000 px. */
 export function defaultDocument(): BoothDocument {
   return {
@@ -529,7 +537,7 @@ export function defaultDocument(): BoothDocument {
     },
     pose: { turntableDeg: deg(0), restFace: "plate" },
     output: {
-      aspect: { w: 4, h: 5 }, longEdgePx: 2000, samples: 256,
+      aspect: { w: 4, h: 5 }, longEdgePx: 2000, samples: 256, timeLimitS: DEFAULT_PHOTO_TIME_LIMIT_S,
       transparentBackground: false,
       viewTransform: { kind: "agx", look: "medium-high-contrast" },
       denoise: true,

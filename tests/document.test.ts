@@ -1,4 +1,4 @@
-import { expect, test } from "vitest";
+import { describe, expect, test } from "vitest";
 import { DocumentError, LOOK_IDS, defaultDocument, parseDocument } from "../src/document";
 import { LOOK_PRESETS } from "../src/presets";
 
@@ -32,12 +32,32 @@ function rejectionOf(path: readonly Key[], value: unknown): DocumentError {
   throw new Error(`${path.join(".")} = ${JSON.stringify(value)} was accepted`);
 }
 
-test("the default document is PETG Basic under the studio look, 4:5 at 2000 px and 256 samples", () => {
+test("the default document is PETG Basic under the studio look, 4:5 at 2000 px, 256 samples and a 5 minute photo limit", () => {
   const d = defaultDocument();
   expect(d.filament.presetId).toBe("petg-basic");
   expect(d.lookBase).toBe("studio");
   expect(d.studio.lights.length).toBeGreaterThan(0);
-  expect(d.output).toMatchObject({ aspect: { w: 4, h: 5 }, longEdgePx: 2000, samples: 256 });
+  expect(d.output).toMatchObject({ aspect: { w: 4, h: 5 }, longEdgePx: 2000, samples: 256, timeLimitS: 300 });
+});
+
+describe("the photo time limit", () => {
+  test("0 means no limit and is accepted, as is any whole number of seconds up to a day", () => {
+    for (const s of [0, 20, 45, 90, 86400]) {
+      const d = defaultDocument();
+      d.output.timeLimitS = s;
+      expect(parseDocument(roundTrip(d)).output.timeLimitS).toBe(s);
+    }
+  });
+
+  test("a negative, fractional or absurd limit is rejected", () => {
+    for (const bad of [-1, 0.5, 86401, null, "300"]) expect(rejectionOf(["output", "timeLimitS"], bad).path).toBe("output.timeLimitS");
+  });
+
+  test("a setup saved before the limit existed takes the default instead of being refused", () => {
+    const saved = roundTrip(defaultDocument());
+    edit(saved, ["output", "timeLimitS"], undefined);
+    expect(parseDocument(saved).output.timeLimitS).toBe(300);
+  });
 });
 
 test("a document survives JSON and parseDocument unchanged", () => {

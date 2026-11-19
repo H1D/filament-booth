@@ -240,7 +240,7 @@ function camera(target: [number, number, number], azDeg: number, elDeg: number, 
 }
 
 function film(width: number, height: number, samples: number, transparent = false): FilmSection {
-  return { width, height, samples, ...FILM_DEFAULTS, transparent, denoise: false, look: "medium-high-contrast" };
+  return { width, height, samples, timeLimitS: 0, ...FILM_DEFAULTS, transparent, denoise: false, look: "medium-high-contrast" };
 }
 
 // ---- the fixtures ------------------------------------------------------------------------

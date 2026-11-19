@@ -382,6 +382,8 @@ def setup_render(f, a, out):
     cy = sc.cycles
     cy.device = 'CPU'
     cy.samples = a.samples or f['samples']
+    # f['timeLimitS'] is the booth desk's cap. Native renders always run to the full sample count.
+    cy.time_limit = 0
     cy.use_adaptive_sampling = f['adaptiveThreshold'] > 0
     cy.adaptive_threshold = f['adaptiveThreshold']
     cy.adaptive_min_samples = 0

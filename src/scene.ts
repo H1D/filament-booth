@@ -183,6 +183,8 @@ export interface FilmSection {
   readonly width: number;
   readonly height: number;
   readonly samples: number;
+  /** Seconds of sampling after which the photo is developed as it stands. 0 means no limit. Only the desk reads it. */
+  readonly timeLimitS: number;
   readonly adaptiveThreshold: number;
   readonly maxBounces: number;
   readonly diffuseBounces: number;
@@ -318,7 +320,7 @@ export function compileScene(
 ): Scene {
   const { width, height } = filmSize(doc.output.aspect, doc.output.longEdgePx);
   const film = keep<FilmSection>(previous?.film, {
-    width, height, samples: doc.output.samples, ...FILM_DEFAULTS,
+    width, height, samples: doc.output.samples, timeLimitS: doc.output.timeLimitS, ...FILM_DEFAULTS,
     transparent: doc.output.transparentBackground, denoise: doc.output.denoise, look: doc.output.viewTransform.look,
   });
 
