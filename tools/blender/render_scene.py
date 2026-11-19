@@ -399,6 +399,10 @@ def setup_render(f, a, out):
     cy.filter_width = f['filterWidthPx']
     cy.film_exposure = 1.0
     cy.use_auto_tile = False
+    # Cycles reads its debug settings, the BVH layout among them, only with both preferences on.
+    prefs = bpy.context.preferences
+    prefs.view.show_developer_ui = True
+    prefs.experimental.use_cycles_debug = True
     cy.debug_bvh_layout = a.bvh.upper()
     cy.debug_use_spatial_splits = False
     sc.render.use_texture_cache = False
