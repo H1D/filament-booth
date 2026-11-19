@@ -1,0 +1,117 @@
+Filament booth is a virtual photo booth for 3D-printed parts that runs entirely in the browser. Drop an STL or G-code, set slicing, filament, lights, camera and backdrop against a live preview, and PHOTO renders a still with Blender's Cycles compiled to WebAssembly. No server.
+
+Richer docs are in `.ai/docs/` (start at `.ai/docs/index.toon`). The design contract is `docs/design.md`. Read it before changing a module boundary.
+
+## Commands
+
+```bash
+bun install
+bun run dev            # Vite on http://localhost:5173 (localhost or HTTPS only, wasm threads)
+bun run test           # Vitest unit tests (Node)
+bun run typecheck      # app types
+bun run typecheck:dev  # tools and dev page types
+bun run lint           # oxlint
+bun run build          # tsc -b && vite build into dist/
+bun run ui:drive       # panels on dev/panels.html with fakes, headless Chromium
+bun run e2e [flows]    # real app in a hardware-GPU Chromium (needs gamescope, Blender 5.2.3)
+bun tools/parity/run.ts          # browser Cycles against native Blender, PSNR per fixture
+tools/check-clean-checkout.sh    # fresh worktree of HEAD, install, test, typecheck
+```
+
+After any code change, verify with: `bun run typecheck && bun run lint && bun run test`
+
+After a merge, also run `tools/check-clean-checkout.sh`. Use `bun`, not `npm`.
+
+## Architecture
+
+One saved `BoothDocument` (plain JSON) is compiled by the pure function `compileScene` into one frozen `Scene` in Blender's frame (Z-up, metres, watts, linear colour). The preview, the browser Cycles engine and native Blender all read only the `Scene`, which is what makes them comparable pixel for pixel.
+
+**Key components:**
+
+| Component | Path | Responsibility |
+|-----------|------|----------------|
+| BoothDocument | `src/document.ts` | Every user setting, `BOUNDS` table, `parseDocument`, `defaultDocument` |
+| Booth | `src/booth.ts` | Owns document and print slot, persists, publishes scenes |
+| edits | `src/edits.ts` | Named multi-field edits for `booth.update` |
+| presets | `src/presets.ts` | Looks, filaments, focal and aspect presets, HDR table |
+| PrintPipeline | `src/print.ts`, `src/print/` | File to bead mesh in a worker (parse G-code or slice STL, then sweep) |
+| compileScene | `src/scene.ts` | The single lowering from document and print to `Scene`. Also `exportScene` |
+| Viewport | `src/viewport/` | Live three.js WebGPU preview, WebGL2 fallback, jittered accumulation |
+| PhotoDesk | `src/photo/photo.ts` | One photo at a time through Cycles, then raster as fallback |
+| Cycles engine | `src/photo/cycles*.ts`, `cycles/api/` | Cycles 5.2 CPU kernel in wasm, fresh worker per render |
+| film | `src/film.ts` | Blender's AgX from baked tables, PNG encode |
+| UI | `src/ui/`, `src/App.tsx`, `src/main.tsx` | React 19 rail panels over `useSyncExternalStore` |
+
+**Data flow:**
+1. A dropped file goes through `Booth.open` to the print worker, which returns a `BeadMesh`.
+2. A control calls `booth.update(mutate)`. Booth validates, schedules a save and recompiles.
+3. `compileScene(doc, print, docRev, previous)` returns a `Scene`. Unchanged sections keep their identity.
+4. `Viewport.show(scene)` updates only the sections that changed.
+5. PHOTO calls `PhotoDesk.take(scene, partName)`. Cycles samples in a worker and streams passes.
+6. `film.develop` tone maps with AgX and encodes the PNG.
+
+**Patterns:**
+- **Single lowering**: only `compileScene` turns settings into geometry, frames and watts.
+- **Section identity**: change detection is `===` on `scene.part`, `lights`, `backdrop`, `world`, `camera`, `film`.
+- **One table per fact**: `BOUNDS` (limits), `BEAD_WORD` (vertex packing), `LayerTable` (shading), `FILM_DEFAULTS` (render settings), `src/print/calibration.ts` (bead shape).
+- **Fresh worker per job**: one per slice, one per Cycles render. Cancel is terminate.
+- **Ports and fakes**: `BoothDeps`, `PhotoEngine`, `PhotoTools` are injected. Each module has a dev page under `dev/`.
+- **Ground truth by script**: numbers that must match Blender are dumped from Blender by `tools/blender/`.
+
+## Key Rules
+
+- No renderer reads the document. A new setting is added to `BoothDocument`, `BOUNDS`, `parseDocument` and `defaultDocument`, lowered in `src/scene.ts`, then consumed.
+- `booth.update` is the only write path. Put multi-field edits in `src/edits.ts`.
+- The app frame is Blender's. `BLENDER_TO_VIEWER` in `src/viewport/frame.ts` is the only axis swap. Do not add another.
+- Light power is true watts. Camera azimuth 0 looks from −Y and turns toward +X. Turntable is counter-clockwise about +Z.
+- Read and write the vertex `word` only with `packBeadWord` and `unpackBeadWord`.
+- The Cycles attribute for print direction is `path_tangent`, never `tangent`.
+- Wasm heap pointers arrive signed. Build views at `ptr >>> 0`, or photos above 2 GiB fall back to raster silently.
+- The canvas that encodes the photo stays on the CPU (`willReadFrequently`).
+- The floor card ring is a faded disc in Cycles, the preview bake and `tools/blender/render_scene.py`. Keep all three the same.
+- After touching `src/photo/cycles-upload.ts`, `cycles/api/` or a solver in `src/scene.ts`, rerun `bun tools/parity/run.ts`.
+- TypeScript runs with `erasableSyntaxOnly`. No parameter properties or enums.
+- UI limits come from `BOUNDS`. Popovers use the native Popover API. Plain CSS in `src/index.css`.
+- `vendor/muon-protocol/dist` and the binaries under `public/` are committed on purpose.
+- The slicer engine in `public/slicer/engine` is AGPL-3.0. The owner plans to open-source the app. Keep the engine's notices, and publish only when the owner asks.
+- The page must be cross-origin isolated. `vite.config.ts` sends the headers. Any other host must too.
+- `/tmp` may be a small tmpfs. Set `BOOTH_TMP` or `TMPDIR` for the clean-checkout check and browser drivers.
+- The photo time limit (`film.timeLimitS`, 0 means none) is enforced only in `PhotoDesk`. Parity fixtures and `render_scene.py` use 0.
+- No denoiser exists. Do not add a Denoise control until one does.
+
+## Known gaps
+
+- Preview is brighter than Cycles in the dark, rim and raking looks (1.3 to 1.7 times). Its key shadow is hard where Cycles is soft.
+- A full-size photo (1600x2000, 256 samples) of an 11M triangle part takes 30 to 38 minutes with no limit. The default 5 minute limit cuts it to fewer samples, and there is no denoiser.
+- Untested: Firefox, Safari, mobile, low-core machines. PLA Basic and Silk presets are uncalibrated.
+
+## Features
+
+| Feature | Status | Key Files |
+|---------|--------|-----------|
+| booth | stable | `src/document.ts`, `src/booth.ts`, `src/edits.ts`, `src/presets.ts` |
+| scene | stable | `src/scene.ts` |
+| print | stable | `src/print.ts`, `src/print/` |
+| preview | active | `src/viewport/viewport.ts` |
+| photo | active | `src/photo/photo.ts`, `src/photo/cycles.ts`, `src/film.ts` |
+| controls | stable | `src/ui/`, `src/App.tsx` |
+| cycles-wasm | stable | `cycles/build.sh`, `cycles/api/`, `public/cycles/` |
+| verification | stable | `tests/`, `tools/e2e/`, `tools/parity/`, `tools/blender/` |
+
+## Project Structure
+
+| Directory | Purpose |
+|-----------|---------|
+| `src/` | App source, flat top-level modules |
+| `src/print/` | G-code parser, slicer wrapper, mesher, worker |
+| `src/viewport/` | Live preview |
+| `src/photo/` | PHOTO desk and engines |
+| `src/ui/` | React panels and stores |
+| `tests/` | Vitest tests and fixtures |
+| `dev/` | Standalone dev pages with fakes |
+| `docs/` | Design contract |
+| `cycles/` | C API and build scripts for the Cycles module |
+| `tools/` | Blender truth scripts, parity, e2e and UI drivers |
+| `public/` | Committed wasm modules, AgX tables, HDR |
+| `vendor/muon-protocol/` | Slicer protocol package, Apache-2.0 |
+| `.ai/docs/` | Detailed docs per feature |
