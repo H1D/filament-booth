@@ -3,7 +3,7 @@
 # someone's working tree (an ignored build output, an untracked asset) fails here.
 set -euo pipefail
 repo=$(git rev-parse --show-toplevel)
-dir=$(mktemp -d)
+dir=$(mktemp -d -p "${BOOTH_TMP:-$HOME/.t3/scratch}" booth-clean-XXXXXX)
 trap 'git -C "$repo" worktree remove --force "$dir" >/dev/null 2>&1 || true' EXIT
 git -C "$repo" worktree add --detach "$dir" HEAD >/dev/null 2>&1
 cd "$dir"
