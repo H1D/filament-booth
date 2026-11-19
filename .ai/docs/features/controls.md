@@ -1,14 +1,14 @@
 # Controls
 
-The React rail on the right. Collapsible sections for part, filament, lights, backdrop and world, camera, output and setup. Every control reads `Booth` through `useSyncExternalStore` and writes through `booth.update`.
+The React rail on the right. Collapsible sections for part, filament, lights, backdrop and world, camera, output, setup and agent. Every control reads `Booth` through `useSyncExternalStore` and writes through `booth.update`.
 
 ```toon
 status: stable
 depends_on[3]: booth,preview,photo
 entry_point: src/App.tsx
-test_cmd: bunx vitest run tests/ui-controls.test.tsx tests/ui-panels.test.tsx tests/ui-model.test.ts tests/ui-wire.test.ts tests/ui-bounds.test.ts tests/ui-color.test.ts tests/ui-photo-session.test.ts
+test_cmd: bunx vitest run tests/ui-controls.test.tsx tests/ui-agent.test.tsx tests/ui-panels.test.tsx tests/ui-model.test.ts tests/ui-wire.test.ts tests/ui-bounds.test.ts tests/ui-color.test.ts tests/ui-photo-session.test.ts
 
-files[22]{path,purpose}:
+files[23]{path,purpose}:
   src/App.tsx,app shell
   src/main.tsx,builds the real parts and mounts the app
   src/index.css,all styles in plain CSS
@@ -29,6 +29,7 @@ files[22]{path,purpose}:
   src/ui/CameraPanel.tsx,focal presets and aperture and focus tool
   src/ui/OutputPanels.tsx,aspect and size and samples and time limit and AgX look and transparent background
   src/ui/SetupPanel.tsx,export and import of the setup JSON
+  src/ui/AgentPanel.tsx,Agent section (switch and port and token and privacy note) and the top bar badge
   src/ui/Stage.tsx,the viewport host and drop target
   src/ui/TopBar.tsx,top bar with the PHOTO button
 ```
@@ -43,6 +44,6 @@ files[22]{path,purpose}:
 
 ## Gotchas
 
-- `dev/panels.html` runs the panels with fakes from `dev/fakes.ts`. `bun run ui:drive` drives it (23 checks). It does not exercise the real viewport or engines.
+- `dev/panels.html` runs the panels with fakes from `dev/fakes.ts`. `bun run ui:drive` drives it (26 checks). It does not exercise the real viewport or engines.
 - oxlint's hooks rule reads any callback parameter named `use` as a React hook.
 - `src/ui/StatusLine.tsx`, `src/ui/icons.tsx` and `src/ui/download.ts` are small helpers not listed above.

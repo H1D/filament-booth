@@ -24,12 +24,105 @@ The page must be cross-origin isolated (the slicer and Cycles use wasm threads).
 preview servers send the headers. Any other host must send them too. `bun run build` writes the
 static app to `dist/`.
 
+## Connect a coding agent
+
+A coding agent on your computer (Claude Code, Codex, Cursor) can light the scene, change the camera
+and start photos in the open booth tab by writing Blender Python. The agent talks to a local bridge.
+The tab connects to that bridge on `127.0.0.1` after you turn a switch on. Nothing leaves your
+computer.
+
+1. Install the dependencies and start the app.
+
+   ```sh
+   bun install
+   bun run dev        # http://localhost:5173
+   ```
+
+2. Register the bridge with your agent. Use the absolute path of this checkout.
+
+   ```sh
+   claude mcp add --scope user booth -- bun /path/to/filament-booth/tools/agent/bridge.ts
+   ```
+
+   Codex reads `~/.codex/config.toml`.
+
+   ```toml
+   [mcp_servers.booth]
+   command = "bun"
+   args = ["/path/to/filament-booth/tools/agent/bridge.ts"]
+   ```
+
+   Cursor reads `~/.cursor/mcp.json`.
+
+   ```json
+   { "mcpServers": { "booth": { "command": "bun", "args": ["/path/to/filament-booth/tools/agent/bridge.ts"] } } }
+   ```
+
+3. Print the pairing link and open it in Chrome or Edge.
+
+   ```sh
+   bun tools/agent/bridge.ts --pair
+   #   Filament booth bridge
+   #     port   47615
+   #     token  9c1e47a0d2b35f86e4a1
+   #     link   http://localhost:5173/#agent=47615.9c1e47a0d2b35f86e4a1
+   ```
+
+   The page stores the port and token, removes them from the address bar, and opens the **Agent**
+   section below **Setup**. If the agent calls a tool and no tab pairs within 15 seconds, the tool
+   result contains the same link.
+
+4. Turn on **Allow a local agent to control this tab**. The status line reads "Starting Python…",
+   then "Waiting for the bridge on port 47615", then "Connected". While the switch is on, an
+   **Agent** badge shows in the top bar. Its popover has **Stop script** and **Turn off agent
+   control**.
+
+The switch, port and token are remembered in this browser, so the next load reconnects without a
+click. A pairing link turns the switch off, so you confirm a new bridge yourself.
+
+Now ask the agent for something, such as "light the part with a warm key and a cool fill, then
+render a 1600 px photo into renders/".
+
+### What the agent gets
+
+The agent has three tools. `booth_python` runs a script in the tab. `booth_wait` follows a script
+that is still running, such as a photo. `booth_cancel` stops one. A script starts with fresh
+globals, and the scene persists between scripts. One script runs at a time.
+`print(bpy.booth.reference())` lists every attribute and operator the booth supports, with units and
+limits. An attribute the booth does not have raises an error that names the booth's equivalent.
+
+File paths in a script are on your computer and relative to the folder the agent runs in. The bridge
+reads and writes only inside that folder and the folders you pass with `--allow`. A render with
+`write_still=True` writes a PNG to `scene.render.filepath` and also shows in the photo card.
+
+### Options
+
+`bun tools/agent/bridge.ts` takes these flags. The agent's MCP config can pass them as arguments.
+
+- `--port <n>` listens on this port instead of the one in `bridge.json`.
+- `--app <origin>` accepts a page served from another origin, for example `http://localhost:4173`
+  for `bun run preview`. The first `--app` is also the base of the pairing link.
+- `--allow <dir>` lets scripts read and write one more folder.
+
+The token and default port are in `~/.config/filament-booth/bridge.json`, mode 600, created on first
+start. Set `FILAMENT_BOOTH_CONFIG_DIR` to use another folder. If the port is busy, another agent
+session's bridge holds it. Start this bridge with `--port <n>`, then run
+`bun tools/agent/bridge.ts --pair --port <n>` for a link that carries that port.
+
+The connection was tested from `localhost` origins in Chromium. A page on a public HTTPS origin may
+be blocked from connecting to `ws://127.0.0.1`, and Firefox and Safari are untested.
+
 ## Checks
 
 - `bun run test` runs the unit tests (Vitest, Node). `bun run typecheck` and `bun run
   typecheck:dev` check the app and the tooling.
 - `bun run ui:drive` drives the React panels on `dev/panels.html` in headless Chromium, with
   stand-ins for the viewport, the slicer and the photo engine.
+- `bun run agent:drive` runs the agent's Python on `dev/agent.html` with the real Python worker and a
+  real `Booth` over stand-ins. `bun run agent:e2e` runs the whole path with nothing faked: the real
+  bridge driven by an MCP client, the real app in Chromium, and a Cycles photo of 160 by 200 pixels.
+  It needs only `/usr/bin/chromium`, takes about a minute and a half, and accepts `--gpu` for the
+  gamescope session.
 - `bun run e2e [flow numbers] [table] [hero]` runs the real app end to end: real parts dropped on the
   window, real controls clicked, the WebGPU preview and Cycles photos measured by pixels. It needs
   a GPU, `gamescope` and `/usr/bin/chromium`, because headless Chromium only offers a software

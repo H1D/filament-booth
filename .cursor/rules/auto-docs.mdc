@@ -19,6 +19,9 @@ bun run lint           # oxlint
 bun run build          # tsc -b && vite build into dist/
 bun run ui:drive       # panels on dev/panels.html with fakes, headless Chromium
 bun run e2e [flows]    # real app in a hardware-GPU Chromium (needs gamescope, Blender 5.2.3)
+bun run agent          # the agent bridge: an MCP server on stdio plus the loopback socket the tab dials (--pair prints the link)
+bun run agent:drive    # agent Python on dev/agent.html with the real worker, headless Chromium
+bun run agent:e2e      # real MCP client, real bridge, real app, a real Cycles photo (--gpu for the hardware-GPU session)
 bun tools/parity/run.ts          # browser Cycles against native Blender, PSNR per fixture
 tools/check-clean-checkout.sh    # fresh worktree of HEAD, install, test, typecheck
 ```
@@ -46,6 +49,11 @@ One saved `BoothDocument` (plain JSON) is compiled by the pure function `compile
 | Cycles engine | `src/photo/cycles*.ts`, `cycles/api/` | Cycles 5.2 CPU kernel in wasm, fresh worker per render |
 | film | `src/film.ts` | Blender's AgX from baked tables, PNG encode |
 | UI | `src/ui/`, `src/App.tsx`, `src/main.tsx` | React 19 rail panels over `useSyncExternalStore` |
+| AgentControl | `src/agent/agent.ts` | The opt-in switch, one script at a time, the store the Agent panel reads |
+| BridgeLink | `src/agent/link.ts` | The tab's WebSocket client to the local bridge |
+| AgentHost | `src/agent/host.ts`, `src/agent/rna.ts` | Runs a `bpy` script's reads and writes against the live `Booth` through one table |
+| PythonRuntime | `src/agent/python.ts` | Pyodide in a worker, cancel is terminate |
+| Bridge | `tools/agent/` | Local MCP server for the agent and the socket the tab dials |
 
 **Data flow:**
 1. A dropped file goes through `Booth.open` to the print worker, which returns a `BeadMesh`.
@@ -62,17 +70,21 @@ One saved `BoothDocument` (plain JSON) is compiled by the pure function `compile
 - **Fresh worker per job**: one per slice, one per Cycles render. Cancel is terminate.
 - **Ports and fakes**: `BoothDeps`, `PhotoEngine`, `PhotoTools` are injected. Each module has a dev page under `dev/`.
 - **Ground truth by script**: numbers that must match Blender are dumped from Blender by `tools/blender/`.
+- **Agent over the same write path**: a script's assignment is one `booth.update`, its render is `PhotoSession.take`, and its file access goes through the bridge. Nothing in `src/agent/` writes the document another way.
 
 ## Key Rules
 
-- No renderer reads the document. A new setting is added to `BoothDocument`, `BOUNDS`, `parseDocument` and `defaultDocument`, lowered in `src/scene.ts`, then consumed.
+- No renderer reads the document. A new setting is added to `BoothDocument`, `BOUNDS`, `parseDocument` and `defaultDocument`, lowered in `src/scene.ts`, then consumed. Reach it in `src/agent/rna.ts` or name it in `UNMAPPED` with a reason, or `tests/agent-rna.test.ts` fails.
 - `booth.update` is the only write path. Put multi-field edits in `src/edits.ts`.
 - The app frame is Blender's. `BLENDER_TO_VIEWER` in `src/viewport/frame.ts` is the only axis swap. Do not add another.
 - Light power is true watts. Camera azimuth 0 looks from −Y and turns toward +X. Turntable is counter-clockwise about +Z.
 - Read and write the vertex `word` only with `packBeadWord` and `unpackBeadWord`.
 - The Cycles attribute for print direction is `path_tangent`, never `tangent`.
 - Wasm heap pointers arrive signed. Build views at `ptr >>> 0`, or photos above 2 GiB fall back to raster silently.
-- The canvas that encodes the photo stays on the CPU (`willReadFrequently`).
+- Every 2D canvas the page reads back stays on the CPU (`willReadFrequently`): the one that encodes the photo and the one behind the agent's JPEG thumbnail.
+- The page opens no socket and loads no Python until the user turns on Agent control. The only address it dials is `ws://127.0.0.1:<port>`. The switch, port and token live in `localStorage` key `booth.agent`, never in the document, and a pairing link never turns the switch on.
+- Run the bridge in scripts and tests with `FILAMENT_BOOTH_CONFIG_DIR` set. Without it the bridge writes `~/.config/filament-booth/bridge.json`.
+- `public/pyodide/` is written by `bun tools/agent/vendor-pyodide.ts`. Do not edit it.
 - The floor card ring is a faded disc in Cycles, the preview bake and `tools/blender/render_scene.py`. Keep all three the same.
 - After touching `src/photo/cycles-upload.ts`, `cycles/api/` or a solver in `src/scene.ts`, rerun `bun tools/parity/run.ts`.
 - TypeScript runs with `erasableSyntaxOnly`. No parameter properties or enums.
@@ -100,6 +112,7 @@ One saved `BoothDocument` (plain JSON) is compiled by the pure function `compile
 | preview | active | `src/viewport/viewport.ts` |
 | photo | active | `src/photo/photo.ts`, `src/photo/cycles.ts`, `src/film.ts` |
 | controls | stable | `src/ui/`, `src/App.tsx` |
+| agent | active | `src/agent/`, `src/ui/AgentPanel.tsx`, `tools/agent/` |
 | cycles-wasm | stable | `cycles/build.sh`, `cycles/api/`, `public/cycles/` |
 | verification | stable | `tests/`, `tools/e2e/`, `tools/parity/`, `tools/blender/` |
 
@@ -112,11 +125,12 @@ One saved `BoothDocument` (plain JSON) is compiled by the pure function `compile
 | `src/viewport/` | Live preview |
 | `src/photo/` | PHOTO desk and engines |
 | `src/ui/` | React panels and stores |
+| `src/agent/` | Agent control: wire protocol, the `bpy` table and host, the Python worker, the bridge link |
 | `tests/` | Vitest tests and fixtures |
 | `dev/` | Standalone dev pages with fakes |
 | `docs/` | Design contract |
 | `cycles/` | C API and build scripts for the Cycles module |
-| `tools/` | Blender truth scripts, parity, e2e and UI drivers |
-| `public/` | Committed wasm modules, AgX tables, HDR |
+| `tools/` | Blender truth scripts, parity, e2e and UI drivers, and the agent bridge (`tools/agent/`) |
+| `public/` | Committed wasm modules, AgX tables, HDR, Pyodide |
 | `vendor/muon-protocol/` | Slicer protocol package, Apache-2.0 |
 | `.ai/docs/` | Detailed docs per feature |
