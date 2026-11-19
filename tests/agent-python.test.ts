@@ -219,6 +219,12 @@ describe("Blender's shapes", () => {
     expect(looped.match(/UserWarning/g)).toHaveLength(3);
   });
 
+  test("a warning for a write through a colour component names the agent's line", () => {
+    fresh();
+    const text = done("import bpy\nlight = bpy.data.lights['Top softbox']\nlight.color = (0.6, 0.3, 0.2)\nlight.color.r = 0.1");
+    expect(text).toMatch(/^<agent>:4: UserWarning: /);
+  });
+
   test("bpy.booth.reference() is the table's", () => {
     fresh();
     expect(done("import bpy\nprint(bpy.booth.reference('AreaLight'))")).toContain(".energy: float W, 0 to 1000000");

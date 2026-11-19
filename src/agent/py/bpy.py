@@ -17,6 +17,8 @@ import warnings as _warnings
 import booth_host as _host
 import mathutils as _mathutils
 
+_SHIM_DIR = __file__.rsplit("/", 1)[0] + "/"
+
 _ERRORS = {
     "AttributeError": AttributeError, "ValueError": ValueError, "TypeError": TypeError, "KeyError": KeyError,
     "IndexError": IndexError, "RuntimeError": RuntimeError, "ReferenceError": ReferenceError,
@@ -84,8 +86,11 @@ class bpy_struct:
     def __setattr__(self, name, value):
         warning = _call("set", self._handle, self._rna, name, _plain(value))["warning"]
         if warning:
-            # Without a registry Python cannot mark the line as already warned, so each assignment the booth altered says so.
+            # A write through a Vector or Color arrives from mathutils, so the warning names the first frame outside the shim.
             caller = _sys._getframe(1)
+            while caller.f_back is not None and caller.f_code.co_filename.startswith(_SHIM_DIR):
+                caller = caller.f_back
+            # Without a registry Python cannot mark the line as already warned, so each assignment the booth altered says so.
             _warnings.warn_explicit(warning, UserWarning, caller.f_code.co_filename, caller.f_lineno)
 
     def __dir__(self):
