@@ -286,13 +286,11 @@ def add_scrim(e, part_collection):
 def add_floor_cards(r, part_collection):
     cx, cy, cz = r['centre']
     z = cz + RING_LIFT_M
-    verts, faces = [], []
-    for i in range(RING_SEGMENTS):
-        a = 2 * math.pi * i / RING_SEGMENTS
-        verts += [(cx + r['innerRadiusM'] * math.cos(a), cy + r['innerRadiusM'] * math.sin(a), z),
-                  (cx + r['outerRadiusM'] * math.cos(a), cy + r['outerRadiusM'] * math.sin(a), z)]
-        i0, i1 = 2 * i, 2 * ((i + 1) % RING_SEGMENTS)
-        faces += [(i0, i0 + 1, i1 + 1), (i0, i1 + 1, i1)]
+    inner, outer = r['innerRadiusM'], r['outerRadiusM']
+    # A fan out to the radius where the fade reaches zero; the shader sets the radiance at each point.
+    verts = [(cx, cy, z)] + [(cx + outer * math.cos(2 * math.pi * i / RING_SEGMENTS),
+                              cy + outer * math.sin(2 * math.pi * i / RING_SEGMENTS), z) for i in range(RING_SEGMENTS)]
+    faces = [(0, 1 + i, 1 + (i + 1) % RING_SEGMENTS) for i in range(RING_SEGMENTS)]
     me = bpy.data.meshes.new('floor_cards')
     me.from_pydata(verts, [], faces)
     ob = bpy.data.objects.new('floor_cards', me)
@@ -301,7 +299,7 @@ def add_floor_cards(r, part_collection):
     ob.visible_volume_scatter = ob.visible_shadow = False
     ob.visible_glossy = True
     link_to_part(ob, part_collection)
-    # radiance = far + (key - far) * ((1 + cos(atan2(x - cx, cy - y) - key_azimuth)) / 2)^2
+    # (far + (key - far) * ((1 + cos(atan2(x - cx, cy - y) - key_azimuth)) / 2)^2) * (1 - smoothstep(inner, outer, r))
     m, nt = new_material('floor_cards')
     geometry = nt.nodes.new('ShaderNodeNewGeometry')
     sep = nt.nodes.new('ShaderNodeSeparateXYZ')
@@ -313,8 +311,13 @@ def add_floor_cards(r, part_collection):
     half = math_node(nt, 'MULTIPLY_ADD', cosine, 0.5, 0.5)
     weight = math_node(nt, 'MULTIPLY', half, half)
     radiance = math_node(nt, 'MULTIPLY_ADD', weight, r['keyRadiance'] - r['farRadiance'], r['farRadiance'])
+    dist = math_node(nt, 'SQRT', math_node(nt, 'MULTIPLY_ADD', dy, dy, math_node(nt, 'MULTIPLY', dx, dx)))
+    t = math_node(nt, 'MULTIPLY_ADD', dist, 1 / (outer - inner), -inner / (outer - inner))
+    t.node.use_clamp = True
+    smooth = math_node(nt, 'MULTIPLY', math_node(nt, 'MULTIPLY', t, t), math_node(nt, 'MULTIPLY_ADD', t, -2.0, 3.0))
+    fade = math_node(nt, 'MULTIPLY_ADD', smooth, -1.0, 1.0)
     emission = node(nt, 'ShaderNodeEmission', Color=(1.0, 1.0, 1.0, 1.0))
-    nt.links.new(radiance, emission.inputs['Strength'])
+    nt.links.new(math_node(nt, 'MULTIPLY', radiance, fade), emission.inputs['Strength'])
     nt.links.new(emission.outputs[0], nt.nodes.new('ShaderNodeOutputMaterial').inputs[0])
     me.materials.append(m)
 

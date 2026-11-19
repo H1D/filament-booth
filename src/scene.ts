@@ -110,12 +110,23 @@ export interface ScrimEmitter extends EmitterFrame {
 export type Emitter = AreaEmitter | ScrimEmitter;
 
 /**
- * An emissive ring on the floor around the part that only glossy rays see.
- * At floor point (x, y) at distance r from `centre`, with
- * theta = atan2(x, -y) (the azimuth convention of document.ts), the radiance is
- *   mix(farRadiance, keyRadiance, ((cos(theta - keyAzimuthRad) + 1) / 2)^2)
- *     * (1 - smoothstep(innerRadiusM, outerRadiusM, r)).
- * These are the old bake's numbers (index.html:480), minus its preview GAIN.
+ * An emissive disc on the floor around the part, so the walls of a dark glossy
+ * part mirror a lit table. Only glossy rays see it: not the camera, not
+ * diffuse light, not shadows. It is light-linked to the part, so the backdrop's
+ * own glossy lobe never reflects it either.
+ *
+ * Azimuth is the convention of document.ts: degrees from -Y turning towards
+ * +X. At a floor point (x, y) at distance r from `centre`,
+ *   theta = atan2(x - centre.x, -(y - centre.y)),
+ *   w = ((1 + cos(theta - keyAzimuthRad)) / 2)^2,
+ *   radiance = (farRadiance + (keyRadiance - farRadiance) * w)
+ *              * (1 - smoothstep(innerRadiusM, outerRadiusM, r)).
+ * So the key side (theta = keyAzimuthRad) has `keyRadiance`, the points 90
+ * degrees round have a quarter of the way from far to key, and the opposite
+ * side has `farRadiance`. Full strength out to `innerRadiusM`, falling to zero
+ * at `outerRadiusM`. Radiance is Blender emission strength. These are the old
+ * bake's numbers (index.html:480), minus its preview GAIN. The Cycles engine
+ * (cycles/api/scene.cpp) and tools/blender/render_scene.py build exactly this.
  */
 export interface FloorCardRing {
   readonly centre: Vec3;
