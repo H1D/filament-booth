@@ -13,11 +13,12 @@
  *   identity while its inputs are unchanged, so renderers diff with `===`.
  * - This file is pure: no three.js, no DOM, no workers. It runs in Node.
  */
-import type {
-  AgxLook, BoothDocument, CameraSetup, FilamentChoice, Imperfections, Metres, Pose, Rgb,
-  Studio, StudioLight, Vec3,
+import {
+  DEFAULT_GLOSS, m, mm,
+  type AgxLook, type BedType, type BoothDocument, type CameraSetup, type FeatureCode, type FilamentChoice,
+  type Imperfections, type Metres, type Pose, type Rgb, type Studio, type StudioLight, type Vec3,
 } from "./document";
-import type { BeadMesh, LoadedPrint, SlicedPrint } from "./print";
+import { BEAD_WORD, type BeadMesh, type LoadedPrint, type SlicedPrint } from "./print";
 
 export type Mat4 = readonly number[]; // 16, column-major, Blender frame
 
@@ -108,7 +109,14 @@ export interface ScrimEmitter extends EmitterFrame {
 }
 export type Emitter = AreaEmitter | ScrimEmitter;
 
-/** An emissive ring on the floor around the part that only glossy rays see. */
+/**
+ * An emissive ring on the floor around the part that only glossy rays see.
+ * At floor point (x, y) at distance r from `centre`, with
+ * theta = atan2(x, -y) (the azimuth convention of document.ts), the radiance is
+ *   mix(farRadiance, keyRadiance, ((cos(theta - keyAzimuthRad) + 1) / 2)^2)
+ *     * (1 - smoothstep(innerRadiusM, outerRadiusM, r)).
+ * These are the old bake's numbers (index.html:480), minus its preview GAIN.
+ */
 export interface FloorCardRing {
   readonly centre: Vec3;
   readonly innerRadiusM: number;
@@ -191,87 +199,430 @@ export const FILM_DEFAULTS = {
   filterWidthPx: 1.5,
 } as const;
 
+
+// ---- constants carried over from the old viewer and render.py ---------------
+
+/** The part rests 20 um above the floor so it is not coplanar with the sweep. */
+const LIFT_M = 2e-5;
+const DEFAULT_AIM: V3 = [0, 0, 0.09];
+const FLOOR_CARD_INNER_M = 0.3;
+const FLOOR_CARD_OUTER_M = 0.8;
+const CLIP_START_M = 0.01;
+const FRAME_MARGIN = 1.08;
+/** Gloss spans this many stops of exponent either side of the recipe. */
+const GLOSS_STOPS = 1.25;
+const SHEEN_AMPLITUDE = 0.05;
+const SHEEN_SEED = 0x5ee7c0de;
+const HEAT_GLOSS_PER_UNIT = -0.0625;
+const SPEED_GLOSS_GAIN = 0.0875;
+const SOFT_LINES_FLATTEN = 0.21;
+const MOTTLE_SCALE_PER_M = 300;
+const MOTTLE_PEAK_TO_PEAK = 0.06;
+const GRAIN_PER_M = 1000 / 0.17;
+const PLATE_BUMP_M = 5e-5;
+
+// ---- small vector helpers (plain numbers inside, branded at the boundary) ---
+
+type V3 = readonly [number, number, number];
+const vec = (v: V3): Vec3 => [m(v[0]), m(v[1]), m(v[2])];
+const add = (a: V3, b: V3): V3 => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
+const sub = (a: V3, b: V3): V3 => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+const scale = (a: V3, k: number): V3 => [a[0] * k, a[1] * k, a[2] * k];
+const dot = (a: V3, b: V3): number => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+const cross = (a: V3, b: V3): V3 => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+const length = (a: V3): number => Math.hypot(a[0], a[1], a[2]);
+const unitOf = (a: V3): V3 => scale(a, 1 / length(a));
+const rad = (d: number): number => (d * Math.PI) / 180;
+const clamp = (x: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, x));
+
+/** Offset of azimuth/elevation/distance, in the convention of document.ts. */
+function sphericalOffset(azimuthDeg: number, elevationDeg: number, distance: number): V3 {
+  const az = rad(azimuthDeg), el = rad(elevationDeg);
+  return [distance * Math.sin(az) * Math.cos(el), -distance * Math.cos(az) * Math.cos(el), distance * Math.sin(el)];
+}
+
+export function transformPoint(mat: Mat4, p: V3): V3 {
+  return [
+    mat[0] * p[0] + mat[4] * p[1] + mat[8] * p[2] + mat[12],
+    mat[1] * p[0] + mat[5] * p[1] + mat[9] * p[2] + mat[13],
+    mat[2] * p[0] + mat[6] * p[1] + mat[10] * p[2] + mat[14],
+  ];
+}
+
+function corners(b: { readonly min: V3; readonly max: V3 }): V3[] {
+  const out: V3[] = [];
+  for (const x of [b.min[0], b.max[0]]) for (const y of [b.min[1], b.max[1]]) for (const z of [b.min[2], b.max[2]]) out.push([x, y, z]);
+  return out;
+}
+
+function boundsOf(points: readonly V3[]): { min: V3; max: V3 } {
+  const min: [number, number, number] = [Infinity, Infinity, Infinity];
+  const max: [number, number, number] = [-Infinity, -Infinity, -Infinity];
+  for (const p of points) for (let i = 0; i < 3; i++) { min[i] = Math.min(min[i], p[i]); max[i] = Math.max(max[i], p[i]); }
+  return { min, max };
+}
+
+// ---- compile -----------------------------------------------------------------
+
+/** Structural equality over plain data and typed arrays (compared byte for byte). */
+function same(a: unknown, b: unknown): boolean {
+  if (Object.is(a, b)) return true;
+  if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) return false;
+  if (ArrayBuffer.isView(a) || ArrayBuffer.isView(b)) {
+    if (!ArrayBuffer.isView(a) || !ArrayBuffer.isView(b) || a.constructor !== b.constructor || a.byteLength !== b.byteLength) return false;
+    const x = new Uint8Array(a.buffer, a.byteOffset, a.byteLength);
+    const y = new Uint8Array(b.buffer, b.byteOffset, b.byteLength);
+    for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) return false;
+    return true;
+  }
+  if (Array.isArray(a) !== Array.isArray(b)) return false;
+  const keys = Object.keys(a);
+  if (keys.length !== Object.keys(b).length) return false;
+  return keys.every((k) => Object.hasOwn(b, k) && same(Reflect.get(a, k), Reflect.get(b, k)));
+}
+
+/** Freezes plain data. Typed arrays cannot be frozen, and `skip` (the print's
+ *  mesh, which print.ts owns and the LoadedPrint shares) is left alone. */
+function freezeDeep<T>(value: T, skip?: object): T {
+  if (typeof value !== "object" || value === null || ArrayBuffer.isView(value) || value === skip || Object.isFrozen(value)) return value;
+  Object.freeze(value);
+  for (const child of Object.values(value)) freezeDeep(child, skip);
+  return value;
+}
+
+/** The previous value when `next` equals it, else `next`, frozen. */
+function keep<T>(prev: T | undefined, next: T): T {
+  return prev !== undefined && same(prev, next) ? prev : freezeDeep(next);
+}
+
 /**
- * Pass the previous scene so unchanged sections keep their identity.
+ * Pass the previous scene so unchanged sections keep their identity. The
+ * reuse is as fine as the data: an edited light keeps every other emitter,
+ * a turntable turn keeps the part's material. The mesh is compared by
+ * reference, never by content.
  * With no print, `part` is null and the studio still compiles.
  */
 export function compileScene(
   doc: BoothDocument, print: LoadedPrint | null, docRev: number, previous?: Scene,
 ): Scene {
-  throw new Error("not implemented");
-  // TODO: solvePose -> studioAim -> solveCamera (focus through the pose) ->
-  //       solveLight per light that is on -> resolveMaterial -> sweepMesh -> film.
-  //       Reuse previous.<section> when a deep comparison of the new value says equal.
+  const { width, height } = filmSize(doc.output.aspect, doc.output.longEdgePx);
+  const film = keep<FilmSection>(previous?.film, {
+    width, height, samples: doc.output.samples, ...FILM_DEFAULTS,
+    transparent: doc.output.transparentBackground, denoise: doc.output.denoise, look: doc.output.viewTransform.look,
+  });
+
+  const part = print === null ? null : compilePart(doc, print, previous?.part ?? null);
+  const aim = keep(previous?.lights.aim, studioAim(part));
+
+  const prevEmitters = new Map((previous?.lights.emitters ?? []).map((e) => [e.id, e]));
+  const solved = doc.studio.lights.filter((l) => l.on).map((l) => keep<Emitter>(prevEmitters.get(l.id), solveLight(l, aim)));
+  const oldEmitters = previous?.lights.emitters;
+  const emitters = oldEmitters && oldEmitters.length === solved.length && solved.every((e, i) => e === oldEmitters[i])
+    ? oldEmitters
+    : Object.freeze(solved);
+  const fc = doc.studio.floorCards;
+  const floorCards = keep<FloorCardRing | null>(previous?.lights.floorCards, fc === null ? null : {
+    centre: vec([0, 0, 0]), innerRadiusM: FLOOR_CARD_INNER_M, outerRadiusM: FLOOR_CARD_OUTER_M,
+    keyRadiance: fc.keySide, farRadiance: fc.farSide, keyAzimuthRad: rad(fc.azimuth),
+  });
+  const pl = previous?.lights;
+  const lights = pl && pl.emitters === emitters && pl.floorCards === floorCards && pl.aim === aim
+    ? pl
+    : Object.freeze({ emitters, floorCards, aim });
+
+  const sweep = sharedSweep();
+  const backdrop = keep<BackdropSection>(previous?.backdrop, {
+    ...sweep, albedo: [...doc.studio.backdrop.color], roughness: doc.studio.backdrop.roughness,
+    shadowCatcher: doc.output.transparentBackground,
+  });
+  const w = doc.studio.world;
+  const world = keep<WorldSection>(previous?.world, { hdrId: w.hdrId, strength: w.strength, rotationRad: rad(w.rotationDeg) });
+  const camera = keep(previous?.camera, solveCamera(doc.camera, part?.toWorld ?? null, width, height));
+
+  return Object.freeze({ docRev, part, lights, backdrop, world, camera, film });
 }
+
+function compilePart(doc: BoothDocument, print: LoadedPrint, prev: PartSection | null): PartSection {
+  const { mesh, sliced } = print;
+  const toWorld = keep(prev?.toWorld, solvePose(doc.pose, mesh.bboxM));
+  const { min, max } = boundsOf(corners({ min: mesh.bboxM.min, max: mesh.bboxM.max }).map((p) => transformPoint(toWorld, p)));
+  const worldBounds = keep(prev?.worldBounds, { min: vec(min), max: vec(max) });
+  const material = keep(prev?.material, resolveMaterial(doc.filament, mesh, sliced));
+  if (prev && prev.mesh === mesh && prev.toWorld === toWorld && prev.worldBounds === worldBounds && prev.material === material) return prev;
+  return freezeDeep({ mesh, toWorld, worldBounds, material }, mesh);
+}
+
+// ---- pose and aim ------------------------------------------------------------
+
+/** Row-major 3x3 turning each printed face to face down (its normal to -Z). */
+const FACE_ROTATION: Record<Pose["restFace"], readonly number[]> = {
+  plate: [1, 0, 0, 0, 1, 0, 0, 0, 1],
+  top: [1, 0, 0, 0, -1, 0, 0, 0, -1],
+  front: [1, 0, 0, 0, 0, -1, 0, 1, 0],
+  back: [1, 0, 0, 0, 0, 1, 0, -1, 0],
+  right: [0, 0, 1, 0, 1, 0, -1, 0, 0],
+  left: [0, 0, -1, 0, 1, 0, 1, 0, 0],
+};
 
 /** Rest face down, bbox centred on the turntable axis, min z = 2e-5, then turntable about Z. */
 export function solvePose(pose: Pose, bbox: BeadMesh["bboxM"]): Mat4 {
-  throw new Error("not implemented");
+  const r = FACE_ROTATION[pose.restFace];
+  const rotate = (p: V3): V3 => [
+    r[0] * p[0] + r[1] * p[1] + r[2] * p[2],
+    r[3] * p[0] + r[4] * p[1] + r[5] * p[2],
+    r[6] * p[0] + r[7] * p[1] + r[8] * p[2],
+  ];
+  const { min, max } = boundsOf(corners(bbox).map(rotate));
+  const t: V3 = [-(min[0] + max[0]) / 2, -(min[1] + max[1]) / 2, LIFT_M - min[2]];
+  const c = Math.cos(rad(pose.turntableDeg)), s = Math.sin(rad(pose.turntableDeg));
+  const spin = (p: V3): V3 => [c * p[0] - s * p[1], s * p[0] + c * p[1], p[2]];
+  const col = (e: V3): V3 => spin(rotate(e));
+  const [x, y, z] = [col([1, 0, 0]), col([0, 1, 0]), col([0, 0, 1])];
+  const o = spin(t);
+  return [x[0], x[1], x[2], 0, y[0], y[1], y[2], 0, z[0], z[1], z[2], 0, o[0], o[1], o[2], 1];
 }
 
 /** Lights aim at the posed part's centre. It does not move with the turntable. */
 export function studioAim(part: PartSection | null): Vec3 {
-  throw new Error("not implemented"); // TODO: (0, 0, half the posed height); (0, 0, 0.09) with no part
+  if (part === null) return vec(DEFAULT_AIM);
+  return vec([0, 0, (part.worldBounds.max[2] - part.worldBounds.min[2]) / 2]);
 }
 
+// ---- camera ------------------------------------------------------------------
+
 export function solveCamera(cam: CameraSetup, partToWorld: Mat4 | null, width: number, height: number): CameraSection {
-  throw new Error("not implemented");
-  // TODO: spherical about target -> position. Sensor 36 mm across the long edge:
-  //       fovY = 2 * atan((18 / focal) * min(1, height / width)).
-  //       focus distance = |position - partToWorld * focusPartPoint|, or the orbit distance.
-  //       apertureRadiusM = focalMm / fStop / 2 / 1000.
+  const target: V3 = cam.target;
+  const position = add(target, sphericalOffset(cam.azimuth, cam.elevation, cam.distance));
+  const forward = unitOf(sub(target, position));
+  const az = rad(cam.azimuth), el = rad(cam.elevation);
+  // Blender's track-to (-Z at the target, up Y towards world Z) in closed form: finite at +-90 degrees.
+  const up: V3 = [-Math.sin(el) * Math.sin(az), Math.sin(el) * Math.cos(az), Math.cos(el)];
+  // Focus is a plane, so a clicked point sets its depth along the view axis, as Blender's DOF distance is.
+  let focusDistanceM: number = cam.distance;
+  if (cam.focusPartPoint !== null && partToWorld !== null) {
+    const depth = dot(sub(transformPoint(partToWorld, cam.focusPartPoint), position), forward);
+    if (depth > CLIP_START_M) focusDistanceM = depth;
+  }
+  return {
+    position: vec(position), target: vec(target), up: vec(up),
+    focalMm: cam.focalMm, sensorMm: 36,
+    fovYRad: 2 * Math.atan((18 / cam.focalMm) * Math.min(1, height / width)),
+    fStop: cam.fStop,
+    apertureRadiusM: cam.focalMm / cam.fStop / 2 / 1000,
+    focusDistanceM,
+    clipStartM: CLIP_START_M,
+  };
 }
 
 /** A focal length change that keeps the framing: distance scales with focal length. */
 export function refocal(cam: CameraSetup, focalMm: number): CameraSetup {
-  throw new Error("not implemented");
+  return { ...cam, focalMm: mm(focalMm), distance: m((cam.distance * focalMm) / cam.focalMm) };
 }
+
+/** Width and height in pixels from the aspect and the long edge. */
+export function filmSize(aspect: { w: number; h: number }, longEdgePx: number): { width: number; height: number } {
+  const short = Math.max(1, Math.round((longEdgePx * Math.min(aspect.w, aspect.h)) / Math.max(aspect.w, aspect.h)));
+  return aspect.w >= aspect.h ? { width: longEdgePx, height: short } : { width: short, height: longEdgePx };
+}
+
+/** Camera distance so a freshly opened part, as printed, fills the frame at the
+ *  current focal length: its bounding sphere just inside the narrower half-angle. */
+export function framePart(mesh: BeadMesh, cam: CameraSetup, aspect: { w: number; h: number }): Partial<CameraSetup> {
+  const size = sub(mesh.bboxM.max, mesh.bboxM.min);
+  const half = Math.atan((18 / cam.focalMm) * Math.min(1, aspect.w / aspect.h, aspect.h / aspect.w));
+  return {
+    distance: m((length(size) / 2 / Math.sin(half)) * FRAME_MARGIN),
+    target: [m(0), m(0), m(size[2] / 2)],
+  };
+}
+
+// ---- lights ------------------------------------------------------------------
 
 /** Spherical placement about `aim` to a frame whose normal faces `aim`.
  *  yAxis is the world up projected onto the card, as Blender's track-to with up Y. */
 export function solveLight(light: StudioLight, aim: Vec3): Emitter {
-  throw new Error("not implemented");
+  const centre = add(aim, sphericalOffset(light.azimuth, light.elevation, light.distance));
+  const normal = unitOf(sub(aim, centre));
+  // Blender picks y = +Y when the aim is within a hair of vertical; everywhere else it is continuous.
+  const yAxis: V3 = Math.hypot(normal[0], normal[1]) < 1e-4
+    ? [0, 1, 0]
+    : unitOf(sub([0, 0, 1], scale(normal, normal[2])));
+  const frame = {
+    id: light.id, centre: vec(centre), xAxis: vec(cross(yAxis, normal)), yAxis: vec(yAxis), normal: vec(normal),
+    sizeM: [light.width, light.height] as const, shape: light.shape,
+    color: lightColor(light), partOnly: light.partOnly,
+  };
+  return light.kind === "area"
+    ? { ...frame, kind: "area", powerW: light.powerW, spreadRad: rad(light.spreadDeg) }
+    : { ...frame, kind: "scrim", topRadiance: light.topRadiance, bottomRadiance: light.bottomRadiance };
 }
 
-/** Kelvin to linear RGB at luminance 1. */
+function lightColor(light: StudioLight): Rgb {
+  if (light.color.kind === "kelvin") return kelvinToRgb(light.color.kelvin);
+  const [r, g, b] = light.color.rgb;
+  const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  return lum > 0 ? [r / lum, g / lum, b / lum] : [1, 1, 1];
+}
+
+/**
+ * Kelvin to linear Rec.709 RGB at luminance 1: the Planckian locus by Kim et
+ * al.'s cubic fit (chromaticity valid 1667..25000 K, clamped outside), taken
+ * to XYZ at Y = 1 and to linear sRGB, negatives clipped, then renormalised.
+ */
 export function kelvinToRgb(kelvin: number): Rgb {
-  throw new Error("not implemented");
+  const t = clamp(kelvin, 1667, 25000);
+  const x = t < 4000
+    ? -0.2661239e9 / t ** 3 - 0.2343589e6 / t ** 2 + 0.8776956e3 / t + 0.17991
+    : -3.0258469e9 / t ** 3 + 2.1070379e6 / t ** 2 + 0.2226347e3 / t + 0.24039;
+  const y = t < 2222
+    ? -1.1063814 * x ** 3 - 1.3481102 * x ** 2 + 2.18555832 * x - 0.20219683
+    : t < 4000
+      ? -0.9549476 * x ** 3 - 1.37418593 * x ** 2 + 2.09137015 * x - 0.16748867
+      : 3.081758 * x ** 3 - 5.8733867 * x ** 2 + 3.75112997 * x - 0.37001483;
+  const X = x / y, Z = (1 - x - y) / y;
+  const r = Math.max(0, 3.2404542 * X - 1.5371385 - 0.4985314 * Z);
+  const g = Math.max(0, -0.969266 * X + 1.8760108 + 0.041556 * Z);
+  const b = Math.max(0, 0.0556434 * X - 0.2040259 + 1.0572252 * Z);
+  const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  return [r / lum, g / lum, b / lum];
+}
+
+// ---- material ----------------------------------------------------------------
+
+/**
+ * The gloss slider, defined once. Every roughness r in the recipe becomes
+ * r ** p with p = 2 ** (2 * GLOSS_STOPS * (gloss - DEFAULT_GLOSS)), so gloss 0
+ * and 1 sit GLOSS_STOPS either side of the recipe. Gloss DEFAULT_GLOSS gives
+ * p = 1, the recipe untouched. A larger gloss gives a larger p and so a smaller
+ * roughness, since r < 1. The curve is monotonic in gloss, keeps the order of the four
+ * features, and never leaves 0..1.
+ */
+export function glossRoughness(r: number, gloss: number): number {
+  return r ** (2 ** (2 * GLOSS_STOPS * (gloss - DEFAULT_GLOSS)));
+}
+
+function mulberry32(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+const srgbToLinear = (c: number): number => (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
+
+function hexToLinear(hex: string): Rgb {
+  const ch = (i: number) => srgbToLinear(parseInt(hex.slice(1 + 2 * i, 3 + 2 * i), 16) / 255);
+  return [ch(0), ch(1), ch(2)];
 }
 
 export function resolveMaterial(f: FilamentChoice, mesh: BeadMesh, sliced: SlicedPrint): BeadMaterial {
-  throw new Error("not implemented");
-  // TODO: sRGB hex -> linear. Gloss curve per feature. Layer sheen from a seeded
-  //       random per layer (amplitude 0.05 * vary). Heat from layerHeatCurve,
-  //       heat gloss -0.0625 per unit, speed gain 0.0875 * speedGloss, flatten
-  //       1 - softLines * 0.21 * clamp(heat, 0, 1). Mottle 300 per metre, 0.03 * vary.
-  //       Bed: auto -> the file's bed -> textured. Grain 1000 / 0.17 per metre.
+  const { recipe, imperfections: imp } = f;
+  const count = clamp(Math.max(mesh.layerCount + 1, sliced.layerTimeS.length), 1, BEAD_WORD.layer.size);
+  const heat = layerHeatCurve(sliced, imp);
+  const next = mulberry32(SHEEN_SEED);
+  const base = ([0, 1, 2, 3] as const).map((code: FeatureCode) => glossRoughness(recipe.roughness[code], f.gloss));
+  const rough = new Float32Array(count * 4);
+  const flatten = new Float32Array(count);
+  const warmth = new Float32Array(count);
+  for (let layer = 0; layer < count; layer++) {
+    const h = heat[layer] ?? 0;
+    const sheen = (next() - 0.5) * SHEEN_AMPLITUDE * recipe.vary;
+    for (let code = 0; code < 4; code++) rough[layer * 4 + code] = base[code] + sheen + h * imp.heatGloss * HEAT_GLOSS_PER_UNIT;
+    flatten[layer] = 1 - imp.softLines * SOFT_LINES_FLATTEN * clamp(h, 0, 1);
+    warmth[layer] = h;
+  }
+  const bed: BedType = f.bed === "auto" ? sliced.bedFromFile ?? "textured-pei" : f.bed;
+  const plate: PlateFace = bed === "textured-pei"
+    ? { textured: true, rough: recipe.peiRough, roughUnresolved: recipe.peiFarRough, grainPerM: GRAIN_PER_M, bumpDistanceM: PLATE_BUMP_M }
+    : { textured: false, rough: base[0], roughUnresolved: base[0], grainPerM: 0, bumpDistanceM: 0 };
+  return {
+    baseColor: hexToLinear(recipe.colorHex), ior: recipe.ior, anisotropy: recipe.anisotropy,
+    layers: { count, rough, flatten, heat: warmth },
+    speedGain: SPEED_GLOSS_GAIN * imp.speedGloss,
+    mottleScale: MOTTLE_SCALE_PER_M, mottleAmp: MOTTLE_PEAK_TO_PEAK * recipe.vary,
+    plate, overlay: imp.overlay,
+  };
 }
 
 /** Per-layer warmth from print timing: h = 1 / (1 + t * (1 + fanCooling * fan) / tau),
  *  rescaled per part to median 0 and +-1 at the 90th and 10th percentiles. */
 export function layerHeatCurve(sliced: SlicedPrint, imp: Imperfections): Float32Array {
-  throw new Error("not implemented");
+  const n = sliced.layerTimeS.length;
+  const h = new Float64Array(n).fill(NaN);
+  for (let k = 0; k < n; k++) {
+    const t = sliced.layerTimeS[k];
+    if (t > 0) h[k] = 1 / (1 + (t * (1 + imp.fanCooling * (sliced.layerFan[k] ?? 0))) / imp.tauS);
+  }
+  const ok = Array.from(h).filter((v) => !Number.isNaN(v)).sort((a, b) => a - b);
+  const out = new Float32Array(n);
+  if (ok.length === 0) return out;
+  const at = (q: number) => ok[Math.floor(q * (ok.length - 1))];
+  const med = at(0.5);
+  const lo = Math.max(med - at(0.1), 1e-6), hi = Math.max(at(0.9) - med, 1e-6);
+  for (let k = 0; k < n; k++) if (!Number.isNaN(h[k])) out[k] = h[k] >= med ? (h[k] - med) / hi : (h[k] - med) / lo;
+  return out;
 }
+
+// ---- backdrop ----------------------------------------------------------------
 
 /** The render.py sweep: floor from y = -4 to 0.45, a 0.6 m cove in 16 steps, wall at y = 1.05 up to z = 4, 8 m wide. */
 export function sweepMesh(): Pick<BackdropSection, "positions" | "normals" | "index"> {
-  throw new Error("not implemented");
+  const R = 0.6;
+  const profile: [number, number][] = [[-4, 0], [0.45, 0]];
+  for (let k = 1; k <= 16; k++) {
+    const a = (Math.PI / 2) * (k / 16);
+    profile.push([0.45 + R * Math.sin(a), R - R * Math.cos(a)]);
+  }
+  profile.push([0.45 + R, 4]);
+  const n = profile.length;
+  // Segment normals face up and towards the part: the tangent turned a quarter turn. Each vertex averages its neighbours.
+  const segment = (i: number): [number, number] => {
+    const dy = profile[i + 1][0] - profile[i][0], dz = profile[i + 1][1] - profile[i][1], len = Math.hypot(dy, dz);
+    return [-dz / len, dy / len];
+  };
+  const positions = new Float32Array(2 * n * 3);
+  const normals = new Float32Array(2 * n * 3);
+  for (let side = 0; side < 2; side++) {
+    for (let i = 0; i < n; i++) {
+      const [a, b] = [segment(Math.max(i - 1, 0)), segment(Math.min(i, n - 2))];
+      const ny = a[0] + b[0], nz = a[1] + b[1], len = Math.hypot(ny, nz);
+      const v = (side * n + i) * 3;
+      positions.set([side === 0 ? -4 : 4, profile[i][0], profile[i][1]], v);
+      normals.set([0, ny / len, nz / len], v);
+    }
+  }
+  const index = new Uint32Array((n - 1) * 6);
+  for (let i = 0; i < n - 1; i++) index.set([i, n + i, n + i + 1, i, n + i + 1, i + 1], i * 6);
+  return { positions, normals, index };
 }
 
-/** Width and height in pixels from the aspect and the long edge. */
-export function filmSize(aspect: { w: number; h: number }, longEdgePx: number): { width: number; height: number } {
-  throw new Error("not implemented");
+let sweepCache: ReturnType<typeof sweepMesh> | undefined;
+/** One sweep for every scene, so the backdrop section compares by reference. */
+function sharedSweep(): ReturnType<typeof sweepMesh> {
+  return (sweepCache ??= sweepMesh());
 }
 
-/** Camera distance so a freshly opened part fills the frame at the current focal length. */
-export function framePart(mesh: BeadMesh, cam: CameraSetup, aspect: { w: number; h: number }): Partial<CameraSetup> {
-  throw new Error("not implemented");
-}
+// ---- export ------------------------------------------------------------------
 
 /** Everything but the mesh buffers, for tools/blender/render_scene.py. Typed
  *  arrays are written next to it by the caller and referenced by name. */
 export function sceneToJson(scene: Scene): string {
-  throw new Error("not implemented");
+  const plain = (value: unknown, path: string): unknown => {
+    if (ArrayBuffer.isView(value)) {
+      const length = value instanceof DataView ? value.byteLength : Reflect.get(value, "length");
+      return { buffer: path, length };
+    }
+    if (Array.isArray(value)) return value.map((v, i) => plain(v, `${path}[${i}]`));
+    if (typeof value === "object" && value !== null) {
+      return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, plain(v, path === "" ? k : `${path}.${k}`)]));
+    }
+    return value;
+  };
+  return JSON.stringify(plain(scene, ""), null, 2);
 }
 
 export type { Metres, Studio };
