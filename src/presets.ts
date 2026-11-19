@@ -5,17 +5,27 @@
  * viewer live here and nowhere else. Adding a preset is one entry; panels,
  * preview and Cycles all derive from it (design-red-flags: hand-synced list).
  * Pure data in document units; no behaviour beyond lookup.
+ *
+ * Runtime imports come from units.ts, not document.ts: document.ts imports
+ * this file for its defaults, and a cycle would leave `deg` uninitialised
+ * when this module loads first.
  */
-import { deg, kelvin, m, watts, type FilamentPresetId, type FilamentRecipe, type LookId, type Studio } from "./document";
+import type {
+  AreaLight, FilamentPresetId, FilamentRecipe, LightColor, LookId, ScrimLight, Studio,
+} from "./document";
+import { deg, m, watts } from "./units";
 
 /** Old rigs were drafted in "room watts" (render.py POWER = 1/40). The
  *  transcription below applies that scale ONCE, here, so every later
  *  consumer sees true watts and the constant can die. */
 const roomW = (w: number) => watts(w / 40);
 
-// Numbers for petg/pla-matte are the calibrated FINISHES from the old twin
-// (gloss incl. aniso 0.25 from render.py). pla-basic / pla-silk are starting
-// estimates to calibrate against Cycles stills — marked, not invented-quietly.
+// petg-basic and pla-matte carry the calibrated FINISHES numbers from the old
+// twin (index.html:114, render.py:23). The recipe albedo is the sRGB hex that
+// linearises to the old albedo: #1c1c1c is 0.0116 (old 0.012), #2a2a2a is
+// 0.0232 (old 0.022). Anisotropy is render.py's: 0.25 gloss, 0.10 matte.
+// pla-basic and pla-silk are UNCALIBRATED ESTIMATES carried over from the
+// type sketch. No Cycles still has been matched to either.
 export const FILAMENT_PRESETS: Record<FilamentPresetId, { label: string; recipe: FilamentRecipe }> = {
   "petg-basic": { label: "PETG Basic", recipe: {
     colorHex: "#1c1c1c", ior: 1.57, anisotropy: 0.25, vary: 1.0,
@@ -23,39 +33,104 @@ export const FILAMENT_PRESETS: Record<FilamentPresetId, { label: string; recipe:
   "pla-matte": { label: "PLA Matte", recipe: {
     colorHex: "#2a2a2a", ior: 1.46, anisotropy: 0.10, vary: 0.5,
     roughness: { 0: 0.74, 1: 0.62, 2: 0.80, 3: 0.85 }, peiRough: 0.66, peiFarRough: 0.74 } },
-  "pla-basic": { label: "PLA Basic", recipe: { // TODO calibrate vs Cycles
+  "pla-basic": { label: "PLA Basic", recipe: { // uncalibrated estimate
     colorHex: "#1c1c1c", ior: 1.46, anisotropy: 0.15, vary: 0.8,
     roughness: { 0: 0.38, 1: 0.34, 2: 0.48, 3: 0.58 }, peiRough: 0.48, peiFarRough: 0.60 } },
-  "pla-silk": { label: "PLA Silk", recipe: { // TODO calibrate vs Cycles
+  "pla-silk": { label: "PLA Silk", recipe: { // uncalibrated estimate
     colorHex: "#3a3a40", ior: 1.46, anisotropy: 0.45, vary: 0.9,
     roughness: { 0: 0.16, 1: 0.20, 2: 0.30, 3: 0.44 }, peiRough: 0.40, peiFarRough: 0.52 } },
 };
 
-/** Studio aim heights etc. are solved in scene.ts; a look is only lights +
- *  backdrop + world. Positions were Cartesian in the old RIGS; here they are
- *  transcribed to azimuth/elevation/distance about C=(0,0,0.09) once. */
-// TODO: transcribe all five rigs; "studio" shown as the pattern.
-const TRANSCRIBE: Studio = null as never; // placeholder until each rig lands
+const white: LightColor = { kind: "rgb", rgb: [1, 1, 1] };
+
+function area(
+  id: string, name: string, azimuth: number, elevation: number, distance: number,
+  width: number, height: number, roomWatts: number, opts: { spread?: number; partOnly?: boolean } = {},
+): AreaLight {
+  return {
+    kind: "area", id, name, on: true, partOnly: opts.partOnly ?? false,
+    azimuth: deg(azimuth), elevation: deg(elevation), distance: m(distance), shape: "rect",
+    width: m(width), height: m(height), color: white,
+    powerW: roomW(roomWatts), spreadDeg: deg(opts.spread ?? 180),
+  };
+}
+
+function scrim(
+  id: string, name: string, azimuth: number, elevation: number, distance: number,
+  width: number, height: number, top: number, bottom: number, partOnly = false,
+): ScrimLight {
+  return {
+    kind: "scrim", id, name, on: true, partOnly,
+    azimuth: deg(azimuth), elevation: deg(elevation), distance: m(distance), shape: "rect",
+    width: m(width), height: m(height), color: white, topRadiance: top, bottomRadiance: bottom,
+  };
+}
+
+const grey = (v: number) => [v, v, v] as const;
+
+/**
+ * A look is lights, backdrop and world. The old RIGS (index.html:426) placed
+ * each light at a Cartesian point aimed at C = (0, 0, 0.09). Here every light
+ * is the same point as azimuth, elevation and distance about C, rounded to
+ * 0.001 degree and 0.1 mm (under 0.1 mm of position error at 2.3 m). The
+ * "light" rig is the "studio" look. The `dark` rim strips and scrims are
+ * partOnly, as render.py links them to the part. Scrim and strip sizes,
+ * radiances and spreads are the old numbers unchanged.
+ */
 export const LOOK_PRESETS: Record<LookId, { label: string; studio: Studio }> = {
   studio: { label: "Studio", studio: {
-    backdrop: { color: [0.55, 0.55, 0.55], roughness: 0.55 },
+    backdrop: { color: grey(0.55), roughness: 0.55 },
     world: { hdrId: "studio_small_09_1k", strength: 0.25, rotationDeg: deg(30) },
     floorCards: null,
     lights: [
-      { kind: "area", id: "key-top", name: "Top softbox", on: true, partOnly: false,
-        azimuth: deg(180), elevation: deg(84), distance: m(0.92), shape: "rect",
-        width: m(1.2), height: m(0.9), color: { kind: "kelvin", kelvin: kelvin(6500) },
-        powerW: roomW(500), spreadDeg: deg(180) },
-      { kind: "scrim", id: "scrim-r", name: "Right gradient", on: true, partOnly: false,
-        azimuth: deg(69), elevation: deg(22), distance: m(0.97), shape: "rect",
-        width: m(1.4), height: m(1.8), color: { kind: "rgb", rgb: [1, 1, 1] },
-        topRadiance: 3.0, bottomRadiance: 0.15 },
-      // TODO: left strip 160, rim 160, front 120 (old `light` rig)
+      area("top", "Top softbox", 0, 83.729, 0.9155, 1.2, 0.9, 500),
+      scrim("right", "Right gradient", 110.63, 21.622, 0.977, 1.4, 1.8, 3.0, 0.15),
+      area("left", "Left strip", -71.565, 21.411, 0.8492, 0.3, 1.2, 160),
+      area("rim-left", "Left rim", -143.13, 25.641, 0.8319, 0.1, 1.2, 160),
+      area("front", "Front fill", 0, 11.81, 2.2476, 2.0, 0.8, 120),
     ] } },
-  dark:     { label: "Dark",     studio: TRANSCRIBE }, // rim strips + scrims partOnly:true
-  gradient: { label: "Gradient", studio: TRANSCRIBE }, // incl. floorCards {3.5, 0.05, -90}
-  rim:      { label: "Rim",      studio: TRANSCRIBE }, // incl. floorCards {0.8, 0, -90}
-  raking:   { label: "Raking",   studio: TRANSCRIBE },
+  dark: { label: "Dark", studio: {
+    backdrop: { color: grey(0.012), roughness: 0.32 },
+    world: { hdrId: "studio_small_09_1k", strength: 0.02, rotationDeg: deg(30) },
+    floorCards: null,
+    lights: [
+      area("top", "Top softbox", 180, 68.962, 0.975, 1.0, 0.6, 120, { spread: 60 }),
+      area("rim-left", "Left rim", -160.56, 16.09, 0.9381, 0.08, 1.0, 220, { spread: 40, partOnly: true }),
+      area("rim-right", "Right rim", 160.56, 16.09, 0.9381, 0.08, 1.0, 220, { spread: 40, partOnly: true }),
+      scrim("grad-right", "Right gradient", 110.63, 18.846, 0.9597, 1.4, 1.8, 3.5, 0.03, true),
+      scrim("grad-left", "Left gradient", -125.218, 19.086, 1.101, 1.2, 1.6, 2.0, 0.0, true),
+    ] } },
+  gradient: { label: "Gradient", studio: {
+    backdrop: { color: grey(0.35), roughness: 0.6 },
+    world: { hdrId: "studio_small_09_1k", strength: 0.03, rotationDeg: deg(30) },
+    floorCards: { keySide: 3.5, farSide: 0.05, azimuth: deg(-90) },
+    lights: [
+      area("top", "Top softbox", 0, 90, 1.01, 1.4, 1.4, 400),
+      scrim("left", "Left card", -90, 14.574, 1.0332, 2.0, 1.6, 6.0, 0.6),
+      scrim("front", "Front card", 0, 14.574, 1.0332, 2.0, 1.6, 2.0, 0.2),
+      scrim("right", "Right card", 90, 14.574, 1.0332, 2.0, 1.6, 0.35, 0.03),
+      scrim("back", "Back card", 180, 14.574, 1.0332, 2.0, 1.6, 3.0, 0.3),
+    ] } },
+  rim: { label: "Rim", studio: {
+    backdrop: { color: grey(0.02), roughness: 0.35 },
+    world: { hdrId: "studio_small_09_1k", strength: 0.01, rotationDeg: deg(30) },
+    floorCards: { keySide: 0.8, farSide: 0, azimuth: deg(-90) },
+    lights: [
+      area("top", "Back strip", 180, 63.687, 1.0152, 1.4, 0.3, 500),
+      area("rim-left", "Left rim", -143.746, 21.16, 0.9973, 0.1, 1.4, 270),
+      area("rim-right", "Right rim", 143.746, 21.16, 0.9973, 0.1, 1.4, 270),
+      scrim("left", "Left kicker", -90, 14.574, 1.0332, 0.8, 1.6, 1.8, 0.15),
+      scrim("right", "Right kicker", 90, 14.574, 1.0332, 0.8, 1.6, 0.9, 0.08),
+    ] } },
+  raking: { label: "Raking", studio: {
+    backdrop: { color: grey(0.35), roughness: 0.6 },
+    world: { hdrId: "studio_small_09_1k", strength: 0.12, rotationDeg: deg(120) },
+    floorCards: null,
+    lights: [
+      area("rake", "Raking strip", -93.18, 1.906, 0.9019, 0.15, 1.2, 260, { spread: 40 }),
+      area("top", "Top softbox", 0, 78.799, 1.0296, 1.0, 0.8, 200),
+      area("rim-right", "Right rim", 126.87, 22.457, 0.8115, 0.12, 1.2, 120),
+    ] } },
 };
 
 export const FOCAL_PRESETS_MM = [24, 35, 50, 85, 100, 135] as const;
