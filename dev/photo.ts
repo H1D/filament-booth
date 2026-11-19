@@ -16,6 +16,7 @@ interface RunResult {
   readonly firstPassMs: number | null;
   readonly totalMs: number;
   readonly abortedAtMs: number | null;
+  readonly abortedAtEpochMs: number | null;
   readonly settledAfterAbortMs: number | null;
   readonly mainThreadBlockMs: number;
   readonly maxTimerLagMs: number;
@@ -44,6 +45,8 @@ declare global {
 }
 
 const params = new URLSearchParams(location.search);
+// draw=0 keeps the page's own canvas work off the main thread, so timer lag measures the engine.
+const drawPasses = params.get("draw") !== "0";
 const num = (key: string, fallback: number) => Number(params.get(key) ?? fallback);
 const status = document.getElementById("status");
 const canvas = document.getElementById("preview");
@@ -93,6 +96,7 @@ async function main() {
     let passes = 0;
     let firstPassMs: number | null = null;
     let abortedAtMs: number | null = null;
+    let abortedAtEpochMs: number | null = null;
     let maxLag = 0;
     let tick = performance.now();
     const lag = setInterval(() => {
@@ -104,12 +108,13 @@ async function main() {
     const doAbort = () => {
       if (abortedAtMs !== null || !abort) return;
       abortedAtMs = performance.now() - start;
+      abortedAtEpochMs = Date.now();
       controller.abort(abort);
     };
     const promise = engine.render(scene, (frame) => {
       passes++;
       firstPassMs ??= performance.now() - start;
-      draw(frame);
+      if (drawPasses) draw(frame);
       if (abortAt === "sampling") doAbort();
     }, controller.signal);
     const mainThreadBlockMs = performance.now() - start;
@@ -121,14 +126,14 @@ async function main() {
       page.frame = frame;
       draw(frame);
       result = {
-        outcome: "done", samples: frame.samples, passes, firstPassMs, totalMs: performance.now() - start, abortedAtMs,
+        outcome: "done", samples: frame.samples, passes, firstPassMs, totalMs: performance.now() - start, abortedAtMs, abortedAtEpochMs,
         settledAfterAbortMs: abortedAtMs === null ? null : performance.now() - start - abortedAtMs,
         mainThreadBlockMs, maxTimerLagMs: maxLag, stats,
       };
     } catch (error) {
       result = {
         outcome: "rejected", error: String(error), samples: 0, passes, firstPassMs, totalMs: performance.now() - start,
-        abortedAtMs, settledAfterAbortMs: abortedAtMs === null ? null : performance.now() - start - abortedAtMs,
+        abortedAtMs, abortedAtEpochMs, settledAfterAbortMs: abortedAtMs === null ? null : performance.now() - start - abortedAtMs,
         mainThreadBlockMs, maxTimerLagMs: maxLag, stats,
       };
     }

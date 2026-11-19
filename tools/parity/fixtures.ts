@@ -291,7 +291,7 @@ export function fixture(name: FixtureName, o: FixtureOptions = {}): Scene {
         ...base,
         lights: {
           emitters: [
-            area("key", [0.6, 0.4], [0.5, -0.6, 0.6], 300, { spreadDeg: 60, shape: "ellipse", color: [1.05, 0.98, 0.9] }),
+            area("key", [0.6, 0.4], [0.5, -0.6, 0.6], 60, { spreadDeg: 60, shape: "ellipse", color: [1.05, 0.98, 0.9] }),
             area("rim_l", [0.08, 1.0], [-0.3, 0.85, 0.35], 220, { spreadDeg: 40, partOnly: true }),
             scrim("grad_r", [1.4, 1.8], [0.85, 0.32, 0.4], 3.5, 0.03, true),
           ],

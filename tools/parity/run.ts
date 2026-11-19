@@ -44,6 +44,7 @@ interface Run {
   readonly mainThreadBlockMs: number;
   readonly maxTimerLagMs: number;
   readonly settledAfterAbortMs: number;
+  readonly abortedAtEpochMs: number;
   readonly stats: Record<string, number>;
 }
 
@@ -53,7 +54,8 @@ function readRun(v: unknown): Run {
   return {
     outcome: String(r.outcome), error: String(r.error ?? ""), samples: num(r.samples), totalMs: num(r.totalMs),
     firstPassMs: num(r.firstPassMs), passes: num(r.passes), mainThreadBlockMs: num(r.mainThreadBlockMs),
-    maxTimerLagMs: num(r.maxTimerLagMs), settledAfterAbortMs: num(r.settledAfterAbortMs), stats,
+    maxTimerLagMs: num(r.maxTimerLagMs), settledAfterAbortMs: num(r.settledAfterAbortMs),
+    abortedAtEpochMs: num(r.abortedAtEpochMs), stats,
   };
 }
 
@@ -172,7 +174,7 @@ async function scale() {
   const vite = await startVite();
   const browser = await Browser.launch();
   try {
-    const page = await openPage(browser, `${vite.url}dev/photo.html?fixture=scale&width=${width}&height=${height}&samples=${samples}&repeat=2`, 2);
+    const page = await openPage(browser, `${vite.url}dev/photo.html?fixture=scale&width=${width}&height=${height}&samples=${samples}&repeat=2&draw=0`, 2);
     console.log(`scale: ${page.triangles} part triangles, fixture built in ${page.buildMs.toFixed(0)} ms, fits: ${page.fits}`);
     page.runs.forEach((r, i) => {
       const s = r.stats;
@@ -193,17 +195,29 @@ async function cancel() {
   try {
     for (const [name, at, label] of [["a", "sampling", "sampling"], ["scale", "4000", "BVH build"]] as const) {
       const browser = await Browser.launch();
-      let cpu = "";
-      const page = await openPage(browser, `${vite.url}dev/photo.html?fixture=${name}&samples=100000&abort=cancel&abortAt=${at}`, 1, async () => {
-        const c0 = browser.cpuSeconds();
-        await sleep(500);
-        const c1 = browser.cpuSeconds();
-        await sleep(500);
-        const c2 = browser.cpuSeconds();
-        cpu = `CPU after settling: ${((c1 - c0) / 0.5).toFixed(2)} cores in the first 0.5 s, ${((c2 - c1) / 0.5).toFixed(2)} in the next`;
-      });
+      // Chromium's CPU time sampled every 50 ms through the whole run, to see when the render
+      // threads really stop: the promise settling does not show it.
+      const trace: [number, number][] = [];
+      let sampling = true;
+      const sampler = (async () => {
+        while (sampling) {
+          trace.push([Date.now(), browser.cpuSeconds()]);
+          await sleep(50);
+        }
+      })();
+      const page = await openPage(browser, `${vite.url}dev/photo.html?fixture=${name}&samples=100000&abort=cancel&abortAt=${at}`, 1,
+        async () => {
+          await sleep(1500);
+        });
+      sampling = false;
+      await sampler;
       const r = page.runs[0];
-      console.log(`cancel during ${label}: ${r.outcome} (${r.error}), promise settled ${r.settledAfterAbortMs.toFixed(1)} ms after abort; ${cpu}`);
+      const cores = trace.slice(1).map(([t, c], i) => [t, (c - trace[i][1]) / ((t - trace[i][0]) / 1000)] as const);
+      const before = cores.filter(([t]) => t <= r.abortedAtEpochMs).slice(-4).map(([, c]) => c.toFixed(1));
+      const stop = cores.find(([t, c]) => t > r.abortedAtEpochMs && c < 1);
+      console.log(`cancel during ${label}: ${r.outcome} (${r.error}), promise settled ${r.settledAfterAbortMs.toFixed(1)} ms after abort; `
+        + `cores busy in the 200 ms before abort: ${before.join(" ")}; under one core ${stop ? (stop[0] - r.abortedAtEpochMs).toFixed(0) : "never"} ms after abort `
+        + `(50 ms samples)`);
       await browser.close();
     }
   } finally {
