@@ -3,6 +3,7 @@
  * PHOTO would, shows the passes as they arrive, and leaves results on window.__photo for
  * tools/parity/run.ts to read over the DevTools protocol.
  */
+import { m } from "../src/document";
 import type { RadianceFrame } from "../src/film";
 import { cyclesEngine } from "../src/photo/cycles";
 import type { RenderStats } from "../src/photo/cycles-worker";
@@ -85,7 +86,35 @@ async function build(name: string): Promise<{ scene: Scene; digest: string }> {
     return { scene, digest: await digestOf(scene) };
   }
   if (!isFixtureName(name)) throw new Error(`no fixture ${name}`);
-  return { scene: fixture(name, options), digest: "" };
+  return { scene: variant(fixture(name, options)), digest: "" };
+}
+
+/**
+ * Settings changed one at a time, to find what a render's time is made of:
+ * adaptive (threshold, 0 is off), bounces (every bounce limit), filter (pixel
+ * filter width), world (strength), mottle (noise amplitude), plate (0 drops the textured
+ * plate's Voronoi and noise bump from the shader), aniso (anisotropy), zoom
+ * (camera distance from its target, as a factor).
+ */
+function variant(scene: Scene): Scene {
+  const has = (key: string) => params.has(key);
+  const film = { ...scene.film };
+  if (has("adaptive")) film.adaptiveThreshold = num("adaptive", 0);
+  if (has("bounces")) {
+    const b = num("bounces", 8);
+    Object.assign(film, { maxBounces: b, diffuseBounces: b, glossyBounces: b, transmissionBounces: b });
+  }
+  if (has("filter")) film.filterWidthPx = num("filter", 1.5);
+  const world = has("world") ? { ...scene.world, strength: num("world", 1) } : scene.world;
+  let part = scene.part;
+  if (part && has("mottle")) part = { ...part, material: { ...part.material, mottleAmp: num("mottle", 0) } };
+  if (part && has("plate")) part = { ...part, material: { ...part.material, plate: { ...part.material.plate, textured: num("plate", 1) !== 0 } } };
+  if (part && has("aniso")) part = { ...part, material: { ...part.material, anisotropy: num("aniso", 0) } };
+  const k = num("zoom", 1), { position: p, target: t } = scene.camera;
+  const camera = has("zoom")
+    ? { ...scene.camera, position: [m(t[0] + (p[0] - t[0]) * k), m(t[1] + (p[1] - t[1]) * k), m(t[2] + (p[2] - t[2]) * k)] as const, focusDistanceM: scene.camera.focusDistanceM * k }
+    : scene.camera;
+  return { ...scene, film, world, part, camera };
 }
 
 async function main() {

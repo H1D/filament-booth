@@ -10,8 +10,9 @@
  *       e, f and g go defaultDocument() and two looks through compileScene on a real bead mesh
  *       (--gcode, else $BOOTH_REF/bsch04/sliced/plate_1.gcode, else tests/fixtures/mini.gcode).
  *       Node and the page each compile them and the run stops if their scene files differ.
- *   bun tools/parity/run.ts --scale [--samples 64] [--width 1280] [--height 720]
- *       The 10-million-triangle fixture twice in one page: build, render, heap.
+ *   bun tools/parity/run.ts --scale [--samples 64] [--width 1280] [--height 720] [--repeat 2] [--query k=v&...]
+ *       The 10-million-triangle fixture twice in one page: build, render, heap. --query changes one
+ *       setting for a timing study: adaptive, bounces, filter, world, mottle, plate, aniso, zoom (see dev/photo.ts).
  *   bun tools/parity/run.ts --cancel
  *       Cancel during sampling and during the BVH build, with Chromium's CPU use afterwards.
  *
@@ -208,8 +209,10 @@ async function scale() {
   const vite = await startVite();
   const browser = await Browser.launch();
   try {
-    const page = await openPage(browser, `${vite.url}dev/photo.html?fixture=scale&width=${width}&height=${height}&samples=${samples}&repeat=2&draw=0`, 2);
-    console.log(`scale: ${page.triangles} part triangles, fixture built in ${page.buildMs.toFixed(0)} ms, fits: ${page.fits}`);
+    const extra = opt("--query", "");
+    const repeat = Number(opt("--repeat", "2"));
+    const page = await openPage(browser, `${vite.url}dev/photo.html?fixture=scale&width=${width}&height=${height}&samples=${samples}&repeat=${repeat}&draw=0${extra ? `&${extra}` : ""}`, repeat);
+    console.log(`scale${extra ? ` (${extra})` : ""}: ${page.triangles} part triangles, fixture built in ${page.buildMs.toFixed(0)} ms, fits: ${page.fits}`);
     page.runs.forEach((r, i) => {
       const s = r.stats;
       console.log(`run ${i + 1}: ${r.outcome} ${r.error} ${r.samples} samples, total ${(r.totalMs / 1000).toFixed(1)} s, `
