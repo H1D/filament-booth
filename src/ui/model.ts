@@ -199,6 +199,19 @@ export function sectionState(id: SectionId, ctx: SectionContext): SectionState {
   }
 }
 
+/**
+ * A length of time in plain words: "30 seconds", "5 minutes", "1 hour". With
+ * `attributive` it reads before a noun: "the 5 minute limit".
+ */
+export function formatDuration(seconds: number, attributive = false): string {
+  const s = Math.round(seconds);
+  const unit = (n: number, name: string) => `${n} ${name}${n === 1 || attributive ? "" : "s"}`;
+  if (s < 60) return unit(s, "second");
+  if (s % 3600 === 0) return unit(s / 3600, "hour");
+  if (s % 60 === 0) return unit(s / 60, "minute");
+  return `${Math.floor(s / 60)} min ${s % 60} s`;
+}
+
 export function formatEta(seconds: number): string {
   const s = Math.max(1, Math.round(seconds));
   if (s < 60) return `about ${s} s left`;

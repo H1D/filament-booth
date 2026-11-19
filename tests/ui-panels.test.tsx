@@ -187,6 +187,45 @@ describe("the output section", () => {
     expect(container.querySelector(".readout.size")?.textContent).toContain("800 by 1000 px");
   });
 
+  test("the time limit offers No limit, 30 seconds and 1 to 60 minutes, and starts at 5 minutes", () => {
+    const { booth } = boothWith();
+    const { container } = mount(booth, <OutputPanel />);
+    const limit = select(container, "Time limit");
+    expect(optionLabels(limit)).toEqual(["No limit", "30 seconds", "1 minute", "2 minutes", "5 minutes", "10 minutes", "20 minutes", "30 minutes", "1 hour"]);
+    expect(limit.value).toBe("300");
+  });
+
+  test("choosing a time limit edits the document, and No limit stores 0", () => {
+    const { booth } = boothWith();
+    const { container } = mount(booth, <OutputPanel />);
+    const limit = select(container, "Time limit");
+    act(() => { limit.value = "1200"; limit.dispatchEvent(new Event("change", { bubbles: true })); });
+    expect(booth.doc.output.timeLimitS).toBe(1200);
+    expect(booth.scene.film.timeLimitS).toBe(1200);
+    act(() => { limit.value = "0"; limit.dispatchEvent(new Event("change", { bubbles: true })); });
+    expect(booth.doc.output.timeLimitS).toBe(0);
+  });
+
+  test("a limit that is not on offer, from an imported setup, still shows and is not changed", () => {
+    const { booth } = boothWith();
+    booth.update((d) => { d.output.timeLimitS = 90; });
+    const { container } = mount(booth, <OutputPanel />);
+    const limit = select(container, "Time limit");
+    expect(limit.value).toBe("90");
+    expect(optionLabels(limit)).toContain("1 min 30 s");
+    expect(booth.doc.output.timeLimitS).toBe(90);
+  });
+
+  test("the section is marked when only the time limit changed, and its reset brings back 5 minutes", () => {
+    const { booth } = boothWith();
+    booth.update((d) => { d.output.timeLimitS = 0; });
+    const { container } = mount(booth, <Section id="output" open><OutputPanel /></Section>);
+    const reset = container.querySelector<HTMLButtonElement>('button[aria-label="Reset Output"]');
+    expect(reset).not.toBeNull();
+    act(() => { reset?.click(); });
+    expect(booth.doc.output.timeLimitS).toBe(300);
+  });
+
   test("offers no denoise switch, because no denoiser exists yet", () => {
     const { booth } = boothWith();
     const { container } = mount(booth, <OutputPanel />);

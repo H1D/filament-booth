@@ -2,7 +2,7 @@ import { describe, expect, test } from "vitest";
 import { deg, m, mm, watts } from "../src/document";
 import { applyFilamentPreset, applyLook, patchLight, setFocal } from "../src/edits";
 import type { BeadMesh, LoadedPrint, PrintSource, PrintState, SlicedPrint } from "../src/print";
-import { DEFAULTS, SECTION_IDS, isSame, lookLight, printSource, sectionState, slicingEditable, sourceName, stageLabel, titleCase, type SectionId } from "../src/ui/model";
+import { DEFAULTS, SECTION_IDS, formatDuration, isSame, lookLight, printSource, sectionState, slicingEditable, sourceName, stageLabel, titleCase, type SectionId } from "../src/ui/model";
 import { boothWith } from "./ui-fixtures";
 
 const stl: PrintSource = { kind: "stl", file: new File([], "bracket.stl"), fileHash: "x" };
@@ -42,6 +42,7 @@ describe("section state", () => {
     ["camera", (b) => { b.update((d) => { d.camera.fStop = 4; }); }],
     ["pose", (b) => { b.update((d) => { d.pose.turntableDeg = deg(30); }); }],
     ["output", (b) => { b.update((d) => { d.output.samples = 1024; }); }],
+    ["output", (b) => { b.update((d) => { d.output.timeLimitS = 0; }); }],
   ])("%s is marked after an edit and its reset restores it", (id, edit) => {
     const { booth } = boothWith();
     edit(booth);
@@ -170,5 +171,17 @@ describe("small helpers", () => {
   test("titleCase turns an id into a label", () => {
     expect(titleCase("monotonic-line")).toBe("Monotonic line");
     expect(titleCase("medium-high-contrast")).toBe("Medium high contrast");
+  });
+});
+
+describe("formatDuration", () => {
+  test("names whole seconds, minutes and hours, and breaks anything else into minutes and seconds", () => {
+    expect([1, 30, 60, 120, 300, 3600, 7200, 5400].map((s) => formatDuration(s))).toEqual(
+      ["1 second", "30 seconds", "1 minute", "2 minutes", "5 minutes", "1 hour", "2 hours", "90 minutes"]);
+    expect(formatDuration(90)).toBe("1 min 30 s");
+  });
+
+  test("reads before a noun without a plural", () => {
+    expect([30, 60, 300, 3600].map((s) => formatDuration(s, true))).toEqual(["30 second", "1 minute", "5 minute", "1 hour"]);
   });
 });

@@ -1,9 +1,9 @@
 import { useEffect, useRef } from "react";
-import type { Photo } from "../photo/photo";
+import type { Photo, StoppedBy } from "../photo/photo";
 import { downloadAs } from "./download";
 import { useHost, usePhotoSession } from "./hooks";
 import { Icon } from "./icons";
-import { formatEta } from "./model";
+import { formatDuration, formatEta } from "./model";
 import type { LiveProgress, Shot } from "./photo-session";
 
 const ENGINE_NAMES = { cycles: "Cycles", raster: "Raster" } as const satisfies Record<Photo["engine"], string>;
@@ -99,14 +99,22 @@ export function PhotoCard() {
   );
 }
 
+const samplesText = ({ samples, targetSamples }: Photo): string =>
+  samples < targetSamples ? `${samples} of ${targetSamples} samples` : `${samples} samples`;
+
+function stopText(stoppedBy: Exclude<StoppedBy, { kind: "samples" }>): string {
+  return stoppedBy.kind === "time-limit" ? `Stopped at the ${formatDuration(stoppedBy.limitS, true)} limit.` : "Finished early.";
+}
+
 function Result({ shot }: { shot: Shot }) {
   const { photo } = shot;
   return (
     <div className="photo-body">
       <img className="photo-frame" src={shot.url} alt={`Finished photo, ${photo.fileName}`} width={photo.width} height={photo.height} />
       <p className="readout">
-        {photo.width} by {photo.height} px, {photo.samples} samples, {ENGINE_NAMES[photo.engine]}
+        {photo.width} by {photo.height} px, {samplesText(photo)}, {ENGINE_NAMES[photo.engine]}
       </p>
+      {photo.stoppedBy.kind === "samples" ? null : <p className="readout" data-stopped-by={photo.stoppedBy.kind}>{stopText(photo.stoppedBy)}</p>}
       <div className="actions">
         <button type="button" className="btn primary" onClick={() => { downloadAs(photo.fileName, photo.png); }}>
           <Icon name="save" />Save
