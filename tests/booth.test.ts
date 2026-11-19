@@ -232,7 +232,7 @@ describe("update", () => {
     const before = booth.doc;
     const sceneBefore = booth.scene;
     booth.update(() => {});
-    booth.update((d) => { d.camera.fStop = d.camera.fStop; });
+    booth.update((d) => { d.camera.fStop = booth.doc.camera.fStop; });
     booth.update((d) => { d.camera = { ...d.camera }; d.studio.lights = d.studio.lights.map((l) => ({ ...l })); });
     expect(notified).not.toHaveBeenCalled();
     expect(booth.doc).toBe(before);
