@@ -111,6 +111,8 @@ const scenarios = {
     log("open", await open(0));
     log("stats", await stats());
     log("shot", { path: await shot("smoke", false) });
+    await page.waitForTimeout(1500);
+    log("idle", { fpsAfterSettling: (await stats()).fps, status: (await stats()).status });
   },
 
   async looks() {
