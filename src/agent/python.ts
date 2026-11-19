@@ -173,13 +173,13 @@ export class PythonRuntime {
     };
     this.#job = job;
     const live = (this.#live ??= this.#boot());
-    try {
-      await live.ready;
-    } catch (e) {
-      job.finish(crashed(`Python did not start: ${e instanceof Error ? e.message : String(e)}`));
-      return outcome;
-    }
-    if (this.#job === job) live.worker.postMessage({ run: code } satisfies ToWorker);
+    // A cancel while Python loads terminates this worker, whose `ready` then never settles, so the wait also ends with the outcome.
+    const bootFailure = await Promise.race([
+      live.ready.then(() => null, (e: unknown) => (e instanceof Error ? e.message : String(e))),
+      outcome.then(() => null),
+    ]);
+    if (bootFailure !== null) job.finish(crashed(`Python did not start: ${bootFailure}`));
+    else if (this.#job === job) live.worker.postMessage({ run: code } satisfies ToWorker);
     return outcome;
   }
 
