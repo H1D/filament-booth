@@ -14,7 +14,7 @@
  * emitted in Blender Z-up metres — the app frame. The single Z→Y swap for
  * three.js lives in viewport.ts; Cycles consumes the mesh as-is.
  */
-import type { BedType, Imperfections, Mm, SliceSettings } from "./document";
+import type { BedType, Mm, SliceSettings } from "./document";
 
 // ---- source: the editable/frozen distinction is a type, not a flag ---------
 
@@ -66,10 +66,12 @@ export const BEAD_WORD = {
 } as const satisfies Record<string, WordField>;
 export const SPEED_STEP_MMS = 2;
 export function packBeadWord(feature: number, layer: number, speedQ: number): number {
-  throw new Error("not implemented");
+  return feature * BEAD_WORD.feature.scale
+    + Math.min(layer, BEAD_WORD.layer.size - 1) * BEAD_WORD.layer.scale
+    + Math.min(speedQ, BEAD_WORD.speed.size - 1) * BEAD_WORD.speed.scale;
 }
 export function unpackBeadWord(word: number, field: WordField): number {
-  throw new Error("not implemented");
+  return Math.floor(word / field.scale) % field.size;
 }
 
 /**
@@ -91,14 +93,6 @@ export interface BeadMesh {
 }
 /** Plate face ⇔ position.z ≤ PLATE_EPS — the only spelling of that test. */
 export const PLATE_EPS = 5e-6;
-
-/** Layer warmth curve from timing + imperfection settings. ONE pure owner:
- *  preview uploads it as a small data texture indexed by `layer`; the photo
- *  compiler expands it per-vertex for Cycles. Median 0, ±1 at p10/p90. */
-export function layerHeatCurve(s: SlicedPrint, imp: Imperfections): Float32Array {
-  throw new Error("not implemented");
-  // TODO: h[k] = 1/(1 + t(1+fanCooling·fan)/tau); rescale per-part (old applyImperfections)
-}
 
 // ---- worker protocol (wire types stay in this file; callers see domain) ----
 

@@ -14,7 +14,7 @@
  * - This file is pure: no three.js, no DOM, no workers. It runs in Node.
  */
 import type {
-  AgxLook, BoothDocument, CameraSetup, FilamentChoice, Metres, Pose, Rgb,
+  AgxLook, BoothDocument, CameraSetup, FilamentChoice, Imperfections, Metres, Pose, Rgb,
   Studio, StudioLight, Vec3,
 } from "./document";
 import type { BeadMesh, LoadedPrint, SlicedPrint } from "./print";
@@ -241,10 +241,16 @@ export function kelvinToRgb(kelvin: number): Rgb {
 export function resolveMaterial(f: FilamentChoice, mesh: BeadMesh, sliced: SlicedPrint): BeadMaterial {
   throw new Error("not implemented");
   // TODO: sRGB hex -> linear. Gloss curve per feature. Layer sheen from a seeded
-  //       random per layer (amplitude 0.05 * vary). Heat from print.layerHeatCurve,
+  //       random per layer (amplitude 0.05 * vary). Heat from layerHeatCurve,
   //       heat gloss -0.0625 per unit, speed gain 0.0875 * speedGloss, flatten
   //       1 - softLines * 0.21 * clamp(heat, 0, 1). Mottle 300 per metre, 0.03 * vary.
   //       Bed: auto -> the file's bed -> textured. Grain 1000 / 0.17 per metre.
+}
+
+/** Per-layer warmth from print timing: h = 1 / (1 + t * (1 + fanCooling * fan) / tau),
+ *  rescaled per part to median 0 and +-1 at the 90th and 10th percentiles. */
+export function layerHeatCurve(sliced: SlicedPrint, imp: Imperfections): Float32Array {
+  throw new Error("not implemented");
 }
 
 /** The render.py sweep: floor from y = -4 to 0.45, a 0.6 m cove in 16 steps, wall at y = 1.05 up to z = 4, 8 m wide. */
