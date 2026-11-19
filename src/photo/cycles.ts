@@ -3,8 +3,8 @@
  * WebAssembly from cycles/) renders in a worker; this side only posts the scene, forwards
  * passes and turns aborts into finish or cancel.
  *
- * Each render gets a fresh worker, terminated when the render settles. Cancel terminates it at
- * once, whatever Cycles is doing, and the browser reclaims the whole heap.
+ * Each render gets a fresh worker, terminated when the render settles, so the browser reclaims
+ * the whole heap. Cancel rejects at once; the worker stops Cycles and is then terminated.
  */
 import type { RadianceFrame } from "../film";
 import type { Scene } from "../scene";
@@ -14,6 +14,8 @@ import type { PhotoEngine } from "./photo";
 import type { RenderRequest, RenderStats, WorkerReply } from "./cycles-worker";
 
 const BASE = import.meta.env.BASE_URL;
+/** A worker that has not confirmed a cancel by then is terminated anyway. */
+const CANCEL_GRACE_MS = 3000;
 
 export interface CyclesEngineOptions {
   /** Called once per finished render, for tooling. */
@@ -51,9 +53,10 @@ function render(
       width, height, samples: p.samples, rgba: p.rgba, albedo: p.albedo ?? undefined, normal: p.normal ?? undefined,
     });
     const worker = new Worker(new URL("./cycles-worker.ts", import.meta.url), { type: "module", name: "cycles" });
+    let settled = false;
     const settle = () => {
+      settled = true;
       signal.removeEventListener("abort", onAbort);
-      worker.terminate();
     };
     const onAbort = () => {
       if (signal.reason === "finish") {
@@ -61,23 +64,34 @@ function render(
         return;
       }
       settle();
+      worker.postMessage({ type: "cancel" });
+      setTimeout(() => worker.terminate(), CANCEL_GRACE_MS);
       reject(signal.reason);
     };
     signal.addEventListener("abort", onAbort);
     worker.onmessage = (event: MessageEvent<WorkerReply>) => {
       const reply = event.data;
-      if (reply.type === "pass") {
-        onPass(toFrame(reply.passes), Math.min(1, reply.passes.samples / samples));
-      } else if (reply.type === "done") {
-        settle();
-        options.onStats?.(reply.stats);
-        resolve(toFrame(reply.passes));
-      } else {
-        settle();
-        reject(new Error(`Cycles: ${reply.message}`));
+      if (reply.type !== "pass") worker.terminate();
+      if (settled) return;
+      switch (reply.type) {
+        case "pass":
+          onPass(toFrame(reply.passes), Math.min(1, reply.passes.samples / samples));
+          break;
+        case "done":
+          settle();
+          options.onStats?.(reply.stats);
+          resolve(toFrame(reply.passes));
+          break;
+        case "failed":
+        case "cancelled":
+          settle();
+          reject(new Error(`Cycles: ${reply.type === "failed" ? reply.message : "cancelled"}`));
+          break;
       }
     };
     worker.onerror = (event) => {
+      worker.terminate();
+      if (settled) return;
       settle();
       reject(new Error(`Cycles worker: ${event.message}`));
     };

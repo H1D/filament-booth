@@ -1,10 +1,14 @@
 /**
  * cycles-worker.ts: hosts the Cycles module for one render, then the engine terminates it.
  * A fresh worker per render returns the whole wasm heap to the browser afterwards (a wasm heap
- * never shrinks) and makes cancel immediate in every phase, BVH build included.
+ * never shrinks).
  *
- * Protocol: the engine posts one RenderRequest, may post "finish", and receives passes as they
- * arrive and then exactly one "done" or "failed".
+ * Protocol: the engine posts one RenderRequest, may post "finish" or "cancel", and receives
+ * passes as they arrive and then exactly one "done", "failed" or "cancelled".
+ *
+ * Cancel stops Cycles here before the worker is terminated. Terminating alone leaves the render
+ * threads running: they are nested workers busy in wasm, and Chromium only stops those by force
+ * two seconds after their parent goes (measured: 16 cores busy for 2.2 to 2.5 s).
  */
 import type { Scene } from "../scene";
 import { decodeRgbe, loadCycles, readPasses, RenderState, uploadScene, type CyclesModule, type Passes } from "./cycles-upload";
@@ -16,7 +20,7 @@ export interface RenderRequest {
   readonly hdrUrl: string;
   readonly poolSize: number;
 }
-export type ControlMessage = RenderRequest | { readonly type: "finish" };
+export type ControlMessage = RenderRequest | { readonly type: "finish" } | { readonly type: "cancel" };
 
 export interface RenderStats {
   readonly syncMs: number; // start to first sample: scene upload to device, BVH build
@@ -29,11 +33,13 @@ export interface RenderStats {
 export type WorkerReply =
   | { readonly type: "pass"; readonly passes: Passes }
   | { readonly type: "done"; readonly passes: Passes; readonly stats: RenderStats }
-  | { readonly type: "failed"; readonly message: string };
+  | { readonly type: "failed"; readonly message: string }
+  | { readonly type: "cancelled" };
 
 const POLL_MS = 50;
 
 let finishRequested = false;
+let cancelRequested = false;
 
 function post(reply: WorkerReply): void {
   const { passes } = "passes" in reply ? reply : { passes: null };
@@ -54,11 +60,21 @@ function emptyPasses(scene: Scene): Passes {
 async function render(request: RenderRequest): Promise<void> {
   const { scene } = request;
   const [M, world] = await Promise.all([loadCycles(request.moduleUrl, request.poolSize), fetchWorld(request.hdrUrl)]);
+  if (cancelRequested) {
+    post({ type: "cancelled" });
+    return;
+  }
   uploadScene(M, scene, world);
   if (M._cb_render_start() < 0) throw new Error(M.UTF8ToString(M._cb_error()));
   let version = 0;
   for (;;) {
     await new Promise((resolve) => setTimeout(resolve, POLL_MS));
+    if (cancelRequested) {
+      M._cb_cancel();
+      M._cb_session_free();
+      post({ type: "cancelled" });
+      return;
+    }
     if (finishRequested) M._cb_finish();
     const state = M._cb_render_state();
     if (state === RenderState.failed) throw new Error(M.UTF8ToString(M._cb_error()));
@@ -93,6 +109,10 @@ self.onmessage = (event: MessageEvent<ControlMessage>) => {
   const message = event.data;
   if (message.type === "finish") {
     finishRequested = true;
+    return;
+  }
+  if (message.type === "cancel") {
+    cancelRequested = true;
     return;
   }
   render(message).catch((error: unknown) => post({ type: "failed", message: error instanceof Error ? error.message : String(error) }));
