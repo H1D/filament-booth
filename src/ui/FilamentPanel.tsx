@@ -68,16 +68,18 @@ export function FilamentPanel() {
           </Group>
         </Scope>
 
-        <Group title="Build plate">
-          <Select label="Bed" value={f.bed} options={BEDS}
-            hint="The plate face of the print takes its texture from the bed."
-            onChange={(bed) => { setFilament((x) => { x.bed = bed; }); }} />
-          <Slider label="Plate roughness" mapping={ROUGHNESS} value={f.recipe.peiRough} defaultValue={preset?.peiRough}
-            onChange={(v) => { setRecipe((r) => { r.peiRough = v; }); }} />
-          <Slider label="Plate far roughness" mapping={ROUGHNESS} value={f.recipe.peiFarRough} defaultValue={preset?.peiFarRough}
-            hint="The plate face's roughness at grazing angles."
-            onChange={(v) => { setRecipe((r) => { r.peiFarRough = v; }); }} />
-        </Group>
+        <Scope name="Plate">
+          <Group title="Build plate">
+            <Select label="Bed" value={f.bed} options={BEDS}
+              hint="The plate face of the print takes its texture from the bed."
+              onChange={(bed) => { setFilament((x) => { x.bed = bed; }); }} />
+            <Slider label="Roughness" mapping={ROUGHNESS} value={f.recipe.peiRough} defaultValue={preset?.peiRough}
+              onChange={(v) => { setRecipe((r) => { r.peiRough = v; }); }} />
+            <Slider label="Far roughness" mapping={ROUGHNESS} value={f.recipe.peiFarRough} defaultValue={preset?.peiFarRough}
+              hint="The plate face's roughness at grazing angles."
+              onChange={(v) => { setRecipe((r) => { r.peiFarRough = v; }); }} />
+          </Group>
+        </Scope>
 
         <Scope name="Imperfections">
           <Group title="Print imperfections">

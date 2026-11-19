@@ -12,6 +12,7 @@
  */
 import { createContext, use, useId, useState, type KeyboardEvent, type ReactNode } from "react";
 import type { Bounds } from "../document";
+import { Icon } from "./icons";
 
 // ---- scope ---------------------------------------------------------------------
 
@@ -137,8 +138,10 @@ export interface SliderProps {
 
 const NUMBER_JUNK = /[^0-9eE+\-.,]/g;
 
+/** NaN when there is no digit to read: Number("") is 0, and "abc" must not become a zero. */
 function parseTyped(text: string): number {
-  return Number(text.replace(NUMBER_JUNK, "").replace(",", "."));
+  const cleaned = text.replace(NUMBER_JUNK, "").replace(",", ".");
+  return /\d/.test(cleaned) ? Number(cleaned) : Number.NaN;
 }
 
 export function formatValue(value: number, digits: number): string {
@@ -330,7 +333,7 @@ export function Group({ title, children }: { title?: string; children: ReactNode
 export function Fold({ title, children, open }: { title: string; children: ReactNode; open?: boolean }) {
   return (
     <details className="fold" open={open}>
-      <summary>{title}</summary>
+      <summary><Icon name="chevron" />{title}</summary>
       <div className="fold-body">{children}</div>
     </details>
   );

@@ -190,8 +190,14 @@ ul { list-style: none; }
 .facts dd { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }
 
 .fold { border: 1px solid var(--line-soft); border-radius: var(--radius); }
-.fold > summary { padding: 0.4rem 0.6rem; cursor: pointer; color: var(--text-dim); }
+.fold > summary {
+  display: flex; align-items: center; gap: 0.5rem; padding: 0.4rem 0.6rem;
+  cursor: pointer; list-style: none; color: var(--text-dim);
+}
+.fold > summary::-webkit-details-marker { display: none; }
 .fold > summary:hover { color: var(--text); }
+.fold > summary .icon { color: var(--text-faint); transition: rotate 160ms var(--ease); }
+.fold[open] > summary .icon { rotate: 90deg; }
 .fold-body { display: grid; gap: 0.5rem; padding: 0.25rem 0.6rem 0.75rem; }
 
 /* ---- controls --------------------------------------------------------------------- */
