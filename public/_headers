@@ -1,0 +1,5 @@
+# Cloudflare Pages headers. The slicer and Cycles use wasm threads (SharedArrayBuffer),
+# which need cross-origin isolation, the same headers vite.config.ts sends in dev.
+/*
+  Cross-Origin-Opener-Policy: same-origin
+  Cross-Origin-Embedder-Policy: require-corp
