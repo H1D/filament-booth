@@ -59,12 +59,13 @@ computer.
 
 3. Running the booth from this checkout instead (`bun install && bun run dev`, then
    <http://localhost:5173>)? The command the page shows works there too. To run the bridge from
-   source, register `bun /path/to/filament-booth/tools/agent/bridge.ts` instead. Without
+   source, register `bun /path/to/filament-booth/tools/agent/bridge.ts` instead, also with `--scope user`. Without
    `--token` it keeps its own token in `~/.config/filament-booth/bridge.json`, and
    `bun tools/agent/bridge.ts --pair` prints a link that gives that token to the page.
 
 4. Turn on **Allow a local agent to control this tab**. The status line reads "Starting Python…",
-   then "Waiting for the bridge on port 47615", then "Connected". While the switch is on, an
+   then "Waiting for the bridge on port 47615", then "Connected" once the agent first uses a booth
+   tool: the bridge takes the port then. While the switch is on, an
    **Agent** badge shows in the top bar. Its popover has **Stop script** and **Turn off agent
    control**.
 

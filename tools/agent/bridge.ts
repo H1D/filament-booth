@@ -15,7 +15,7 @@
  *   --allow <dir>                        another folder the tab may read and write (repeatable)
  *
  * Register it:  claude mcp add --scope user booth -- npx -y filament-booth --token <the token the tab shows>
- *          or:  claude mcp add booth -- bun <checkout>/tools/agent/bridge.ts
+ *          or:  claude mcp add --scope user booth -- bun <checkout>/tools/agent/bridge.ts
  *
  * The port is bound on the first tool call, so the sessions that never use the booth never hold it.
  *
@@ -204,7 +204,8 @@ export function createBridge(config: BridgeConfig): Bridge {
         `Close the other agent session, or give this bridge another port with --port <n> and pair the booth tab to that port.`;
     }
     if (needsTab && tabs.pageId === null && !(await tabs.waitForTab(tabWaitMs))) {
-      return `No booth tab is connected. Ask the user to open\n  ${pairingLink()}\nand turn on Setup → Agent → "Allow a local agent to control this tab".`;
+      return `No booth tab is connected. A tab whose switch is already on redials within a minute, so call again once. ` +
+        `If that also finds no tab, ask the user to open\n  ${pairingLink()}\nand turn on Setup → Agent → "Allow a local agent to control this tab".`;
     }
     return null;
   };

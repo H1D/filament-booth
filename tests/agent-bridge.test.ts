@@ -225,6 +225,16 @@ describe("binding the port", () => {
     expect(await second.listen()).toEqual({ ok: true, port: holder.port });
     expect(await second.listen()).toEqual({ ok: true, port: holder.port });
   });
+
+  test("tool calls that arrive together share one bind", async () => {
+    const holder = await rig();
+    const port = holder.port;
+    await holder.tabs.close();
+    const root = await folder();
+    const tabs = new TabServer({ port, token: TOKEN, origins: [ORIGIN], roots: [root], log: () => {} }, new Jobs({ tabs: { run: () => {}, cancel: () => {} } }));
+    cleanups.push(() => tabs.close());
+    expect(await Promise.all([tabs.listen(), tabs.listen(), tabs.listen()])).toEqual([1, 2, 3].map(() => ({ ok: true, port })));
+  });
 });
 
 describe("a script's life", () => {
