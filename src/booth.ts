@@ -189,7 +189,14 @@ export class Booth {
    */
   addPropMesh(name: string, stl: ArrayBuffer): string {
     const id = `mesh-${fnv1a(new Uint8Array(stl))}`;
-    if (!this.#propMeshes.has(id)) this.#propMeshes.set(id, { ...stlPropGeometry(triangleSoup(stl)), name });
+    if (this.#propMeshes.has(id)) return id;
+    this.#propMeshes.set(id, { ...stlPropGeometry(triangleSoup(stl)), name });
+    // Props the document already names (a saved setup) come back now, with no document change to trigger it.
+    if (this.#doc.props.some((p) => p.mesh === id)) {
+      this.#scene = compileScene(this.#doc, this.#shown, this.#rev + 1, this.#scene, this.#propMeshes);
+      this.#rev += 1;
+      this.#notify();
+    }
     return id;
   }
 

@@ -157,6 +157,45 @@ describe("the sessions of usage.md, without the blocking operators", () => {
   });
 });
 
+describe("props", () => {
+  test("a wall and a battery stand-in, written as Blender Python", () => {
+    const r = fresh();
+    const text = done(py_([
+      "import bpy, math",
+      "",
+      "bpy.ops.mesh.primitive_plane_add(size=0.8, location=(0, 0.06, 0.4), rotation=(math.radians(90), 0, 0))",
+      "wall = bpy.context.object",
+      "wall.name = 'Wall'",
+      "bsdf = wall.active_material.node_tree.nodes['Principled BSDF']",
+      "bsdf.inputs['Base Color'].default_value = (0.8, 0.75, 0.68, 1)",
+      "bsdf.inputs['Roughness'].default_value = 0.9",
+      "",
+      "bpy.ops.mesh.primitive_cube_add(size=1, location=(0, 0, 0.15))",
+      "battery = bpy.context.object",
+      "battery.name = 'Battery'",
+      "battery.scale = (0.09, 0.08, 0.3)",
+      "battery.location.z += 0.01",
+      "battery.active_material.node_tree.nodes['Principled BSDF'].inputs['Base Color'].default_value = (0.01, 0.01, 0.01, 1)",
+      "",
+      "print([o.name for o in bpy.data.objects if o.type == 'MESH' and o.name != 'Backdrop'])",
+      "print(tuple(round(v, 3) for v in battery.dimensions))",
+      "print(isinstance(battery, bpy.types.Object), battery.booth.shape)",
+      "bpy.data.objects.remove(bpy.data.objects['Wall'])",
+      "print(len([o for o in bpy.data.objects if o.type == 'MESH']))",
+    ]));
+    expect(text).toBe("['Right gradient', 'Wall', 'Battery']\n(0.09, 0.08, 0.3)\nTrue CUBE\n3\n");
+    expect(r.booth.doc.props).toEqual([expect.objectContaining({
+      name: "Battery", shape: "cube", scale: [0.09, 0.08, 0.3], location: [0, 0, expect.closeTo(0.16, 12)], color: [0.01, 0.01, 0.01],
+    })]);
+  });
+
+  test("Blender's bpy.data.meshes and a cone say what the booth does instead", () => {
+    fresh();
+    expect(failed("import bpy\nbpy.data.meshes.new('m')").message).toContain("primitive_cube_add");
+    expect(failed("import bpy\nbpy.ops.mesh.primitive_cone_add()").message).toContain("booth.prop_import");
+  });
+});
+
 describe("Blender's shapes", () => {
   test("a vector read from a struct writes back through it, a copy does not", () => {
     const r = fresh();

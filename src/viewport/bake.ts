@@ -5,8 +5,9 @@
  * by a cube map baked from the scene's emitters: area lights as glowing
  * cards of radiance P / (pi A) / sin^2(spread / 2), scrims as gradient
  * cards, the floor card ring, the sweep lit by RectAreaLights for every
- * emitter that reaches it, and the world behind. partOnly emitters appear
- * in this bake and nowhere else, which is light linking for free. The
+ * emitter that reaches it, the props lit the same way, and the world behind.
+ * partOnly emitters appear in this bake and nowhere else, which is light
+ * linking for free. The
  * world alone is baked too, for the live backdrop's ambient light.
  *
  * A bake runs after its shaders compile asynchronously, into a spare
@@ -24,8 +25,9 @@ import {
 } from "three/tsl";
 import { HDRLoader } from "three/addons/loaders/HDRLoader.js";
 import { worldHdrUrl } from "../presets";
-import type { BackdropSection, Emitter, FloorCardRing, LightsSection, WorldSection } from "../scene";
+import type { BackdropSection, Emitter, FloorCardRing, LightsSection, PropItem, WorldSection } from "../scene";
 import { BLENDER_TO_VIEWER, cardMatrix, lightMatrix, toViewer } from "./frame";
+import { propGeometry, propMaterial, propMesh } from "./props";
 import { areaRadiance, meanRadiance, rectStandIn } from "./radiance";
 
 // GAIN: calibration knob for the part's reflections. 1 is the physical conversion; 0.65 matches the
@@ -75,6 +77,7 @@ export interface BakeInput {
   readonly lights: LightsSection;
   readonly backdrop: BackdropSection;
   readonly world: WorldSection;
+  readonly props: readonly PropItem[];
   readonly hdr: Texture;
 }
 
@@ -183,7 +186,7 @@ function skyScene(input: BakeInput): Scene {
 }
 
 function studioScene(input: BakeInput, worldEnv: Texture): { scene: Scene; dispose(): void } {
-  const { lights, backdrop } = input;
+  const { lights, backdrop, props } = input;
   const scene = skyScene(input);
   const root = blenderRoot();
   scene.add(root);
@@ -201,6 +204,18 @@ function studioScene(input: BakeInput, worldEnv: Texture): { scene: Scene; dispo
   sweepMaterial.envNode = pmremTexture(worldEnv);
   owned.push(sweep, sweepMaterial);
   root.add(new Mesh(sweep, sweepMaterial));
+  const shapes = new Map<PropItem["geometry"], BufferGeometry>();
+  for (const p of props) {
+    let geometry = shapes.get(p.geometry);
+    if (!geometry) {
+      shapes.set(p.geometry, geometry = propGeometry(p.geometry));
+      owned.push(geometry);
+    }
+    const material = propMaterial(p);
+    material.envNode = pmremTexture(worldEnv);
+    owned.push(material);
+    root.add(propMesh(p, geometry, material));
+  }
   if (lights.floorCards) {
     const ring = floorRing(lights.floorCards);
     owned.push(ring.geometry, ring.material);

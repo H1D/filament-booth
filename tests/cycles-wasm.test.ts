@@ -4,8 +4,11 @@
  */
 import { readFileSync } from "node:fs";
 import { beforeAll, expect, test } from "vitest";
+import { defaultDocument, m, type BoothDocument } from "../src/document";
+import { addProp, type Edit } from "../src/edits";
+import { sameButFrame } from "../src/photo/cycles";
 import { decodeRgbe, loadCycles, readPasses, RenderState, uploadAgain, uploadScene, type CyclesModule, type Passes, type WorldImage } from "../src/photo/cycles-upload";
-import type { Scene } from "../src/scene";
+import { compileScene, type Scene } from "../src/scene";
 import { beadMesh, fixture } from "../tools/parity/fixtures";
 
 let M: CyclesModule;
@@ -165,6 +168,53 @@ test("repeated sessions in one module reuse the heap", async () => {
   }
   expect(heaps[2]).toBe(heaps[1]);
 }, 120_000);
+
+/** The default studio without a part, 64 x 80 at 8 samples, with `edits` applied: a prop stands at the camera's target. */
+function bare(...edits: Edit[]): Scene {
+  const doc: BoothDocument = defaultDocument();
+  doc.output.longEdgePx = 80;
+  doc.output.samples = 8;
+  for (const edit of edits) edit(doc);
+  return compileScene(doc, null, 1);
+}
+
+const centre = (plane: Float32Array): [number, number, number] => {
+  const i = (40 * 64 + 32) * 4;
+  return [plane[i], plane[i + 1], plane[i + 2]];
+};
+
+test("a prop renders where it stands, with its colour, and the scene without it does not", async () => {
+  const red = addProp("cube", { color: [0.8, 0.05, 0.05], roughness: 0.5, size: [m(0.2), m(0.2), m(0.2)], location: [m(0), m(0), m(0.09)] });
+  const [withCube, without] = [await render(bare(red)), await render(bare())];
+  const [albedo, plain] = [withCube.passes.albedo, without.passes.albedo];
+  if (!albedo || !plain) throw new Error("no albedo pass");
+  // The albedo pass is the base colour plus a little specular, so close to [0.8, 0.05, 0.05] but not equal.
+  const [r, g, b] = centre(albedo);
+  expect(r).toBeCloseTo(0.8, 1);
+  expect(Math.max(g, b)).toBeLessThan(0.15);
+  const [pr, , pb] = centre(plain);
+  expect(Math.abs(pr - pb)).toBeLessThan(0.01); // the grey backdrop
+  const [lr, lg, lb] = centre(withCube.passes.rgba);
+  expect(lr).toBeGreaterThan(3 * Math.max(lg, lb));
+  const [nr, ng, nb] = centre(without.passes.rgba);
+  expect(nr).toBeLessThan(1.5 * Math.max(ng, nb));
+}, 60_000);
+
+test("a render again is only for a scene with the same props", () => {
+  const before = bare();
+  const withProp = bare(addProp("sphere"));
+  expect(withProp.props).toHaveLength(1);
+  expect(sameButFrame(before, undefined, withProp)).toBe(false);
+  expect(sameButFrame(withProp, undefined, before)).toBe(false);
+  // The same props with another film: compileScene keeps the props array when nothing about them changed.
+  const doc = defaultDocument();
+  addProp("sphere")(doc);
+  const first = compileScene(doc, null, 1);
+  doc.output.samples = 16;
+  const next = compileScene(doc, null, 2, first);
+  expect(next.film).not.toBe(first.film);
+  expect(sameButFrame(first, undefined, next)).toBe(true);
+}, 60_000);
 
 /** Fixture a with another camera, film or depth of field: what a render again may change. */
 function frames(): Scene[] {

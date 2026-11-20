@@ -22,14 +22,15 @@
  * Pure: no DOM, no Pyodide. host.ts interprets it.
  */
 import {
-  AGX_LOOKS, BED_TYPES, BOUNDS, FILAMENT_PRESET_IDS, LOOK_IDS, OVERLAYS, REST_FACES, SEAM_POSITIONS, TOP_SURFACE_PATTERNS,
+  AGX_LOOKS, BED_TYPES, BOUNDS, FILAMENT_PRESET_IDS, LOOK_IDS, OVERLAYS, PROP_SHAPES, REST_FACES, SEAM_POSITIONS, TOP_SURFACE_PATTERNS,
   deg, kelvin, m,
   type AgxLook, type AreaLight, type BoothDocument, type Bounds, type CameraSetup, type FilamentChoice, type FilamentRecipe,
-  type Imperfections, type OutputSetup, type Pose, type ScrimLight, type SliceSettings, type Studio, type StudioLight, type Vec3,
+  type Imperfections, type OutputSetup, type Pose, type PropShape, type ScrimLight, type SliceSettings, type Studio, type StudioLight,
+  type StudioProp, type Vec3,
 } from "../document";
-import { applyFilamentPreset, applyLook, removeLight, type Edit } from "../edits";
+import { applyFilamentPreset, applyLook, removeLight, removeProp, type Edit } from "../edits";
 import { LOOK_PRESETS, WORLD_HDRS } from "../presets";
-import { FILM_DEFAULTS, filmSize, solveLight, sphericalAbout, sphericalOffset, type Scene } from "../scene";
+import { FILM_DEFAULTS, filmSize, primitiveGeometry, solveLight, sphericalAbout, sphericalOffset, type PropGeometry, type Scene } from "../scene";
 import { hexToLinear, linearToHex } from "../ui/color";
 
 // ---- values that cross into Python ---------------------------------------------------
@@ -62,7 +63,7 @@ export class HostError extends Error {
  */
 export type Handle =
   | { readonly t: "scene" | "camera" | "part" | "backdrop" | "world" }
-  | { readonly t: "light" | "image"; readonly id: string };
+  | { readonly t: "light" | "prop" | "image"; readonly id: string };
 
 export const SCENE: Handle = { t: "scene" };
 export const CAMERA: Handle = { t: "camera" };
@@ -70,6 +71,7 @@ export const PART: Handle = { t: "part" };
 export const BACKDROP: Handle = { t: "backdrop" };
 export const WORLD: Handle = { t: "world" };
 export const lightHandle = (id: string): Handle => ({ t: "light", id });
+export const propHandle = (id: string): Handle => ({ t: "prop", id });
 
 /** The FFI spelling of a handle: "camera", "light:key". */
 export function handleKey(h: Handle): string {
@@ -83,7 +85,7 @@ export function parseHandle(key: string): Handle | null {
   }
   const t = key.slice(0, colon);
   const id = key.slice(colon + 1);
-  return (t === "light" || t === "image") && id !== "" ? { t, id } : null;
+  return (t === "light" || t === "prop" || t === "image") && id !== "" ? { t, id } : null;
 }
 
 export const sameHandle = (a: Handle, b: Handle): boolean => handleKey(a) === handleKey(b);
@@ -126,6 +128,7 @@ interface OwnerNodes {
   roughness: FilamentRecipe["roughness"];
   imperfections: Imperfections;
   image: HdrImage;
+  prop: StudioProp;
 }
 export type OwnerKind = keyof OwnerNodes;
 
@@ -165,6 +168,7 @@ export const OWNERS: { readonly [O in OwnerKind]: Owner<OwnerNodes[O]> } = {
   roughness: { path: "filament.recipe.roughness", node: (doc) => doc.filament.recipe.roughness },
   imperfections: { path: "filament.imperfections", node: (doc) => doc.filament.imperfections },
   image: { path: null, node: (_, h) => (h.t === "image" ? (HDR_IMAGES.find((i) => i.id === h.id) ?? null) : null) },
+  prop: { path: "props[]", node: (doc, h) => (h.t === "prop" ? (doc.props.find((p) => p.id === h.id) ?? null) : null) },
 };
 
 // ---- props -------------------------------------------------------------------------------
@@ -178,6 +182,8 @@ export interface ReadContext {
   readonly handle: Handle;
   readonly session: SessionState;
   readonly partName: string | null;
+  /** An imported prop mesh's file name and box, or null when it was not imported this session. */
+  readonly propMesh: (id: string) => { readonly name: string; readonly bounds: PropGeometry["bounds"] } | null;
 }
 
 /** An attribute that is not one document field. */
@@ -618,6 +624,89 @@ const filamentPreset: Codec<FilamentChoice> = {
   get: (f) => (f.presetId === null ? null : bpyName(f.presetId)),
 };
 
+const propLocation: Codec<StudioProp> = {
+  type: "Vector m, the object's origin: the middle of a primitive, the middle of an imported mesh's base", wrap: "Vector",
+  fields: ["location"], bounds: "propLocation",
+  get: (p) => [...p.location],
+  set: (p, value) => { p.location = metres(vec3(value)); return undefined; },
+};
+
+const propRotation: Codec<StudioProp> = {
+  type: "Euler rad, XYZ", wrap: "Euler", fields: ["rotationDeg"], bounds: "propRotationDeg", scale: RAD,
+  get: (p) => p.rotationDeg.map((d) => d * RAD),
+  set: (p, value) => {
+    const [x, y, z] = vec3(value);
+    p.rotationDeg = [deg(x / RAD), deg(y / RAD), deg(z / RAD)];
+    return undefined;
+  },
+};
+
+const propScale: Codec<StudioProp> = {
+  type: "Vector, positive", wrap: "Vector", fields: ["scale"], bounds: "propScale",
+  get: (p) => [...p.scale],
+  set: (p, value) => { p.scale = [...vec3(value)]; return undefined; },
+};
+
+/** The extent of a prop's own mesh before size and scale, or null for a mesh that is not loaded. */
+function meshExtent(p: StudioProp, ctx: ReadContext): V3 | null {
+  const bounds = p.shape === "mesh"
+    ? (p.mesh === null ? null : ctx.propMesh(p.mesh)?.bounds ?? null)
+    : primitiveGeometry(p.shape, p.segments).bounds;
+  return bounds === null ? null : sub(bounds.max, bounds.min);
+}
+
+const propDimensions: Codec<StudioProp> = {
+  type: "Vector m, the bounding box before rotation; setting it sets scale, as in Blender", wrap: "Vector", fields: ["scale"],
+  get: (p, ctx) => {
+    const e = meshExtent(p, ctx);
+    return e === null ? [0, 0, 0] : [0, 1, 2].map((i) => e[i] * p.size[i] * p.scale[i]);
+  },
+  set: (p, value, ctx) => {
+    const e = meshExtent(p, ctx);
+    if (e === null) throw new HostError("RuntimeError", "the prop's mesh is not loaded in this session: import it again with bpy.ops.booth.prop_import");
+    const want = vec3(value);
+    // A flat axis, such as a plane's Z, has no extent to scale: its scale stays, as in Blender.
+    p.scale = [0, 1, 2].map((i) => (e[i] * p.size[i] > 0 ? want[i] / (e[i] * p.size[i]) : p.scale[i])) as [number, number, number];
+    return undefined;
+  },
+};
+
+const propSize: Codec<StudioProp> = {
+  type: "Vector, the factor an add operator baked into the mesh (size, radius, depth); scale multiplies it", wrap: "Vector",
+  fields: ["size"], bounds: "propSize",
+  get: (p) => [...p.size],
+  set: (p, value) => { p.size = metres(vec3(value)); return undefined; },
+};
+
+const propShape: Codec<StudioProp> = {
+  type: `enum in [${PROP_SHAPES.map((s) => pyRepr(bpyName(s))).join(", ")}]`, wrap: null, fields: [],
+  readOnly: "chosen when the prop is added: bpy.ops.mesh.primitive_*_add or bpy.ops.booth.prop_import",
+  get: (p) => bpyName(p.shape),
+};
+
+const propMeshFile: Codec<StudioProp> = {
+  type: "str or None: the STL an imported prop came from", wrap: null, fields: [],
+  readOnly: "set by bpy.ops.booth.prop_import",
+  get: (p, ctx) => (p.mesh === null ? null : ctx.propMesh(p.mesh)?.name ?? null),
+};
+
+const propLoaded: Codec<StudioProp> = {
+  type: "bool: False for an imported prop whose file was not imported again since the page loaded; it is not drawn", wrap: null,
+  fields: [], readOnly: "import the same file again with bpy.ops.booth.prop_import",
+  get: (p, ctx) => p.mesh === null || ctx.propMesh(p.mesh) !== null,
+};
+
+const propMaterialName: Codec<StudioProp> = {
+  type: "str", wrap: null, fields: [], readOnly: "a prop's material is named as its object: rename obj.name",
+  get: (p) => p.name,
+};
+
+const propColor: Codec<StudioProp> = {
+  type: "float[4] RGBA, linear", wrap: "array", fields: ["color"],
+  get: (p) => [...p.color, 1],
+  set: (p, value) => { p.color = rgbaOf(value); return undefined; },
+};
+
 // ---- enum maps -----------------------------------------------------------------------------
 
 /** Blender's look names, as tools/blender/render_scene.py sets them. The type fails the build if a look is missing. */
@@ -703,14 +792,20 @@ export type RnaTypeName =
   | "BackdropBaseColorInput" | "BackdropMetallicInput" | "BackdropRoughnessInput"
   | "PartObject" | "BoothPart" | "BoothSlicing" | "BoothFilament" | "BoothRecipe" | "BoothRoughness" | "BoothImperfections"
   | "FilamentMaterial" | "FilamentNodeTree" | "FilamentPrincipled"
-  | "FilamentBaseColorInput" | "FilamentMetallicInput" | "FilamentRoughnessInput" | "FilamentIorInput" | "FilamentAnisotropicInput";
+  | "FilamentBaseColorInput" | "FilamentMetallicInput" | "FilamentRoughnessInput" | "FilamentIorInput" | "FilamentAnisotropicInput"
+  | "PropObject" | "BoothProp" | "PropMaterial" | "PropNodeTree" | "PropPrincipled"
+  | "PropBaseColorInput" | "PropMetallicInput" | "PropRoughnessInput";
+
+const ADD_LIGHTS = "add a light with bpy.ops.object.light_add(type='AREA', location=...) or a scrim with bpy.ops.booth.scrim_add(location=..., size=(w, h))";
+const ADD_PROPS = "add a prop with bpy.ops.mesh.primitive_cube_add (cylinder, uv_sphere, plane) or import an STL with bpy.ops.booth.prop_import(filepath=...)";
+const ADD_OBJECTS = `${ADD_LIGHTS}; ${ADD_PROPS}`;
 
 export const RNA: { readonly [K in RnaTypeName]: RnaType } = {
   // -- roots ---------------------------------------------------------------------------------
   BlendData: rnaType("document", "BlendData", "bpy.data", "Everything in the booth, by kind.", () => ({
     objects: coll("objects"), lights: coll("lights"), cameras: coll("cameras"), worlds: coll("worlds"),
     materials: coll("materials"), images: coll("images"), scenes: coll("scenes"),
-    meshes: missing("the booth holds one printed part: import it with bpy.ops.wm.stl_import or bpy.ops.booth.gcode_import"),
+    meshes: missing("a prop's mesh is not in bpy.data: add one with bpy.ops.mesh.primitive_cube_add (cylinder, uv_sphere, plane) or import an STL with bpy.ops.booth.prop_import, then edit the object"),
     filepath: fixed("", "the setup saves itself in the browser"),
   })),
   Context: rnaType("document", "Context", "bpy.context", "Read-only, as in a script run from Blender's text editor.", () => ({
@@ -719,7 +814,7 @@ export const RNA: { readonly [K in RnaTypeName]: RnaType } = {
     active_object: session("active"),
     selected_objects: missing("selection is not in the booth: operators act on what you name, and the last added object is bpy.context.object"),
     view_layer: missing("the booth has one view: bpy.context.scene"),
-    collection: missing("add lights with bpy.ops.object.light_add(type='AREA') and scrims with bpy.ops.booth.scrim_add()"),
+    collection: missing(ADD_OBJECTS),
   })),
 
   // -- scene and output ------------------------------------------------------------------------
@@ -733,7 +828,7 @@ export const RNA: { readonly [K in RnaTypeName]: RnaType } = {
     objects: coll("objects"),
     booth: ptr("BoothScene"),
     frame_current: fixed(1, "the booth renders stills"),
-    collection: missing("add lights with bpy.ops.object.light_add(type='AREA') and scrims with bpy.ops.booth.scrim_add()"),
+    collection: missing(ADD_OBJECTS),
   })),
   BoothScene: rnaType("document", "BoothSceneSettings", "bpy.data.scenes['Scene'].booth", "Booth settings Blender has no attribute for.", (p) => ({
     look: p.codec(lookBase),
@@ -991,6 +1086,51 @@ export const RNA: { readonly [K in RnaTypeName]: RnaType } = {
   FilamentIorInput: socket("recipe", "NodeSocketFloat", `${FILAMENT_TREE}.nodes['Principled BSDF']`, "IOR", (p) => p.num("ior", "ior")),
   FilamentAnisotropicInput: socket("recipe", "NodeSocketFloatFactor", `${FILAMENT_TREE}.nodes['Principled BSDF']`, "Anisotropic",
     (p) => p.num("anisotropy", "anisotropy")),
+
+  // -- props -----------------------------------------------------------------------------------
+  PropObject: rnaType("prop", "Object", "bpy.data.objects[{name}]",
+    "A prop: a primitive or an imported STL standing beside the part, with its own Principled material.", (p) => ({
+      name: p.text("name", "objects"),
+      type: fixed("MESH"),
+      location: p.codec(propLocation),
+      rotation_euler: p.codec(propRotation),
+      rotation_mode: fixed("XYZ", "props turn by an XYZ Euler"),
+      scale: p.codec(propScale),
+      dimensions: p.codec(propDimensions),
+      hide_render: p.bool("on", true),
+      hide_viewport: missing("a prop has one switch: hide_render, which hides it in the preview too"),
+      active_material: ptr("PropMaterial"),
+      booth: ptr("BoothProp"),
+      data: missing("a prop's mesh cannot be edited: obj.booth.size and segments reshape a primitive, and an STL is imported with bpy.ops.booth.prop_import"),
+      material_slots: missing("a prop has one material: obj.active_material"),
+      modifiers: missing("a prop is its mesh as it is: model anything more in an STL and import it with bpy.ops.booth.prop_import"),
+      parent: missing("props are placed in the world; nothing is parented"),
+      constraints: missing("place a prop with location and rotation_euler"),
+      matrix_world: missing("place a prop with location, rotation_euler and scale"),
+      select_set: missing("selection is not in the booth: operators act on what you name"),
+    })),
+  BoothProp: rnaType("prop", "BoothPropSettings", "bpy.data.objects[{name}].booth", "Prop settings Blender keeps in the mesh.", (p) => ({
+    shape: p.codec(propShape),
+    size: p.codec(propSize),
+    segments: p.num("segments", "propSegments"),
+    mesh_file: p.codec(propMeshFile),
+    is_loaded: p.codec(propLoaded),
+  })),
+  PropMaterial: rnaType("prop", "Material", "bpy.data.materials[{name}]", "A prop's own material.", (p) => ({
+    name: p.codec(propMaterialName),
+    use_nodes: fixed(true),
+    node_tree: ptr("PropNodeTree"),
+    diffuse_color: missing("that is Blender's viewport colour: set node_tree.nodes['Principled BSDF'].inputs['Base Color'].default_value"),
+  })),
+  PropNodeTree: rnaType("prop", "ShaderNodeTree", "bpy.data.materials[{name}].node_tree", "Fixed: one Principled BSDF.", () => ({
+    nodes: coll("prop.nodes"), links: missing("a prop's node tree is fixed: set the inputs of its Principled BSDF"),
+  })),
+  PropPrincipled: rnaType("prop", "ShaderNodeBsdfPrincipled", "bpy.data.materials[{name}].node_tree.nodes['Principled BSDF']", "", () => ({
+    name: fixed("Principled BSDF"), type: fixed("BSDF_PRINCIPLED"), inputs: coll("prop.principled.inputs"),
+  })),
+  PropBaseColorInput: socket("prop", "NodeSocketColor", "bpy.data.materials[{name}].node_tree.nodes['Principled BSDF']", "Base Color", (p) => p.codec(propColor)),
+  PropMetallicInput: fixedSocket("NodeSocketFloatFactor", "bpy.data.materials[{name}].node_tree.nodes['Principled BSDF']", "Metallic", 0, "props are dielectrics: paint, plastic, wood, card"),
+  PropRoughnessInput: socket("prop", "NodeSocketFloatFactor", "bpy.data.materials[{name}].node_tree.nodes['Principled BSDF']", "Roughness", (p) => p.num("roughness", "propRoughness")),
 };
 
 /**
@@ -1002,6 +1142,9 @@ export const UNMAPPED: Readonly<Record<string, string>> = {
   "studio.lights[].id": "a light's identity: Python holds it in the object's handle",
   "studio.lights[].kind": "chosen when the light is added: object.light_add makes an area light, booth.scrim_add a scrim",
   "output.viewTransform.kind": "always AgX: scene.view_settings.view_transform reads 'AgX'",
+  "props[].id": "a prop's identity: Python holds it in the object's handle",
+  "props[].shape": "chosen when the prop is added; obj.booth.shape reads it",
+  "props[].mesh": "set by bpy.ops.booth.prop_import; obj.booth.mesh_file names the file",
 };
 
 /** Every document path the table reads or writes, `[]` standing for any light. */
@@ -1023,7 +1166,12 @@ export function reachedFields(): readonly string[] {
 
 export interface Member { readonly name: string; readonly handle: Handle; readonly type: RnaTypeName }
 
-export interface CollectionContext { readonly doc: Readonly<BoothDocument>; readonly partName: string | null }
+export interface CollectionContext {
+  readonly doc: Readonly<BoothDocument>;
+  readonly partName: string | null;
+  /** The struct the collection hangs off, such as the prop whose node tree is listed. */
+  readonly owner: Handle;
+}
 
 export interface CollectionDef {
   /** What a member is, for the reference. */
@@ -1039,10 +1187,10 @@ export interface CollectionDef {
 export type CollectionName =
   | "objects" | "lights" | "cameras" | "worlds" | "materials" | "images" | "scenes"
   | "world.nodes" | "world.background.inputs" | "world.mapping.inputs"
-  | "backdrop.nodes" | "backdrop.principled.inputs" | "filament.nodes" | "filament.principled.inputs";
+  | "backdrop.nodes" | "backdrop.principled.inputs" | "filament.nodes" | "filament.principled.inputs"
+  | "prop.nodes" | "prop.principled.inputs";
 
 const FIXED_TREE = "the node tree is fixed: set the inputs of its nodes";
-const ADD_LIGHTS = "add a light with bpy.ops.object.light_add(type='AREA', location=...) or a scrim with bpy.ops.booth.scrim_add(location=..., size=(w, h))";
 
 const fixedMembers = (members: readonly Member[]) => () => members;
 const objectMembers = ({ doc, partName }: CollectionContext): readonly Member[] => [
@@ -1050,12 +1198,20 @@ const objectMembers = ({ doc, partName }: CollectionContext): readonly Member[] 
   ...(partName === null ? [] : [{ name: partName, handle: PART, type: "PartObject" } as const]),
   { name: "Backdrop", handle: BACKDROP, type: "BackdropObject" },
   ...doc.studio.lights.map((l): Member => ({ name: l.name, handle: lightHandle(l.id), type: l.kind === "area" ? "LightObject" : "ScrimObject" })),
+  ...doc.props.map((p): Member => ({ name: p.name, handle: propHandle(p.id), type: "PropObject" })),
 ];
 const removeObject = (member: Member): Edit | string =>
-  member.handle.t === "light" ? removeLight(member.handle.id) : `the booth's ${member.name} cannot be removed`;
+  member.handle.t === "light" ? removeLight(member.handle.id)
+  : member.handle.t === "prop" ? removeProp(member.handle.id)
+  : `the booth's ${member.name} cannot be removed`;
+/** The prop a node tree collection hangs off. */
+const ownProp = (owner: Handle): Handle => {
+  if (owner.t !== "prop") throw new HostError("RuntimeError", "a prop's node tree was listed without its prop");
+  return owner;
+};
 
 export const COLLECTIONS: { readonly [K in CollectionName]: CollectionDef } = {
-  objects: { item: "Object: Camera, the part once one is open, Backdrop, then every light and scrim", members: objectMembers, remove: removeObject, newHint: ADD_LIGHTS },
+  objects: { item: "Object: Camera, the part once one is open, Backdrop, every light and scrim, then every prop", members: objectMembers, remove: removeObject, newHint: ADD_OBJECTS },
   lights: {
     item: "AreaLight, named as their objects",
     members: (ctx) => uniqueNames(objectMembers(ctx)).filter((o) => o.type === "LightObject").map((o) => ({ ...o, type: "AreaLight" })),
@@ -1065,9 +1221,13 @@ export const COLLECTIONS: { readonly [K in CollectionName]: CollectionDef } = {
   cameras: { item: "Camera", members: fixedMembers([{ name: "Camera", handle: CAMERA, type: "Camera" }]), newHint: "the booth has one camera: bpy.context.scene.camera" },
   worlds: { item: "World", members: fixedMembers([{ name: "World", handle: WORLD, type: "World" }]), newHint: "the booth has one world" },
   materials: {
-    item: "Material: Backdrop and Filament",
-    members: fixedMembers([{ name: "Backdrop", handle: BACKDROP, type: "BackdropMaterial" }, { name: "Filament", handle: PART, type: "FilamentMaterial" }]),
-    newHint: "the booth has two materials: bpy.data.materials['Backdrop'] and ['Filament']",
+    item: "Material: Backdrop, Filament, then one per prop, named as its object",
+    members: ({ doc }) => [
+      { name: "Backdrop", handle: BACKDROP, type: "BackdropMaterial" },
+      { name: "Filament", handle: PART, type: "FilamentMaterial" },
+      ...doc.props.map((p): Member => ({ name: p.name, handle: propHandle(p.id), type: "PropMaterial" })),
+    ],
+    newHint: "every prop comes with its own material, obj.active_material; the backdrop and the part have bpy.data.materials['Backdrop'] and ['Filament']",
   },
   images: {
     item: "Image: the HDRs the booth ships",
@@ -1121,6 +1281,20 @@ export const COLLECTIONS: { readonly [K in CollectionName]: CollectionDef } = {
     ]),
     newHint: FIXED_TREE,
   },
+  "prop.nodes": {
+    item: "ShaderNode: Principled BSDF",
+    members: ({ owner }) => [{ name: "Principled BSDF", handle: ownProp(owner), type: "PropPrincipled" }],
+    newHint: FIXED_TREE,
+  },
+  "prop.principled.inputs": {
+    item: "NodeSocket: Base Color, Metallic, Roughness",
+    members: ({ owner }) => [
+      { name: "Base Color", handle: ownProp(owner), type: "PropBaseColorInput" },
+      { name: "Metallic", handle: ownProp(owner), type: "PropMetallicInput" },
+      { name: "Roughness", handle: ownProp(owner), type: "PropRoughnessInput" },
+    ],
+    newHint: FIXED_TREE,
+  },
 };
 
 /** "Key", "Key" becomes "Key", "Key.001", as Blender names a second object. Earlier members keep their names. */
@@ -1155,6 +1329,10 @@ export interface OpHost {
   addLight(kind: StudioLight["kind"], name: string, location: Json, size: Json): void;
   /** Reads a file from the agent's machine, opens it and waits until it is sliced. The part becomes bpy.context.object. */
   open(path: string, accept: "stl" | "gcode"): Promise<void>;
+  /** Adds a prop in one booth.update and makes it bpy.context.object. `fields` are document values. */
+  addProp(shape: PropShape, fields: Partial<Omit<StudioProp, "id" | "shape">>): void;
+  /** Reads an STL from the agent's machine and returns its prop mesh id (Booth.addPropMesh) and the file's name. */
+  readPropMesh(path: string): Promise<{ readonly mesh: string; readonly name: string }>;
   /** Takes a photo through the photo card, as PHOTO does. */
   photo(writeStill: boolean): Promise<OpResult>;
   /** A raster render of the current setup at a small size. */
@@ -1166,6 +1344,8 @@ export type OpParam =
   | { readonly kind: "bool"; readonly default: boolean }
   | { readonly kind: "vector"; readonly size: number; readonly default: null }
   | { readonly kind: "path" }
+  /** A number with Blender's default. `positive` refuses zero and below. */
+  | { readonly kind: "number"; readonly default: number; readonly positive: boolean; readonly int: boolean }
   /** Accepted at its default only: any other value would be ignored, so it is refused. */
   | { readonly kind: "fixed"; readonly default: Json; readonly why: string };
 
@@ -1181,7 +1361,9 @@ export interface OpDef {
 
 export type OpName =
   | "object.light_add" | "booth.scrim_add" | "wm.stl_import" | "booth.gcode_import"
-  | "render.render" | "render.opengl" | "booth.look_apply" | "booth.filament_apply";
+  | "render.render" | "render.opengl" | "booth.look_apply" | "booth.filament_apply"
+  | "mesh.primitive_cube_add" | "mesh.primitive_cylinder_add" | "mesh.primitive_uv_sphere_add" | "mesh.primitive_plane_add"
+  | "booth.prop_import";
 
 const LOOK_ENUM = bpyEnum(LOOK_IDS);
 const PRESET_ENUM = bpyEnum(FILAMENT_PRESET_IDS);
@@ -1197,6 +1379,34 @@ const boolParam = (dflt: boolean): OpParam => ({ kind: "bool", default: dflt });
 const vectorParam = (size: number): OpParam => ({ kind: "vector", size, default: null });
 const fixedParam = (dflt: Json, why: string): OpParam => ({ kind: "fixed", default: dflt, why });
 const PATH: OpParam = { kind: "path" };
+const numberParam = (dflt: number, positive = true, int = false): OpParam => ({ kind: "number", default: dflt, positive, int });
+
+/** What every primitive add takes besides its shape's own size: where, how turned, and a scale baked into the mesh. */
+const PLACE_PARAMS = {
+  location: vectorParam(3),
+  rotation: vectorParam(3),
+  scale: vectorParam(3),
+  align: fixedParam("WORLD", "a prop is placed in world axes"),
+  enter_editmode: fixedParam(false, "the booth has no edit mode"),
+  calc_uvs: fixedParam(true, "props have no textures, so UVs change nothing"),
+} as const;
+
+/** Document fields from a primitive add's arguments. `extent` is the mesh size Blender would make, before `scale`. */
+function addedAt(args: OpArgs, extent: V3): Partial<Omit<StudioProp, "id" | "shape">> {
+  const k = args.scale === null ? [1, 1, 1] : numbers(args.scale, [3]);
+  if (k.some((v) => v <= 0)) throw new HostError("ValueError", "scale must be positive: the booth does not mirror props");
+  const rot = args.rotation === null ? [0, 0, 0] : numbers(args.rotation, [3]);
+  return {
+    size: metres([extent[0] * k[0], extent[1] * k[1], extent[2] * k[2]]),
+    location: metres(args.location === null ? [0, 0, 0] : vec3(args.location)),
+    rotationDeg: [deg(rot[0] / RAD), deg(rot[1] / RAD), deg(rot[2] / RAD)],
+  };
+}
+
+const num = (v: Json): number => numberOf(v);
+
+const ADD_DOC = "The new object becomes bpy.context.object, with its own Principled material (light grey, roughness 0.5). " +
+  "location defaults to the world origin, as Blender's 3D cursor; size, radius and depth are metres, as in Blender, so a booth-sized prop needs small values.";
 const STILLS = fixedParam(false, "the booth renders stills");
 
 export const OPS: { readonly [K in OpName]: OpDef } = {
@@ -1225,7 +1435,7 @@ export const OPS: { readonly [K in OpName]: OpDef } = {
     },
   },
   "wm.stl_import": {
-    doc: "Opens an STL from the agent's machine as the part, replacing the one before, and waits until it is sliced. A relative path or // is the agent's folder.",
+    doc: "Opens an STL from the agent's machine as the part, replacing the one before, and waits until it is sliced. A relative path or // is the agent's folder. To add an STL beside the part instead, use bpy.ops.booth.prop_import.",
     params: {
       filepath: PATH,
       global_scale: fixedParam(1, "the part is printed at its own size"),
@@ -1267,6 +1477,61 @@ export const OPS: { readonly [K in OpName]: OpDef } = {
       return "FINISHED";
     },
   },
+  "mesh.primitive_cube_add": {
+    doc: `Adds a cube prop, size metres along each edge (Blender's default 2). ${ADD_DOC}`,
+    params: { size: numberParam(2), ...PLACE_PARAMS },
+    run: (args, host) => {
+      const s = num(args.size);
+      host.addProp("cube", addedAt(args, [s, s, s]));
+      return "FINISHED";
+    },
+  },
+  "mesh.primitive_cylinder_add": {
+    doc: `Adds a cylinder prop along Z, centred on its origin. Sides are smooth above 12 vertices, as Blender's auto smooth. ${ADD_DOC}`,
+    params: {
+      vertices: numberParam(32, true, true), radius: numberParam(1), depth: numberParam(2),
+      end_fill_type: fixedParam("NGON", "a booth cylinder has filled caps"), ...PLACE_PARAMS,
+    },
+    run: (args, host) => {
+      const r = num(args.radius), d = num(args.depth);
+      host.addProp("cylinder", { ...addedAt(args, [2 * r, 2 * r, d]), segments: num(args.vertices) });
+      return "FINISHED";
+    },
+  },
+  "mesh.primitive_uv_sphere_add": {
+    doc: `Adds a UV sphere prop. It has segments / 2 rings. Smooth above 12 segments. ${ADD_DOC}`,
+    params: { segments: numberParam(32, true, true), ring_count: numberParam(16, true, true), radius: numberParam(1), ...PLACE_PARAMS },
+    run: (args, host) => {
+      const segments = num(args.segments), rings = num(args.ring_count);
+      if (rings !== 16 && rings !== Math.max(2, Math.round(segments / 2))) {
+        throw new HostError("ValueError", `ring_count: a booth sphere has segments / 2 rings, so ring_count must be ${Math.max(2, Math.round(segments / 2))} for ${segments} segments`);
+      }
+      const r = num(args.radius);
+      host.addProp("sphere", { ...addedAt(args, [2 * r, 2 * r, 2 * r]), segments });
+      return "FINISHED";
+    },
+  },
+  "mesh.primitive_plane_add": {
+    doc: `Adds a square plane prop in XY facing +Z, size metres along each edge. Turn it upright with rotation=(math.radians(90), 0, 0) for a wall behind the part. ${ADD_DOC}`,
+    params: { size: numberParam(2), ...PLACE_PARAMS },
+    run: (args, host) => {
+      const s = num(args.size);
+      host.addProp("plane", addedAt(args, [s, s, 1]));
+      return "FINISHED";
+    },
+  },
+  "booth.prop_import": {
+    doc: "Imports an STL from the agent's machine as a prop beside the part, not as the part. Read in millimetres, as the part is, and shaded flat; " +
+      "its origin is the middle of its base, so location z = 0 stands it on the floor. global_scale multiplies its size. Importing the same file again " +
+      "reconnects props that name it after a page reload. A relative path or // is the agent's folder.",
+    params: { filepath: PATH, global_scale: numberParam(1), location: vectorParam(3), rotation: vectorParam(3) },
+    run: async (args, host): Promise<OpResult> => {
+      const { mesh, name } = await host.readPropMesh(String(args.filepath));
+      const k = num(args.global_scale);
+      host.addProp("mesh", { ...addedAt({ ...args, scale: null }, [k, k, k]), mesh, name: name.replace(/\.stl$/i, "") });
+      return "FINISHED";
+    },
+  },
   "booth.filament_apply": {
     doc: "Copies a filament preset's recipe in and resets gloss. Imperfections and bed stay.",
     params: { preset: enumParam(Object.keys(PRESET_ENUM)) },
@@ -1280,10 +1545,18 @@ export const OPS: { readonly [K in OpName]: OpDef } = {
 /** Blender operators agents reach for, with the booth's way instead. */
 export const OPS_MISSING: Readonly<Record<string, string>> = {
   "import_mesh.stl": "bpy.ops.import_mesh.stl was removed in Blender 4.2. Use bpy.ops.wm.stl_import(filepath=...)",
-  "mesh.primitive_cube_add": "the booth holds one printed part: bpy.ops.wm.stl_import or bpy.ops.booth.gcode_import",
-  "mesh.primitive_plane_add": "for a reflector or a glowing card use bpy.ops.booth.scrim_add(location=..., size=(w, h))",
+  "mesh.primitive_ico_sphere_add": "use bpy.ops.mesh.primitive_uv_sphere_add",
+  "mesh.primitive_cone_add": "model it as an STL and import it with bpy.ops.booth.prop_import(filepath=...)",
+  "mesh.primitive_torus_add": "model it as an STL and import it with bpy.ops.booth.prop_import(filepath=...)",
+  "mesh.primitive_circle_add": "a disc is a cylinder with a small depth: bpy.ops.mesh.primitive_cylinder_add(radius=..., depth=0.002)",
+  "object.shade_smooth": "a cylinder or sphere is smooth above 12 segments, as auto smooth at 30 degrees; an imported STL is flat",
+  "object.shade_auto_smooth": "a cylinder or sphere is smooth above 12 segments, as auto smooth at 30 degrees; an imported STL is flat",
+  "object.transform_apply": "a prop keeps location, rotation and scale apart; obj.booth.size is what the mesh itself holds",
+  "object.modifier_add": "a prop is its mesh as it is: model anything more in an STL and import it with bpy.ops.booth.prop_import",
+  "wm.obj_import": "props are read from STL: bpy.ops.booth.prop_import(filepath=...)",
+  "wm.ply_import": "props are read from STL: bpy.ops.booth.prop_import(filepath=...)",
   "object.camera_add": "the booth has one camera: bpy.context.scene.camera",
-  "object.delete": "selection is not in the booth: remove a light with bpy.data.objects.remove(obj)",
+  "object.delete": "selection is not in the booth: remove a light or a prop with bpy.data.objects.remove(obj)",
   "object.select_all": "selection is not in the booth: operators act on what you name",
   "wm.read_factory_settings": "apply a look with bpy.ops.booth.look_apply(look=...)",
   "wm.save_as_mainfile": "the setup saves itself in the browser; Setup, Export JSON writes it as a file",
@@ -1335,6 +1608,7 @@ function describeParam(name: string, p: OpParam): string {
     case "bool": return `${name}: bool, default ${pyRepr(p.default)}`;
     case "vector": return `${name}: float[${p.size}], optional`;
     case "path": return `${name}: str, required, a path on the agent's machine`;
+    case "number": return `${name}: ${p.int ? "int" : "float"}, default ${fmt(p.default)}${p.positive ? ", more than 0" : ""}`;
     case "fixed": return `${name}: only ${pyRepr(p.default)}: ${p.why}`;
   }
 }

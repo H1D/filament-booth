@@ -421,6 +421,20 @@ progress:indeterminate::-webkit-progress-bar {
   box-shadow: 0 10px 28px oklch(0 0 0 / 0.5);
 }
 
+/* ---- the props section's add menu (native popover, anchored to its button) ---------------- */
+
+/* No `display` here: it would beat the browser's `display: none` on a closed popover. */
+.add-prop { anchor-name: --add-prop; }
+.add-menu {
+  position-anchor: --add-prop;
+  inset: auto; top: anchor(bottom); left: anchor(left); margin: 0.35rem 0 0;
+  position-try-fallbacks: flip-block;
+  min-width: 11rem; padding: 0.35rem;
+  background: var(--panel); color: var(--text);
+  border: 1px solid var(--line); border-radius: 8px;
+  box-shadow: 0 10px 28px oklch(0 0 0 / 0.5);
+}
+
 /* ---- agent control (the rail section and the top bar badge with its native popover) ---- */
 
 .agent { display: grid; gap: 0.5rem; }

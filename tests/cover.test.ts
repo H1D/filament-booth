@@ -302,7 +302,7 @@ describe("what each rule keeps (each test fails if its rule is taken out)", () =
       film: { width: 4, height: 4, samples: 1 }, camera: { position: [0, 0, 0], target: [0, 0, 0], up: [0, 0, 1] }, world: { strength: 1, rotationRad: 0 },
       part: { mesh, material, toWorld: new Array(16).fill(0) },
       backdrop: { positions: new Float32Array(9), index: new Uint32Array(3), normals: new Float32Array(9), albedo: [1, 1, 1], roughness: 1 },
-      lights: { emitters: [], floorCards: null },
+      lights: { emitters: [], floorCards: null }, props: [],
     } as unknown as Scene;
     uploadScene(M, scene, { width: 1, height: 1, rgb: new Float32Array(3) });
     const visible = visiblePart(mesh);
