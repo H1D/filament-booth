@@ -13,7 +13,8 @@ import type { PhotoRun } from "./photo/photo";
 import { FILAMENT_PRESETS, LOOK_PRESETS } from "./presets";
 import type { LoadedPrint, PrintSource, PrintState } from "./print";
 import { setTimer, type Schedule } from "./schedule";
-import { compileScene, framePart, type Scene } from "./scene";
+import { compileScene, framePart, stlPropGeometry, type PropGeometry, type Scene } from "./scene";
+import { triangleSoup } from "./print/stl";
 
 /**
  * The part of PrintPipeline that Booth uses. The real pipeline satisfies it
@@ -61,12 +62,14 @@ export class Booth {
   /** Opens and re-slices that have not settled yet. */
   #working = 0;
   readonly #idleWaiters = new Set<() => void>();
+  /** Meshes imported as props this session, by id. The document names them and never holds their triangles. */
+  readonly #propMeshes = new Map<string, PropGeometry & { readonly name: string }>();
 
   constructor(deps: BoothDeps) {
     this.#deps = deps;
     this.#schedule = deps.schedule ?? setTimer;
     this.#doc = freezeDeep(restore(deps.storage));
-    this.#scene = compileScene(this.#doc, null, this.#rev);
+    this.#scene = compileScene(this.#doc, null, this.#rev, undefined, this.#propMeshes);
   }
 
   get doc(): Readonly<BoothDocument> { return this.#doc; }
@@ -101,7 +104,7 @@ export class Booth {
    * throws a DocumentError as update does.
    */
   sceneWith(mutate: (draft: BoothDocument) => void): Scene {
-    return compileScene(this.#revise(mutate), this.#shown, this.#rev, this.#scene);
+    return compileScene(this.#revise(mutate), this.#shown, this.#rev, this.#scene, this.#propMeshes);
   }
 
   /**
@@ -177,6 +180,25 @@ export class Booth {
     return this.#deps.takePhoto(this.#scene, partNameOf(this.#shown.source));
   }
 
+  /**
+   * Reads an STL (millimetres) into a mesh a prop can show and returns its id.
+   * It changes nothing on its own: a prop names the id in one booth.update
+   * (edits.addProp). Meshes last for the session, as the part does. The id is
+   * a hash of the file, so a saved setup that names one shows its prop again
+   * once the same file is imported again.
+   */
+  addPropMesh(name: string, stl: ArrayBuffer): string {
+    const id = `mesh-${fnv1a(new Uint8Array(stl))}`;
+    if (!this.#propMeshes.has(id)) this.#propMeshes.set(id, { ...stlPropGeometry(triangleSoup(stl)), name });
+    return id;
+  }
+
+  /** An imported prop mesh: its file name and size, or null when it was not imported this session. */
+  propMesh(id: string): { readonly name: string; readonly bounds: PropGeometry["bounds"] } | null {
+    const mesh = this.#propMeshes.get(id);
+    return mesh === undefined ? null : { name: mesh.name, bounds: mesh.bounds };
+  }
+
   exportJson(): string {
     return JSON.stringify(this.#doc, null, 2);
   }
@@ -228,7 +250,7 @@ export class Booth {
     if (!sceneChanged && print === this.#print) return;
 
     if (sceneChanged) {
-      this.#scene = compileScene(doc, shown, this.#rev + 1, this.#scene);
+      this.#scene = compileScene(doc, shown, this.#rev + 1, this.#scene, this.#propMeshes);
       this.#rev += 1;
     }
     const docChanged = doc !== this.#doc;
@@ -375,6 +397,13 @@ function restore(storage: BoothDeps["storage"]): BoothDocument {
   }
 }
 
+/** FNV-1a, 32 bits, as eight hex digits. */
+function fnv1a(bytes: Uint8Array): string {
+  let h = 0x811c9dc5;
+  for (const b of bytes) h = Math.imul(h ^ b, 0x01000193);
+  return (h >>> 0).toString(16).padStart(8, "0");
+}
+
 /** Deep equality for plain JSON data. */
 function same(a: unknown, b: unknown): boolean {
   if (a === b) return true;
@@ -408,9 +437,11 @@ function reuseUnchanged(prev: BoothDocument, next: BoothDocument): BoothDocument
     camera: keep(prev.camera, next.camera),
     pose: keep(prev.pose, next.pose),
     output: keep(prev.output, next.output),
+    props: keep(prev.props, next.props),
   };
   const unchanged = merged.slicing === prev.slicing && merged.filament === prev.filament && merged.studio === prev.studio
-    && merged.lookBase === prev.lookBase && merged.camera === prev.camera && merged.pose === prev.pose && merged.output === prev.output;
+    && merged.lookBase === prev.lookBase && merged.camera === prev.camera && merged.pose === prev.pose && merged.output === prev.output
+    && merged.props === prev.props;
   return unchanged ? prev : freezeDeep(merged);
 }
 

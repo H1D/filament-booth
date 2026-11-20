@@ -38,7 +38,7 @@ const hiddenOf = (scene: Scene): Uint8Array | undefined => scene.part?.mesh.hidd
 /** Whether `next` is `last` but for its camera and film, so Cycles can render it again. */
 export function sameButFrame(last: Scene, lastHidden: Uint8Array | undefined, next: Scene): boolean {
   return next.part === last.part && hiddenOf(next) === lastHidden && next.lights === last.lights &&
-    next.backdrop === last.backdrop && next.world === last.world;
+    next.backdrop === last.backdrop && next.world === last.world && next.props === last.props;
 }
 
 export interface CyclesEngineOptions {

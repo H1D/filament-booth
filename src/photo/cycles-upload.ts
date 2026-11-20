@@ -8,7 +8,7 @@
  * so the parity tool checks this code too.
  */
 import { BEAD_WORD, PLATE_EPS, SPEED_STEP_MMS, unpackBeadWord, type BeadMesh } from "../print";
-import { ROUGH_MIN, type BackdropSection, type BeadMaterial, type Emitter, type FloorCardRing, type PartSection, type Scene } from "../scene";
+import { ROUGH_MIN, type BackdropSection, type BeadMaterial, type Emitter, type FloorCardRing, type PartSection, type PropItem, type Scene } from "../scene";
 
 /** The exports of public/cycles/cycles_booth.mjs. Pointers are byte offsets into wasmMemory. */
 export interface CyclesModule {
@@ -258,6 +258,7 @@ export function uploadScene(M: CyclesModule, scene: Scene, world: WorldImage, th
     check(M, M._cb_world_image(rgb, world.width, world.height, scene.world.strength, scene.world.rotationRad), "world"));
   if (scene.part) uploadPart(M, scene.part);
   uploadBackdrop(M, scene.backdrop);
+  uploadProps(M, scene.props);
   for (const emitter of scene.lights.emitters) uploadEmitter(M, emitter);
   if (scene.lights.floorCards) uploadFloorCards(M, scene.lights.floorCards);
 }
@@ -316,6 +317,22 @@ function uploadBackdrop(M: CyclesModule, backdrop: BackdropSection): void {
   const shader = check(M, M._cb_shader_principled(...backdrop.albedo, backdrop.roughness), "backdrop shader");
   copyToHeap(M, IDENTITY, (tfm) =>
     check(M, M._cb_object(handle, shader, -1, tfm, backdrop.shadowCatcher ? OBJECT_SHADOW_CATCHER : 0), "backdrop"));
+}
+
+/**
+ * Each prop is a Principled object outside the part's light set, as the backdrop is. Each gets its own
+ * mesh even when props share a geometry, because cb_object sets the shader on the mesh.
+ */
+function uploadProps(M: CyclesModule, props: readonly PropItem[]): void {
+  for (const p of props) {
+    const g = p.geometry;
+    const mesh = copyToHeap(M, g.positions, (positions) =>
+      copyToHeap(M, g.index, (indices) =>
+        copyToHeap(M, g.normals, (normals) =>
+          check(M, M._cb_mesh(g.positions.length / 3, g.index.length / 3, positions, indices, normals), `prop ${p.id} mesh`))));
+    const shader = check(M, M._cb_shader_principled(...p.albedo, p.roughness), `prop ${p.id} shader`);
+    copyToHeap(M, Float32Array.from(p.toWorld), (tfm) => check(M, M._cb_object(mesh, shader, -1, tfm, 0), `prop ${p.id}`));
+  }
 }
 
 function uploadEmitter(M: CyclesModule, e: Emitter): void {

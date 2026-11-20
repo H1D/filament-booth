@@ -274,7 +274,7 @@ export function fixture(name: FixtureName, o: FixtureOptions = {}): Scene {
   };
   const target: [number, number, number] = [0, 0, (shape.layers * shape.layerHeightM) / 2];
   const world = { hdrId: "studio_small_09_1k", strength: 0.25, rotationRad: (30 * Math.PI) / 180 };
-  const base = { docRev: 1, part, world };
+  const base = { docRev: 1, part, world, props: [] };
   const top = area("top", [1.2, 0.9], [0, -0.1, 1.0], 500);
   switch (name) {
     case "a":
