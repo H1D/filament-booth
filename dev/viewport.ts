@@ -4,13 +4,14 @@
  * no React. `window.viewportDev` is the same thing for tools/viewport/drive.mjs.
  *
  * URL parameters: look, filament, gloss, turntable, az, el, dist, tx, ty, tz,
- * focal, fstop, aspect (w:h), long, samples, transparent (0 or 1), overlay.
+ * focal, fstop, aspect (w:h), long, samples, transparent (0 or 1), overlay,
+ * props (demo: a grey wall behind the part and a red cube beside it).
  */
 import {
   DEFAULT_SLICE, FILAMENT_PRESET_IDS, LOOK_IDS, OVERLAYS, deg, defaultDocument, m, mm,
   type BoothDocument, type FilamentPresetId, type LookId,
 } from "../src/document";
-import { applyFilamentPreset, applyLook, focusAt, patchLight, type LightPatch } from "../src/edits";
+import { addProp, applyFilamentPreset, applyLook, focusAt, patchLight, type LightPatch } from "../src/edits";
 import { develop } from "../src/film";
 import { PrintPipeline, type LoadedPrint, type PrintSource } from "../src/print";
 import { compileScene, framePart, type Scene } from "../src/scene";
@@ -45,9 +46,16 @@ function applyParams(d: BoothDocument, p: Params): void {
       case "samples": d.output.samples = n; break;
       case "transparent": d.output.transparentBackground = v === "1" || v === "true"; break;
       case "backdrop": d.studio.backdrop.color = [n, n, n]; break;
+      case "props": if (v !== "demo") throw new Error(`props ${v}`); demoProps(d); break;
       default: throw new Error(`unknown parameter ${k}`);
     }
   }
+}
+
+/** A grey wall behind the part and a red cube beside it, as Booth's add-prop does. */
+function demoProps(d: BoothDocument): void {
+  addProp("cube", { name: "wall", size: [m(0.3), m(0.02), m(0.3)], location: [m(0), m(0.07), m(0.15)], color: [0.3, 0.3, 0.3], roughness: 0.6 })(d);
+  addProp("cube", { name: "cube", size: [m(0.05), m(0.05), m(0.05)], location: [m(-0.07), m(-0.01), m(0.025)], rotationDeg: [deg(0), deg(0), deg(25)], color: [0.8, 0.02, 0.02], roughness: 0.4 })(d);
 }
 
 const urlParams: Params = Object.fromEntries(new URLSearchParams(location.search));

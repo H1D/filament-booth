@@ -7,6 +7,7 @@ import {
   AGX_LOOKS, BED_TYPES, OVERLAYS, REST_FACES, SEAM_POSITIONS, TOP_SURFACE_PATTERNS, defaultDocument, kelvin, m,
   type BoothDocument,
 } from "../src/document";
+import { addProp } from "../src/edits";
 import { LOOK_PRESETS } from "../src/presets";
 import { FILM_DEFAULTS } from "../src/scene";
 
@@ -14,6 +15,8 @@ import { FILM_DEFAULTS } from "../src/scene";
 function leaves(value: unknown, path = ""): string[] {
   const at = (key: string) => (path === "" ? key : `${path}.${key}`);
   if (Array.isArray(value)) {
+    // An empty list (no props) has no leaves: documents() shows the items it can hold.
+    if (value.length === 0) return [];
     if (value.every((v) => typeof v === "number")) return [path];
     return [...new Set(value.flatMap((v) => leaves(v, `${path}[]`)))];
   }
@@ -27,6 +30,8 @@ function documents(): BoothDocument[] {
   varied.studio = structuredClone(LOOK_PRESETS.gradient.studio);
   varied.studio.lights[0].color = { kind: "kelvin", kelvin: kelvin(4800) };
   varied.camera.focusPartPoint = [m(0), m(0), m(0.01)];
+  addProp("cube")(varied);
+  addProp("mesh", { mesh: "mesh-0123abcd", name: "battery" })(varied);
   return [defaultDocument(), varied];
 }
 
@@ -115,7 +120,7 @@ describe("structure", () => {
   });
 
   test("a handle survives its FFI spelling, and junk is refused", () => {
-    const handles: Handle[] = [{ t: "scene" }, { t: "camera" }, { t: "part" }, { t: "light", id: "rim:left" }, { t: "image", id: "studio_small_09_1k" }];
+    const handles: Handle[] = [{ t: "scene" }, { t: "camera" }, { t: "part" }, { t: "light", id: "rim:left" }, { t: "prop", id: "prop-2" }, { t: "image", id: "studio_small_09_1k" }];
     for (const h of handles) expect(parseHandle(handleKey(h))).toEqual(h);
     expect(parseHandle("light:")).toBeNull();
     expect(parseHandle("lamp:key")).toBeNull();
@@ -131,7 +136,8 @@ describe("structure", () => {
 /** A part is open and the gradient look has floor cards, so every collection shows all it can hold. */
 function everyMember(collection: CollectionName): readonly Member[] {
   const doc = documents()[1];
-  return COLLECTIONS[collection].members({ doc, partName: "bracket" });
+  const owner: Handle = collection.startsWith("prop.") ? { t: "prop", id: doc.props[0].id } : { t: "scene" };
+  return COLLECTIONS[collection].members({ doc, partName: "bracket", owner });
 }
 
 describe("the reference", () => {

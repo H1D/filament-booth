@@ -1,12 +1,13 @@
 /**
  * Parity, scale and cancel checks for the Cycles photo engine.
  *
- *   bun tools/parity/run.ts [a b c d e f g] [--samples 256] [--width 640] [--height 400] [--bvh bvh2|embree]
+ *   bun tools/parity/run.ts [a b c d p e f g] [--samples 256] [--width 640] [--height 400] [--bvh bvh2|embree]
  *                           [--gcode file]
  *       Each fixture renders in headless Chromium through dev/photo.html and cyclesEngine(), and
  *       in native Blender through tools/blender/render_scene.py, both with the Standard view
  *       transform. Prints PSNR, mean absolute difference and the share of pixels more than
  *       4/255 apart; writes browser.png, blender.png and side_by_side.png per fixture.
+ *       p has props (a wall, a squashed cube, a sphere) and a part-only light they must not receive.
  *       e, f and g go defaultDocument() and two looks through compileScene on a real bead mesh
  *       (--gcode, else $BOOTH_REF/bsch04/sliced/plate_1.gcode, else tests/fixtures/mini.gcode).
  *       Node and the page each compile them and the run stops if their scene files differ.
@@ -267,7 +268,7 @@ if (argv.includes("--scale")) await scale();
 else if (argv.includes("--cancel")) await cancel();
 else {
   const names = argv.filter((a, i) => !a.startsWith("--") && !(i > 0 && argv[i - 1].startsWith("--")));
-  const chosen = (names.length ? names : ["a", "b", "c", "d"]).map((n) => {
+  const chosen = (names.length ? names : ["a", "b", "c", "d", "p"]).map((n) => {
     if (!isFixtureName(n) && !isCompiledName(n)) throw new Error(`unknown fixture ${n}`);
     return n;
   });

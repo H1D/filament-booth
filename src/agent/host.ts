@@ -17,7 +17,7 @@
  */
 import type { Booth } from "../booth";
 import { BOUNDS, DocumentError, m, type BoothDocument, type Bounds } from "../document";
-import { addLight } from "../edits";
+import { addLight, addProp } from "../edits";
 import type { RadianceFrame } from "../film";
 import { PhotoCancelled, type Photo, type PhotoEngine, type PhotoProgress } from "../photo/photo";
 import type { FilmSection } from "../scene";
@@ -25,7 +25,7 @@ import type { PhotoSession } from "../ui/photo-session";
 import type { ImageMeta } from "./protocol";
 import {
   COLLECTIONS, DEFAULT_RENDER_FILEPATH, HostError, OPS, OPS_MISSING, OWNERS, PART, RNA, SCENE,
-  boolOf, enumError, fmt, handleKey, lightHandle, numberOf, parseHandle, propRange, pyRepr, pyTypeName, referenceText,
+  boolOf, enumError, fmt, handleKey, lightHandle, numberOf, parseHandle, propHandle, propRange, pyRepr, pyTypeName, referenceText,
   sameHandle, structKey, uniqueName, uniqueNames,
   type CollectionName, type Handle, type Json, type Member, type OpArgs, type OpDef, type OpHost, type OpResult,
   type Prop, type PyErrorType, type ReadContext, type RnaType, type RnaTypeName, type SessionState,
@@ -39,7 +39,8 @@ export interface Thumbnail { readonly blob: Blob; readonly width: number; readon
 
 /** What the host drives. The app passes the real parts; tests pass a real Booth over a fake print port. */
 export interface HostPorts {
-  readonly booth: Pick<Booth, "doc" | "scene" | "print" | "partName" | "update" | "open" | "whenIdle" | "sceneWith" | "subscribe">;
+  readonly booth: Pick<Booth, "doc" | "scene" | "print" | "partName" | "update" | "open" | "whenIdle" | "sceneWith" | "subscribe"
+    | "addPropMesh" | "propMesh">;
   /** The photo card's session: render.render goes through it, so the card shows an agent's photo as it shows PHOTO. */
   readonly photos: Pick<PhotoSession, "take" | "state">;
   /** The raster engine over the live viewport, for render.opengl. Null where the tab has no viewport. */
@@ -85,7 +86,7 @@ type Request =
   | { readonly fn: "boot" }
   | { readonly fn: "get"; readonly handle: Handle; readonly type: RnaTypeName; readonly attr: string }
   | { readonly fn: "set"; readonly handle: Handle; readonly type: RnaTypeName; readonly attr: string; readonly value: Json }
-  | { readonly fn: "members"; readonly collection: CollectionName }
+  | { readonly fn: "members"; readonly collection: CollectionName; readonly owner: Handle }
   | { readonly fn: "remove"; readonly collection: CollectionName; readonly handle: Handle }
   | { readonly fn: "create"; readonly collection: CollectionName }
   | { readonly fn: "op"; readonly name: string; readonly args: OpArgs }
@@ -122,7 +123,7 @@ export class AgentHost {
       case "boot": return bootTable();
       case "get": return this.#get(req.handle, req.type, req.attr);
       case "set": return { warning: this.#set(req.handle, req.type, req.attr, req.value) };
-      case "members": return this.#members(req.collection).map((mb) => ({ name: mb.name, struct: handleKey(mb.handle), type: mb.type }));
+      case "members": return this.#members(req.collection, req.owner).map((mb) => ({ name: mb.name, struct: handleKey(mb.handle), type: mb.type }));
       case "remove": this.#remove(req.collection, req.handle); return null;
       case "create": throw new HostError("RuntimeError", `bpy.data.${req.collection}.new is not in the booth: ${COLLECTIONS[req.collection].newHint}`);
       case "op": return this.#op(req.name, req.args, io);
@@ -135,7 +136,7 @@ export class AgentHost {
 
   #ctx(handle: Handle): ReadContext {
     const { booth } = this.#ports;
-    return { doc: booth.doc, scene: booth.scene, handle, session: this.#session, partName: booth.partName };
+    return { doc: booth.doc, scene: booth.scene, handle, session: this.#session, partName: booth.partName, propMesh: (id) => booth.propMesh(id) };
   }
 
   /** The owner node of `t` for `handle` in `doc`, or Blender's ReferenceError when its object is gone. */
@@ -186,15 +187,15 @@ export class AgentHost {
     }
   }
 
-  #members(collection: CollectionName): readonly Member[] {
+  #members(collection: CollectionName, owner: Handle = SCENE): readonly Member[] {
     const { booth } = this.#ports;
-    return uniqueNames(COLLECTIONS[collection].members({ doc: booth.doc, partName: booth.partName }));
+    return uniqueNames(COLLECTIONS[collection].members({ doc: booth.doc, partName: booth.partName, owner }));
   }
 
   /** How Blender spells a struct: bpy.data.lights['Key']. */
   #path(t: RnaType, handle: Handle): string {
     if (!t.path.includes("{name}")) return t.path;
-    const name = handle.t === "light"
+    const name = handle.t === "light" || handle.t === "prop"
       ? (this.#members("objects").find((mb) => sameHandle(mb.handle, handle))?.name ?? handle.id)
       : handle.t === "part" ? (this.#ports.booth.partName ?? "part")
       : handle.t === "image" ? (OWNERS.image.node(this.#ports.booth.doc as BoothDocument, handle)?.file ?? handle.id)
@@ -318,6 +319,8 @@ export class AgentHost {
       edit: (edit) => { this.#edit(where, null, null, (draft) => { edit(draft); return undefined; }); },
       addLight: (kind, name, location, size) => { this.#addLight(where, kind, name, location, size); },
       open: (path, accept) => this.#open(running(), where, path, accept),
+      addProp: (shape, fields) => { this.#addProp(where, shape, fields); },
+      readPropMesh: (path) => this.#readPropMesh(running(), where, path),
       photo: (writeStill) => this.#photo(running(), writeStill),
       preview: (writeStill) => this.#preview(running(), writeStill),
     };
@@ -343,6 +346,49 @@ export class AgentHost {
       return undefined;
     });
     this.#session = { ...this.#session, active: lightHandle(id) };
+  }
+
+  /** The prop and its unique name land in one booth.update, and it becomes bpy.context.object. */
+  #addProp(where: string, shape: Parameters<OpHost["addProp"]>[0], fields: Parameters<OpHost["addProp"]>[1]): void {
+    const taken = new Set(this.#members("objects").map((mb) => mb.name));
+    let id = "";
+    this.#edit(where, null, null, (draft) => {
+      addProp(shape, fields)(draft);
+      const prop = draft.props[draft.props.length - 1];
+      id = prop.id;
+      prop.name = uniqueName(prop.name, taken);
+      return undefined;
+    });
+    this.#session = { ...this.#session, active: propHandle(id) };
+  }
+
+  async #readPropMesh(io: JobIo, where: string, path: string): Promise<{ mesh: string; name: string; reconnected: boolean }> {
+    const { booth } = this.#ports;
+    const name = path.split(/[\\/]/).pop() ?? path;
+    if (!/\.stl$/i.test(name)) throw new HostError("RuntimeError", `${where} reads .stl files, not ${name}`);
+    io.progress(`reading ${name}`, null);
+    let file: File;
+    try {
+      file = await untilAborted(io.read(path), io.signal);
+    } catch (e) {
+      if (io.signal.aborted) throw e;
+      throw new HostError("RuntimeError", `${where}: cannot read ${path}: ${errorText(e)}`);
+    }
+    const bytes = await untilAborted(file.arrayBuffer(), io.signal);
+    // Meshes saved props name but this session has not loaded: a reload left them hidden.
+    const missing = new Set(booth.doc.props.flatMap((p) => (p.mesh !== null && booth.propMesh(p.mesh) === null ? [p.mesh] : [])));
+    let mesh: string;
+    try {
+      mesh = booth.addPropMesh(name, bytes);
+    } catch (e) {
+      throw new HostError("RuntimeError", `${where}: ${name}: ${errorText(e)}`);
+    }
+    const back = missing.has(mesh) ? booth.doc.props.find((p) => p.mesh === mesh) : undefined;
+    if (back !== undefined) {
+      this.#session = { ...this.#session, active: propHandle(back.id) };
+      io.print(`${where}: ${name} brought back the saved props that name it; nothing was added.\n`);
+    }
+    return { mesh, name, reconnected: back !== undefined };
   }
 
   async #open(io: JobIo, where: string, path: string, accept: "stl" | "gcode"): Promise<void> {
@@ -486,7 +532,7 @@ function parseRequest(text: string): Request {
     case "boot": return { fn };
     case "get": return { fn, handle: handle(a), type: type(b), attr: attr(c) };
     case "set": return { fn, handle: handle(a), type: type(b), attr: attr(c), value: (d ?? null) as Json };
-    case "members": return { fn, collection: collection(a) };
+    case "members": return { fn, collection: collection(a), owner: b === undefined || b === null ? SCENE : handle(b) };
     case "remove": return { fn, collection: collection(a), handle: handle(b) };
     case "create": return { fn, collection: collection(a) };
     case "op": {
@@ -540,6 +586,13 @@ function opArgs(name: string, def: OpDef, kwargs: OpArgs): OpArgs {
             throw new HostError("TypeError", `${k} expected a sequence of ${param.size} floats, not ${pyTypeName(given)}`);
           } else out[k] = given;
           break;
+        case "number": {
+          const v = given === undefined ? param.default : numberOf(given);
+          if (param.int && !Number.isInteger(v)) throw new HostError("TypeError", `${k} expected an int, not ${pyTypeName(v)}`);
+          if (param.positive && v <= 0) throw new HostError("ValueError", `${k} must be more than 0, got ${fmt(v)}`);
+          out[k] = v;
+          break;
+        }
         case "path":
           if (typeof given !== "string" || given === "") throw new HostError("TypeError", `${k} is required: a path on the agent's machine`);
           out[k] = given;

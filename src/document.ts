@@ -37,6 +37,8 @@ export interface BoothDocument {
   camera: CameraSetup;
   pose: Pose;
   output: OutputSetup;
+  /** Objects that stand in the scene beside the part: a wall, a box, the thing the part holds. Not part of a look. */
+  props: StudioProp[];
 }
 
 // ---- filament & print appearance -------------------------------------------
@@ -196,6 +198,39 @@ export interface Pose {
   restFace: (typeof REST_FACES)[number];
 }
 
+// ---- props -------------------------------------------------------------------------
+
+/**
+ * What a prop is made of. The primitives are Blender's, 1 m across before
+ * `size`: a cube from -0.5 to 0.5, a cylinder of radius 0.5 and depth 1 along
+ * Z, a UV sphere of radius 0.5, and a plane 1 m square in XY. "mesh" is a
+ * file imported this session (scene.ts PropGeometry); the document names it
+ * by `mesh` and never holds its triangles.
+ */
+export const PROP_SHAPES = ["cube", "cylinder", "sphere", "plane", "mesh"] as const;
+export type PropShape = (typeof PROP_SHAPES)[number];
+
+export interface StudioProp {
+  id: string; // stable across edits, as a light's
+  name: string;
+  on: boolean;
+  shape: PropShape;
+  /** For "mesh": the imported mesh's id (Booth.addPropMesh). Null for a primitive. */
+  mesh: string | null;
+  /** Per-axis factor on the shape's own mesh, which Blender bakes into the
+   *  vertices when an add operator gets size, radius or depth. `scale` multiplies it. */
+  size: Vec3;
+  /** Around a cylinder or a sphere. Sides turn smooth above 12, as Blender's auto smooth at 30 degrees does. */
+  segments: number;
+  /** Blender frame: the object's origin, its rotation as an XYZ Euler, and its scale. */
+  location: Vec3;
+  rotationDeg: [Degrees, Degrees, Degrees];
+  scale: [number, number, number];
+  /** Principled BSDF at factory settings but for these: linear base colour and roughness. */
+  color: Rgb;
+  roughness: number;
+}
+
 /** Blender's AgX looks. "medium-high-contrast" is what the reference stills use. */
 export const AGX_LOOKS = ["none", "punchy", "low-contrast", "medium-low-contrast", "medium-high-contrast", "high-contrast"] as const;
 export type AgxLook = (typeof AGX_LOOKS)[number];
@@ -297,6 +332,13 @@ export const BOUNDS = {
   longEdgePx: { int: true, min: 16, max: 16384, step: 16, slider: { min: 512, max: 6144 } },
   samples: { int: true, min: 1, max: 65536, step: 1, slider: { min: 16, max: 4096 } },
   timeLimitS: { int: true, min: 0, max: 86400, step: 1 },
+
+  propLocation: { min: -100, max: 100, step: 0.001, slider: { min: -1, max: 1 } },
+  propRotationDeg: { min: -3600, max: 3600, step: 1, slider: { min: -180, max: 180 } },
+  propSize: { gt: 0, max: 100, step: 0.001, slider: { min: 0.01, max: 2 } },
+  propScale: { gt: 0, max: 1000, step: 0.01, slider: { min: 0.1, max: 4 } },
+  propSegments: { int: true, min: 3, max: 256, step: 1, slider: { min: 3, max: 128 } },
+  propRoughness: UNIT,
 } as const satisfies Record<string, Bounds>;
 
 function num(v: unknown, path: string, b: Bounds = {}): number {
@@ -494,6 +536,48 @@ function parseOutput(v: unknown, path: string): OutputSetup {
   };
 }
 
+function triple(v: unknown, path: string, b: Bounds): [number, number, number] {
+  const a = array(v, path, 3);
+  return [num(a[0], at(path, 0), b), num(a[1], at(path, 1), b), num(a[2], at(path, 2), b)];
+}
+
+function parseProp(v: unknown, path: string): StudioProp {
+  const o = object(v, path);
+  const shape = oneOf(o.shape, at(path, "shape"), PROP_SHAPES);
+  const mesh = o.mesh === null ? null : text(o.mesh, at(path, "mesh"));
+  if (shape === "mesh" && mesh === null) fail(at(path, "mesh"), "a mesh prop names its mesh");
+  if (shape !== "mesh" && mesh !== null) fail(at(path, "mesh"), `a ${shape} has no mesh: expected null`);
+  const [lx, ly, lz] = triple(o.location, at(path, "location"), BOUNDS.propLocation);
+  const [sx, sy, sz] = triple(o.size, at(path, "size"), BOUNDS.propSize);
+  const [rx, ry, rz] = triple(o.rotationDeg, at(path, "rotationDeg"), BOUNDS.propRotationDeg);
+  return {
+    id: text(o.id, at(path, "id")),
+    name: typeof o.name === "string" ? o.name : fail(at(path, "name"), "expected a string"),
+    on: bool(o.on, at(path, "on")),
+    shape,
+    mesh,
+    size: [m(sx), m(sy), m(sz)],
+    segments: num(o.segments, at(path, "segments"), BOUNDS.propSegments),
+    location: [m(lx), m(ly), m(lz)],
+    rotationDeg: [deg(rx), deg(ry), deg(rz)],
+    scale: triple(o.scale, at(path, "scale"), BOUNDS.propScale),
+    color: rgb(o.color, at(path, "color")),
+    roughness: num(o.roughness, at(path, "roughness"), BOUNDS.propRoughness),
+  };
+}
+
+function parseProps(v: unknown, path: string): StudioProp[] {
+  // Setups saved before props existed have no such field. They have no props and stay version 1.
+  if (v === undefined) return [];
+  const props = array(v, path).map((p, i) => parseProp(p, at(path, i)));
+  const seen = new Set<string>();
+  props.forEach((p, i) => {
+    if (seen.has(p.id)) fail(at(at(path, i), "id"), `duplicate prop id ${JSON.stringify(p.id)}`);
+    seen.add(p.id);
+  });
+  return props;
+}
+
 /** Boundary check for imported/persisted JSON. Throws a DocumentError naming
  *  the field path. Everything past this trusts the types. Unknown fields are
  *  dropped. Only version 1 exists; a later format adds a migration here. */
@@ -510,6 +594,7 @@ export function parseDocument(json: unknown): BoothDocument {
     camera: parseCamera(o.camera, "camera"),
     pose: parsePose(o.pose, "pose"),
     output: parseOutput(o.output, "output"),
+    props: parseProps(o.props, "props"),
   };
 }
 
@@ -542,5 +627,6 @@ export function defaultDocument(): BoothDocument {
       viewTransform: { kind: "agx", look: "medium-high-contrast" },
       denoise: true,
     },
+    props: [],
   };
 }

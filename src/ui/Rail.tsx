@@ -5,6 +5,7 @@ import { LightsPanel } from "./LightsPanel";
 import { OutputPanel, PosePanel } from "./OutputPanels";
 import { useUi } from "./hooks";
 import { PartPanel } from "./PartPanel";
+import { PropsPanel } from "./PropsPanel";
 import { Section } from "./Section";
 import { SetupPanel } from "./SetupPanel";
 import { WorldPanel } from "./WorldPanel";
@@ -17,6 +18,7 @@ export function Rail() {
       <Section id="part" open><PartPanel /></Section>
       <Section id="filament"><FilamentPanel /></Section>
       <Section id="lights" open><LightsPanel /></Section>
+      <Section id="props"><PropsPanel /></Section>
       <Section id="world"><WorldPanel /></Section>
       <Section id="camera"><CameraPanel /></Section>
       <Section id="pose"><PosePanel /></Section>

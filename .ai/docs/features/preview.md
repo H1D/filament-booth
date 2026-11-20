@@ -8,9 +8,10 @@ depends_on[2]: scene,print
 entry_point: src/viewport/viewport.ts
 test_cmd: bunx vitest run tests/viewport-frame.test.ts tests/viewport-radiance.test.ts tests/viewport-sampling.test.ts
 
-files[12]{path,purpose}:
+files[13]{path,purpose}:
   src/viewport/viewport.ts,Viewport class (create and show and setLiteMesh and setFocusTool and accumulate and stats)
   src/viewport/stage.ts,live three.js scene under one root group
+  src/viewport/props.ts,a prop's geometry and standard material and mesh shared by the stage and the bake
   src/viewport/frame.ts,coordinate and framing math and BLENDER_TO_VIEWER
   src/viewport/bake.ts,cube maps the preview lights with and BAKE_GAIN
   src/viewport/radiance.ts,what each emitter contributes as pure numbers
@@ -30,6 +31,8 @@ files[12]{path,purpose}:
 - `PREVIEW_APPROXIMATIONS` lists what the preview does not match in Cycles. Keep it true.
 - While the camera moves, the lite mesh (`setLiteMesh`) and the quality ladder keep the frame rate.
 - Tone mapping uses the same baked AgX tables as the photo (`src/film.ts`).
+
+- Props are lit as the sweep is (world ambient, the RectAreaLights of emitters that reach the backdrop, the one shadow key) and cast and receive shadows. They are in the reflection bake too, without shadows there. The shadow frustum fits the part and every prop, so a very large prop softens the key's shadow.
 
 ## Gotchas
 

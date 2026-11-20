@@ -3,7 +3,7 @@
 The full list of 21 design decisions, the tradeoffs accepted and the proven facts is in `docs/design.md`. These are the ones with the largest consequences.
 
 ```toon
-decisions[10]{id,date,title,status}:
+decisions[11]{id,date,title,status}:
   001,2026-11-19,Real Cycles in WebAssembly for PHOTO,accepted
   002,2026-11-19,Muon3D Orca engine for slicing,accepted
   003,2026-11-19,One Scene compiled from the document,accepted
@@ -14,6 +14,7 @@ decisions[10]{id,date,title,status}:
   008,2026-11-19,Raster engine as fallback not as the photo,accepted
   009,2026-11-19,Built wasm modules are committed,accepted
   010,2026-11-20,Agent control is Blender Python in a worker through one table,accepted
+  011,2026-11-20,Props are document objects with a Principled material,accepted
 ```
 
 ## ADR-001: Real Cycles in WebAssembly for PHOTO
@@ -113,3 +114,13 @@ decisions[10]{id,date,title,status}:
 **Context**: A coding agent should drive the booth in a language it already knows. A JSON command set beside a script would give two ways to do one task.
 **Decision**: The agent writes `bpy`. A Pyodide worker runs the script. `AgentHost` interprets one table, `src/agent/rna.ts`, against `Booth`, so each assignment is one `booth.update`. A local bridge in `tools/agent/` is the MCP server and the socket the tab dials. The page loads Python and opens the socket only after the user turns on the switch.
 **Consequences**: A new document field must be reached by the table or named in `UNMAPPED`, or a test fails. A runaway script cannot freeze the page, and a cancel costs a fresh interpreter. The repo carries 13 MB of Pyodide. A page on a public HTTPS origin may be unable to dial `ws://127.0.0.1`, and that case is open.
+
+---
+
+## ADR-011: Props are document objects with a Principled material
+
+**Status**: accepted
+**Date**: 2026-11-20
+**Context**: A product photo often needs more than the part: a wall it hangs on, the battery it holds. The booth held one part, so an agent faked a wall by pointing the camera at the floor.
+**Decision**: `doc.props` holds primitives (cube, cylinder, UV sphere, plane) and STLs imported as props. `compileScene` lowers them to `Scene.props`, and Cycles, the preview and native Blender each draw a Principled BSDF with base colour and roughness, outside the part's light set. The agent adds them with Blender's `bpy.ops.mesh.primitive_*_add` and `bpy.ops.booth.prop_import`. An imported mesh lives in the session, as the part does, and the document names it by a hash of the file. Props are not part of a look, so applying a look keeps them.
+**Consequences**: No Cycles rebuild was needed: `cb_mesh`, `cb_shader_principled` and `cb_object` already existed for the backdrop. Metal, glass, emission and textures stay out until the wasm gains shaders for them. A saved setup with an imported prop shows it only after the same file is imported again.

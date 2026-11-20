@@ -10,14 +10,14 @@
  * Invariants:
  * - A Scene and everything in it is frozen. Holding a reference is a snapshot. One exception: the
  *   part's BeadMesh.hidden arrives once, after the mesh (print.ts hiddenFacesSettled).
- * - A section (part, lights, backdrop, world, camera, film) keeps its object
- *   identity while its inputs are unchanged, so renderers diff with `===`.
+ * - A section (part, lights, backdrop, world, camera, film, props) keeps its
+ *   object identity while its inputs are unchanged, so renderers diff with `===`.
  * - This file is pure: no three.js, no DOM, no workers. It runs in Node.
  */
 import {
   DEFAULT_GLOSS, deg, m, mm,
   type AgxLook, type BedType, type BoothDocument, type CameraSetup, type Degrees, type FeatureCode, type FilamentChoice,
-  type Imperfections, type Metres, type Pose, type Rgb, type Studio, type StudioLight, type Vec3,
+  type Imperfections, type Metres, type Pose, type PropShape, type Rgb, type Studio, type StudioLight, type StudioProp, type Vec3,
 } from "./document";
 import { BEAD_WORD, type BeadMesh, type LoadedPrint, type SlicedPrint } from "./print";
 
@@ -32,6 +32,32 @@ export interface Scene {
   readonly world: WorldSection;
   readonly camera: CameraSection;
   readonly film: FilmSection;
+  /** Props switched on, in document order. A mesh prop whose mesh is not loaded this session is left out. */
+  readonly props: readonly PropItem[];
+}
+
+/**
+ * Triangles in a prop's own frame, metres, Z up. Every corner has its normal:
+ * a hard edge splits its vertices, so a renderer shades with the normals as
+ * given and never derives its own.
+ */
+export interface PropGeometry {
+  readonly positions: Float32Array;
+  readonly normals: Float32Array;
+  readonly index: Uint32Array;
+  readonly bounds: { readonly min: Vec3; readonly max: Vec3 };
+}
+
+/** One prop, ready to draw: a Principled BSDF at factory settings but for base colour and roughness. */
+export interface PropItem {
+  readonly id: string;
+  /** Shared between props of the same shape and segments, and kept by reference while they last. */
+  readonly geometry: PropGeometry;
+  /** Prop-local to world: translate(location) * Rz * Ry * Rx * scale(scale * size), Blender's
+   *  XYZ Euler. Not a rigid motion, so normals take its inverse transpose. */
+  readonly toWorld: Mat4;
+  readonly albedo: Rgb;
+  readonly roughness: number;
 }
 
 export interface PartSection {
@@ -336,6 +362,7 @@ function keep<T>(prev: T | undefined, next: T): T {
  */
 export function compileScene(
   doc: BoothDocument, print: LoadedPrint | null, docRev: number, previous?: Scene,
+  meshes: ReadonlyMap<string, PropGeometry> = NO_MESHES,
 ): Scene {
   const { width, height } = filmSize(doc.output.aspect, doc.output.longEdgePx);
   const film = keep<FilmSection>(previous?.film, {
@@ -370,8 +397,207 @@ export function compileScene(
   const w = doc.studio.world;
   const world = keep<WorldSection>(previous?.world, { hdrId: w.hdrId, strength: w.strength, rotationRad: rad(w.rotationDeg) });
   const camera = keep(previous?.camera, solveCamera(doc.camera, part?.toWorld ?? null, width, height));
+  const props = compileProps(doc.props, meshes, previous?.props);
 
-  return Object.freeze({ docRev, part, lights, backdrop, world, camera, film });
+  return Object.freeze({ docRev, part, lights, backdrop, world, camera, film, props });
+}
+
+const NO_MESHES: ReadonlyMap<string, PropGeometry> = new Map();
+
+function compileProps(props: readonly StudioProp[], meshes: ReadonlyMap<string, PropGeometry>, prev: readonly PropItem[] | undefined): readonly PropItem[] {
+  const before = new Map((prev ?? []).map((p) => [p.id, p]));
+  const items: PropItem[] = [];
+  for (const p of props) {
+    if (!p.on) continue;
+    const geometry = p.shape === "mesh" ? (p.mesh === null ? undefined : meshes.get(p.mesh)) : primitiveGeometry(p.shape, p.segments);
+    if (geometry === undefined) continue;
+    const old = before.get(p.id);
+    const next = { id: p.id, geometry, toWorld: propMatrix(p), albedo: [...p.color] as Rgb, roughness: p.roughness };
+    // The geometry is compared by reference: the same shape and segments give the same object.
+    items.push(old && old.geometry === geometry && same({ ...old, geometry: null }, { ...next, geometry: null })
+      ? old
+      : freezeDeep(next));
+  }
+  return prev && prev.length === items.length && items.every((p, i) => p === prev[i]) ? prev : Object.freeze(items);
+}
+
+/** translate(location) * Rz * Ry * Rx * scale(scale * size): Blender's object matrix for an XYZ Euler. */
+export function propMatrix(p: Pick<StudioProp, "location" | "rotationDeg" | "scale" | "size">): Mat4 {
+  const [cx, cy, cz] = p.rotationDeg.map((d) => Math.cos(rad(d)));
+  const [sx, sy, sz] = p.rotationDeg.map((d) => Math.sin(rad(d)));
+  // Columns of Rz * Ry * Rx.
+  const x: V3 = [cy * cz, cy * sz, -sy];
+  const y: V3 = [sx * sy * cz - cx * sz, sx * sy * sz + cx * cz, sx * cy];
+  const z: V3 = [cx * sy * cz + sx * sz, cx * sy * sz - sx * cz, cx * cy];
+  const k = [0, 1, 2].map((i) => p.scale[i] * p.size[i]);
+  return [
+    ...scale(x, k[0]), 0, ...scale(y, k[1]), 0, ...scale(z, k[2]), 0,
+    p.location[0], p.location[1], p.location[2], 1,
+  ];
+}
+
+// ---- prop geometry ---------------------------------------------------------------
+
+/** Above this many segments a curved side is smooth: each step turns by less than 30 degrees, Blender's auto smooth angle. */
+export const SMOOTH_ABOVE_SEGMENTS = 12;
+
+/** Triangles with a normal per corner, written out unwelded. Primitives are small, so the copies cost nothing. */
+class Triangles {
+  readonly #p: number[] = [];
+  readonly #n: number[] = [];
+  add(a: V3, b: V3, c: V3, na: V3, nb: V3, nc: V3): void {
+    this.#p.push(...a, ...b, ...c);
+    this.#n.push(...na, ...nb, ...nc);
+  }
+  /** One triangle with its face normal, so it shades flat. */
+  flat(a: V3, b: V3, c: V3): void {
+    const n = cross(sub(b, a), sub(c, a));
+    const len = length(n);
+    const unit: V3 = len > 0 ? scale(n, 1 / len) : [0, 0, 1];
+    this.add(a, b, c, unit, unit, unit);
+  }
+  quad(a: V3, b: V3, c: V3, d: V3, na: V3, nb: V3, nc: V3, nd: V3): void {
+    this.add(a, b, c, na, nb, nc);
+    this.add(a, c, d, na, nc, nd);
+  }
+  build(): PropGeometry {
+    const positions = Float32Array.from(this.#p);
+    const index = new Uint32Array(positions.length / 3);
+    for (let i = 0; i < index.length; i++) index[i] = i;
+    return { positions, normals: Float32Array.from(this.#n), index, bounds: boundsOfPositions(positions) };
+  }
+}
+
+function boundsOfPositions(positions: Float32Array): PropGeometry["bounds"] {
+  const min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity];
+  for (let i = 0; i < positions.length; i += 3) {
+    for (let k = 0; k < 3; k++) { min[k] = Math.min(min[k], positions[i + k]); max[k] = Math.max(max[k], positions[i + k]); }
+  }
+  return positions.length === 0
+    ? { min: vec([0, 0, 0]), max: vec([0, 0, 0]) }
+    : { min: vec([min[0], min[1], min[2]]), max: vec([max[0], max[1], max[2]]) };
+}
+
+function cube(): PropGeometry {
+  const t = new Triangles();
+  // Each face: its outward normal and two axes with u x v = normal, so the quad winds outward.
+  const faces: [V3, V3, V3][] = [
+    [[1, 0, 0], [0, 1, 0], [0, 0, 1]], [[-1, 0, 0], [0, 0, 1], [0, 1, 0]],
+    [[0, 1, 0], [0, 0, 1], [1, 0, 0]], [[0, -1, 0], [1, 0, 0], [0, 0, 1]],
+    [[0, 0, 1], [1, 0, 0], [0, 1, 0]], [[0, 0, -1], [0, 1, 0], [1, 0, 0]],
+  ];
+  for (const [n, u, v] of faces) {
+    const c = scale(n, 0.5);
+    const at = (a: number, b: number): V3 => add(c, add(scale(u, a * 0.5), scale(v, b * 0.5)));
+    t.quad(at(-1, -1), at(1, -1), at(1, 1), at(-1, 1), n, n, n, n);
+  }
+  return t.build();
+}
+
+function plane(): PropGeometry {
+  const t = new Triangles();
+  const up: V3 = [0, 0, 1];
+  t.quad([-0.5, -0.5, 0], [0.5, -0.5, 0], [0.5, 0.5, 0], [-0.5, 0.5, 0], up, up, up, up);
+  return t.build();
+}
+
+function ring(segments: number, k: number, r: number, z: number): V3 {
+  const a = (2 * Math.PI * k) / segments;
+  return [r * Math.cos(a), r * Math.sin(a), z];
+}
+
+function cylinder(segments: number): PropGeometry {
+  const t = new Triangles();
+  const smooth = segments > SMOOTH_ABOVE_SEGMENTS;
+  const up: V3 = [0, 0, 1], down: V3 = [0, 0, -1];
+  for (let k = 0; k < segments; k++) {
+    const [b0, b1, t0, t1] = [ring(segments, k, 0.5, -0.5), ring(segments, k + 1, 0.5, -0.5), ring(segments, k, 0.5, 0.5), ring(segments, k + 1, 0.5, 0.5)];
+    if (smooth) {
+      const n0 = ring(segments, k, 1, 0), n1 = ring(segments, k + 1, 1, 0);
+      t.quad(b0, b1, t1, t0, n0, n1, n1, n0);
+    } else {
+      t.flat(b0, b1, t1);
+      t.flat(b0, t1, t0);
+    }
+    t.add([0, 0, 0.5], t0, t1, up, up, up);
+    t.add([0, 0, -0.5], b1, b0, down, down, down);
+  }
+  return t.build();
+}
+
+function sphere(segments: number): PropGeometry {
+  const t = new Triangles();
+  const rings = Math.max(2, Math.round(segments / 2));
+  const smooth = segments > SMOOTH_ABOVE_SEGMENTS;
+  const point = (k: number, j: number): V3 => {
+    const theta = (Math.PI * j) / rings; // from the top pole
+    const a = (2 * Math.PI * k) / segments;
+    return [Math.sin(theta) * Math.cos(a), Math.sin(theta) * Math.sin(a), Math.cos(theta)];
+  };
+  for (let j = 0; j < rings; j++) {
+    for (let k = 0; k < segments; k++) {
+      const [n00, n10, n01, n11] = [point(k, j), point(k + 1, j), point(k, j + 1), point(k + 1, j + 1)];
+      const [p00, p10, p01, p11] = [n00, n10, n01, n11].map((n) => scale(n, 0.5));
+      // The poles are fans: a quad there would have a zero-area half.
+      if (j > 0) {
+        if (smooth) t.add(p00, p01, p10, n00, n01, n10);
+        else t.flat(p00, p01, p10);
+      }
+      if (j < rings - 1) {
+        if (smooth) t.add(p10, p01, p11, n10, n01, n11);
+        else t.flat(p10, p01, p11);
+      }
+    }
+  }
+  return t.build();
+}
+
+const primitiveCache = new Map<string, PropGeometry>();
+
+/** The shared geometry of a primitive, 1 m across. A cube and a plane ignore `segments`. */
+export function primitiveGeometry(shape: Exclude<PropShape, "mesh">, segments: number): PropGeometry {
+  const key = shape === "cube" || shape === "plane" ? shape : `${shape}:${segments}`;
+  let g = primitiveCache.get(key);
+  if (g === undefined) {
+    g = freezeDeep(shape === "cube" ? cube() : shape === "plane" ? plane() : shape === "cylinder" ? cylinder(segments) : sphere(segments));
+    primitiveCache.set(key, g);
+  }
+  return g;
+}
+
+/**
+ * An STL's triangle soup (millimetres, nine floats a triangle) as a prop's
+ * geometry in metres, shaded flat. Its origin moves to the middle of its base,
+ * so a prop at location z = 0 stands on the floor.
+ */
+export function stlPropGeometry(soupMm: Float32Array): PropGeometry {
+  const ntris = Math.floor(soupMm.length / 9);
+  if (ntris === 0) throw new Error("the STL has no triangles");
+  const raw = boundsOfPositions(soupMm.subarray(0, ntris * 9));
+  const shift: V3 = [-(raw.min[0] + raw.max[0]) / 2, -(raw.min[1] + raw.max[1]) / 2, -raw.min[2]];
+  const positions = new Float32Array(ntris * 9);
+  const normals = new Float32Array(ntris * 9);
+  for (let t = 0; t < ntris; t++) {
+    const corner = (c: number): V3 => {
+      const i = t * 9 + c * 3;
+      return [(soupMm[i] + shift[0]) / 1000, (soupMm[i + 1] + shift[1]) / 1000, (soupMm[i + 2] + shift[2]) / 1000];
+    };
+    const [a, b, c] = [corner(0), corner(1), corner(2)];
+    const n = cross(sub(b, a), sub(c, a));
+    const len = length(n);
+    const unit: V3 = len > 0 ? scale(n, 1 / len) : [0, 0, 1];
+    positions.set([...a, ...b, ...c], t * 9);
+    for (let k = 0; k < 3; k++) normals.set(unit, t * 9 + k * 3);
+  }
+  const index = new Uint32Array(ntris * 3);
+  for (let i = 0; i < index.length; i++) index[i] = i;
+  return freezeDeep({ positions, normals, index, bounds: boundsOfPositions(positions) });
+}
+
+/** A prop's world bounding box: its geometry's box through its matrix. */
+export function propWorldBounds(item: Pick<PropItem, "geometry" | "toWorld">): { min: Vec3; max: Vec3 } {
+  const { min, max } = boundsOf(corners(item.geometry.bounds).map((c) => transformPoint(item.toWorld, c)));
+  return { min: vec(min), max: vec(max) };
 }
 
 function compilePart(doc: BoothDocument, print: LoadedPrint, prev: PartSection | null): PartSection {

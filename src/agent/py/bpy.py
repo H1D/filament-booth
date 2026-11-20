@@ -56,7 +56,7 @@ def _value(v, owner, attr):
     if "struct" in v:
         return _CLASSES[v["type"]](v["struct"])
     if "coll" in v:
-        return bpy_prop_collection(v["coll"])
+        return bpy_prop_collection(v["coll"], v["owner"])
     value, wrap = v["v"], v["wrap"]
     if value is None:
         return None
@@ -109,13 +109,14 @@ class bpy_struct:
 class bpy_prop_collection:
     """bpy.data.objects and the like: by name or index, iteration, len, get, keys, values, items, find, remove."""
 
-    __slots__ = ("_name",)
+    __slots__ = ("_name", "_owner")
 
-    def __init__(self, name):
+    def __init__(self, name, owner=None):
         self._name = name
+        self._owner = owner
 
     def _members(self):
-        return _call("members", self._name)
+        return _call("members", self._name, self._owner)
 
     @staticmethod
     def _struct(member):

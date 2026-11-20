@@ -30,7 +30,8 @@ import { Stage } from "./stage";
 
 export const PREVIEW_APPROXIMATIONS = [
   "the part is lit by a cube map baked from emissive quads, not by shadowed direct light",
-  "the backdrop is lit by RectAreaLights in the bake plus one live shadow-casting key",
+  "the backdrop and the props are lit by RectAreaLights in the bake plus one live shadow-casting key",
+  "the part sees the props in its bake lit like the sweep, without shadows; props cast and receive only the key's shadow",
   "a spread under 180 degrees boosts baked radiance by 1 / sin^2(spread / 2); RectAreaLights ignore the cone",
   "the live key is a spot light at the card's centre: intensity P / (pi sin^2(spread / 2)), a smoothstep cone of half the spread",
   "GTAO at radius 0.03 m stands in for contact shadowing and bounce light",
@@ -157,7 +158,7 @@ export class Viewport {
   }
 
   /**
-   * Idempotent. Compares sections with `===`: new lights, backdrop or world
+   * Idempotent. Compares sections with `===`: new lights, backdrop, world or props
    * re-bake in the background while the stale bake stays up; a new material
    * updates uniforms and the layer texture; a new camera moves the controls
    * without echoing the same numbers back as an edit.
@@ -236,6 +237,7 @@ export class Viewport {
     if (prev?.part !== scene.part) stage.setPart(scene.part);
     if (prev?.lights !== scene.lights) stage.setLights(scene.lights);
     if (prev?.backdrop !== scene.backdrop) stage.setBackdrop(scene.backdrop);
+    if (prev?.props !== scene.props) stage.setProps(scene.props);
     if (prev?.film !== scene.film) {
       this.#pipes.display.setLook(scene.film.look).then(() => this.#frame.dirty(), (err: unknown) =>
         this.#events.onStatus(`could not load the AgX tables: ${err instanceof Error ? err.message : String(err)}`));
@@ -244,18 +246,18 @@ export class Viewport {
     if (exact) this.#rig.hold(scene.camera);
     else if (prev?.camera !== scene.camera) this.#rig.apply(scene.camera);
     if (prev?.film !== scene.film || prev?.camera !== scene.camera) this.#frameCanvas();
-    if (prev?.lights !== scene.lights || prev?.backdrop !== scene.backdrop || prev?.world !== scene.world) this.#requestBake(scene);
+    if (prev?.lights !== scene.lights || prev?.backdrop !== scene.backdrop || prev?.world !== scene.world || prev?.props !== scene.props) this.#requestBake(scene);
     if (prev?.part !== scene.part) stage.recastShadow();
     this.#frame.dirty();
   }
 
   #requestBake(scene: Scene): void {
-    const { lights, backdrop, world } = scene;
+    const { lights, backdrop, world, props } = scene;
     this.#hdrs.load(world.hdrId).then((hdr) => {
       const now = this.#applied;
-      if (!now || now.lights !== lights || now.backdrop !== backdrop || now.world !== world) return;
+      if (!now || now.lights !== lights || now.backdrop !== backdrop || now.world !== world || now.props !== props) return;
       this.#stage.setWorld(hdr, world);
-      this.#bake.request({ lights, backdrop, world, hdr });
+      this.#bake.request({ lights, backdrop, world, props, hdr });
     }, (err: unknown) => this.#events.onStatus(`could not load the world HDR: ${err instanceof Error ? err.message : String(err)}`));
   }
 
@@ -268,7 +270,8 @@ export class Viewport {
 
   #bakeMatches(scene: Scene | null): boolean {
     const b = this.#bakedFor;
-    return scene !== null && b !== null && b.lights === scene.lights && b.backdrop === scene.backdrop && b.world === scene.world;
+    return scene !== null && b !== null && b.lights === scene.lights && b.backdrop === scene.backdrop && b.world === scene.world
+      && b.props === scene.props;
   }
 
   // ---- frame loop --------------------------------------------------------------

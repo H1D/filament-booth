@@ -3,6 +3,7 @@ import {
   DEFAULT_GLOSS, defaultDocument, deg, kelvin, m, mm, watts, type AreaLight, type BoothDocument, type CameraSetup, type Imperfections,
   type ScrimLight, type StudioLight,
 } from "../src/document";
+import { addProp } from "../src/edits";
 import { LOOK_PRESETS } from "../src/presets";
 import type { BeadMesh, LoadedPrint, SlicedPrint } from "../src/print";
 import {
@@ -641,6 +642,21 @@ describe("exportScene", () => {
     const named = [...json.matchAll(/"buffer": "([^"]+)"/g)].map((match) => match[1]);
     expect([...buffers.keys()].sort()).toEqual(named.sort());
     expect(buffers.get("part.mesh.position")).toBe(scene.part?.mesh.position);
+  });
+
+  test("writes each prop's geometry as buffers and its matrix, colour and roughness inline", () => {
+    const doc = defaultDocument();
+    addProp("cube", { color: [0.8, 0.05, 0.05], roughness: 0.4 })(doc);
+    const withProp = compileScene(doc, null, 1);
+    const file = exportScene(withProp);
+    const [prop] = withProp.props;
+    expect(JSON.parse(file.json).props).toMatchObject([{
+      id: "prop-1", albedo: [0.8, 0.05, 0.05], roughness: 0.4, toWorld: JSON.parse(JSON.stringify(prop.toWorld)),
+      geometry: { positions: { buffer: "props.0.geometry.positions", kind: "f32", length: 108 }, normals: { kind: "f32", length: 108 }, index: { kind: "u32", length: 36 } },
+    }]);
+    expect(file.buffers.get("props.0.geometry.positions")).toBe(prop.geometry.positions);
+    expect(file.buffers.get("props.0.geometry.normals")).toBe(prop.geometry.normals);
+    expect(file.buffers.get("props.0.geometry.index")).toBe(prop.geometry.index);
   });
 
   test("a scene with no part writes null for it", () => {

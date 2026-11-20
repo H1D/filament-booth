@@ -248,6 +248,19 @@ def add_backdrop(b):
     ob.is_shadow_catcher = b['shadowCatcher']
 
 
+def add_prop(p):
+    """A Principled BSDF at factory settings but base colour and roughness, shaded with the vertex
+    normals as given. Not in the part's collection, so the part-only lights do not reach it."""
+    g = p['geometry']
+    ob = add_mesh(p['id'], g['positions'], g['index'], g['normals'])
+    m, nt = new_material(p['id'])
+    bsdf = node(nt, 'ShaderNodeBsdfPrincipled', **{'Base Color': (*p['albedo'], 1.0), 'Roughness': p['roughness']})
+    nt.links.new(bsdf.outputs[0], nt.nodes.new('ShaderNodeOutputMaterial').inputs[0])
+    ob.data.materials.append(m)
+    t = p['toWorld']
+    ob.matrix_world = Matrix([[t[c * 4 + r] for c in range(4)] for r in range(4)])
+
+
 def add_area(e, part_collection):
     ld = bpy.data.lights.new(e['id'], 'AREA')
     ld.shape = 'ELLIPSE' if e['shape'] == 'ellipse' else 'RECTANGLE'
@@ -456,6 +469,8 @@ def main():
     bpy.ops.wm.read_factory_settings(use_empty=True)
     part_collection = add_part(s['part']) if s['part'] else None
     add_backdrop(s['backdrop'])
+    for p in s['props']:
+        add_prop(p)
     for e in s['lights']['emitters']:
         (add_area if e['kind'] == 'area' else add_scrim)(e, part_collection)
     if s['lights']['floorCards']:

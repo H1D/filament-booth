@@ -6,7 +6,8 @@
  */
 import {
   DEFAULT_GLOSS, deg, m, watts,
-  type AreaLight, type BoothDocument, type FilamentPresetId, type LookId, type ScrimLight, type StudioLight, type Vec3,
+  type AreaLight, type BoothDocument, type FilamentPresetId, type LookId, type PropShape, type Rgb, type ScrimLight, type StudioLight,
+  type StudioProp, type Vec3,
 } from "./document";
 import { FILAMENT_PRESETS, LOOK_PRESETS } from "./presets";
 import { refocal } from "./scene";
@@ -131,5 +132,61 @@ export function patchLight(id: string, patch: LightPatch): Edit {
     lights[i] = light.kind === "area"
       ? { ...light, ...patch, id: light.id, kind: "area" }
       : { ...light, ...patch, id: light.id, kind: "scrim" };
+  };
+}
+
+// ---- props --------------------------------------------------------------------
+
+/** What a new prop is unless the caller says otherwise: a light grey, fairly matt Principled BSDF. */
+export const PROP_DEFAULTS = {
+  color: [0.6, 0.6, 0.6] as Rgb,
+  roughness: 0.5,
+  segments: 32,
+} as const;
+
+const PROP_NAMES: Record<PropShape, string> = { cube: "Cube", cylinder: "Cylinder", sphere: "Sphere", plane: "Plane", mesh: "Mesh" };
+
+/** The first `prop-n` no prop uses. */
+export function freePropId(existing: readonly StudioProp[]): string {
+  const used = new Set(existing.map((p) => p.id));
+  for (let n = 1; ; n++) if (!used.has(`prop-${n}`)) return `prop-${n}`;
+}
+
+/**
+ * Adds a prop with a fresh id, standing on the floor at the origin unless
+ * `fields` say otherwise. A primitive is 0.2 m across by default; a mesh keeps
+ * its file's size. `fields` are applied last, so the caller decides.
+ */
+export function addProp(shape: PropShape, fields: Partial<Omit<StudioProp, "id" | "shape">> = {}): Edit {
+  return (draft) => {
+    const props = draft.props;
+    const primitive = shape !== "mesh";
+    const side = primitive ? 0.2 : 1;
+    const prop: StudioProp = {
+      id: freePropId(props), name: PROP_NAMES[shape], on: true, shape, mesh: null,
+      size: [m(side), m(side), m(side)], segments: PROP_DEFAULTS.segments,
+      location: [m(0), m(0), m(shape === "cube" || shape === "cylinder" || shape === "sphere" ? side / 2 : 0)],
+      rotationDeg: [deg(0), deg(0), deg(0)], scale: [1, 1, 1],
+      color: [...PROP_DEFAULTS.color], roughness: PROP_DEFAULTS.roughness,
+      ...structuredClone(fields),
+    };
+    props.push(prop);
+  };
+}
+
+/** Removing a prop that is already gone changes nothing. */
+export function removeProp(id: string): Edit {
+  return (draft) => {
+    draft.props = draft.props.filter((p) => p.id !== id);
+  };
+}
+
+/** Patches one prop. `id` and `shape` in the patch are ignored. Patching a prop that is gone changes nothing. */
+export function patchProp(id: string, patch: Partial<Omit<StudioProp, "id" | "shape">>): Edit {
+  return (draft) => {
+    const i = draft.props.findIndex((p) => p.id === id);
+    if (i < 0) return;
+    const prop = draft.props[i];
+    draft.props[i] = { ...prop, ...structuredClone(patch), id: prop.id, shape: prop.shape };
   };
 }

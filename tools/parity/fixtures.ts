@@ -3,11 +3,11 @@
  * the ones that go through compileScene. Pure and deterministic: the dev page builds them in the
  * browser and run.ts builds the same values for native Blender.
  */
-import { m, type Rgb, type Vec3 } from "../../src/document";
+import { deg, m, type Rgb, type Vec3 } from "../../src/document";
 import { packBeadWord, type BeadMesh } from "../../src/print";
 import {
-  FILM_DEFAULTS, type AreaEmitter, type BackdropSection, type BeadMaterial, type CameraSection,
-  type FilmSection, type FloorCardRing, type LayerTable, type Mat4, type Scene, type ScrimEmitter,
+  FILM_DEFAULTS, primitiveGeometry, propMatrix, type AreaEmitter, type BackdropSection, type BeadMaterial, type CameraSection,
+  type FilmSection, type FloorCardRing, type LayerTable, type Mat4, type PropItem, type Scene, type ScrimEmitter,
 } from "../../src/scene";
 
 // ---- the part: stacked swept tubes ------------------------------------------------------
@@ -245,8 +245,22 @@ function film(width: number, height: number, samples: number, transparent = fals
 
 // ---- the fixtures ------------------------------------------------------------------------
 
-export const FIXTURES = ["a", "b", "c", "d", "scale"] as const;
+export const FIXTURES = ["a", "b", "c", "d", "p", "scale"] as const;
 export type FixtureName = (typeof FIXTURES)[number];
+
+/** Props of the fixture p: a wall behind the part, a squashed turned cube and a smooth sphere beside it. */
+function props(): PropItem[] {
+  const item = (id: string, shape: "cube" | "sphere" | "plane", segments: number, albedo: Rgb, roughness: number,
+    location: Vec3, rotationDeg: [number, number, number], size: [number, number, number]): PropItem => ({
+    id, geometry: primitiveGeometry(shape, segments), albedo, roughness,
+    toWorld: propMatrix({ location, rotationDeg: [deg(rotationDeg[0]), deg(rotationDeg[1]), deg(rotationDeg[2])], scale: [1, 1, 1], size: v3(...size) }),
+  });
+  return [
+    item("wall", "plane", 1, [0.7, 0.7, 0.75], 0.6, v3(0, 0.07, 0.04), [90, 0, 0], [0.3, 0.2, 1]),
+    item("cube", "cube", 1, [0.8, 0.05, 0.05], 0.4, v3(0.026, -0.016, 0.008), [0, 0, 30], [0.016, 0.012, 0.024]),
+    item("ball", "sphere", 32, [0.05, 0.3, 0.8], 0.15, v3(-0.026, -0.012, 0.009), [0, 0, 0], [0.018, 0.018, 0.018]),
+  ];
+}
 
 const PART: BeadPartShape = {
   layers: 50, perimeters: 2, segments: 480, ringVerts: 12,
@@ -274,7 +288,7 @@ export function fixture(name: FixtureName, o: FixtureOptions = {}): Scene {
   };
   const target: [number, number, number] = [0, 0, (shape.layers * shape.layerHeightM) / 2];
   const world = { hdrId: "studio_small_09_1k", strength: 0.25, rotationRad: (30 * Math.PI) / 180 };
-  const base = { docRev: 1, part, world };
+  const base = { docRev: 1, part, world, props: [] };
   const top = area("top", [1.2, 0.9], [0, -0.1, 1.0], 500);
   switch (name) {
     case "a":
@@ -312,6 +326,18 @@ export function fixture(name: FixtureName, o: FixtureOptions = {}): Scene {
         lights: { emitters: [area("top", [1.4, 1.4], [0, -0.05, 1.1], 120)], floorCards: ring, aim: v3(...AIM) },
         backdrop: sweep(0.35, 0.6, false),
         camera: camera(target, 10, 12, 0.16, 85, 8, width, height),
+        film: film(width, height, samples),
+      };
+    }
+    case "p": {
+      // A part-only rim light that props must not receive, beside the open top light.
+      const rim = area("rim", [0.08, 1.0], [-0.3, 0.85, 0.35], 220, { spreadDeg: 40, partOnly: true });
+      return {
+        ...base,
+        props: props(),
+        lights: { emitters: [top, rim], floorCards: null, aim: v3(...AIM) },
+        backdrop: sweep(0.55, 0.55, false),
+        camera: camera(target, 20, 25, 0.16, 85, 8, width, height),
         film: film(width, height, samples),
       };
     }

@@ -8,7 +8,7 @@ depends_on[3]: booth,preview,photo
 entry_point: src/App.tsx
 test_cmd: bunx vitest run tests/ui-controls.test.tsx tests/ui-agent.test.tsx tests/ui-panels.test.tsx tests/ui-model.test.ts tests/ui-wire.test.ts tests/ui-bounds.test.ts tests/ui-color.test.ts tests/ui-photo-session.test.ts
 
-files[23]{path,purpose}:
+files[24]{path,purpose}:
   src/App.tsx,app shell
   src/main.tsx,builds the real parts and mounts the app
   src/index.css,all styles in plain CSS
@@ -25,6 +25,7 @@ files[23]{path,purpose}:
   src/ui/PartPanel.tsx,slicing settings or read-only G-code facts and pose
   src/ui/FilamentPanel.tsx,filament preset and colour and finish and imperfections
   src/ui/LightsPanel.tsx,looks and per-light controls
+  src/ui/PropsPanel.tsx,props beside the part: add menu (native popover) and per-prop transform and material and STL re-import
   src/ui/WorldPanel.tsx,backdrop and HDR world
   src/ui/CameraPanel.tsx,focal presets and aperture and focus tool
   src/ui/OutputPanels.tsx,aspect and size and samples and time limit and AgX look and transparent background
@@ -44,6 +45,6 @@ files[23]{path,purpose}:
 
 ## Gotchas
 
-- `dev/panels.html` runs the panels with fakes from `dev/fakes.ts`. `bun run ui:drive` drives it (26 checks). It does not exercise the real viewport or engines.
+- `dev/panels.html` runs the panels with fakes from `dev/fakes.ts`. `bun run ui:drive` drives it (27 checks). It does not exercise the real viewport or engines.
 - oxlint's hooks rule reads any callback parameter named `use` as a React hook.
 - `src/ui/StatusLine.tsx`, `src/ui/icons.tsx` and `src/ui/download.ts` are small helpers not listed above.

@@ -7,6 +7,8 @@
  * lit by the world, by a RectAreaLight per emitter that reaches it, and by
  * one shadow-casting key that stands in for the strongest of those: a spot
  * light at its card, aimed along its normal, with the spread as its cone.
+ * Props are lit exactly like the sweep, and cast and receive the key's shadow
+ * with the part: the shadow frustum covers the part and every prop.
  */
 import {
   Box3, BufferAttribute, BufferGeometry, Color, DoubleSide, FloatType, Mesh, MeshBasicNodeMaterial,
@@ -15,9 +17,10 @@ import {
 } from "three/webgpu";
 import { pmremTexture, positionLocal, uniform, vec4 } from "three/tsl";
 import type { BeadMesh } from "../print";
-import type { BackdropSection, LightsSection, PartSection, WorldSection } from "../scene";
+import { propWorldBounds, type BackdropSection, type LightsSection, type PartSection, type PropGeometry, type PropItem, type WorldSection } from "../scene";
 import { BeadShading } from "./bead-material";
 import { backdropLight, blenderRoot, sweepGeometry, worldNode } from "./bake";
+import { propGeometry, propMaterial, propMesh } from "./props";
 import { keyConeRad, keyEmitter, keyIntensity, keyShare } from "./radiance";
 import type { V3 } from "./frame";
 
@@ -44,6 +47,11 @@ export class Stage {
   readonly #worldRotation = uniform(0);
   #worldHdr: Texture | null = null;
   #transparent = false;
+
+  /** One mesh per prop, kept while its item is; geometries are shared between props of one PropGeometry. */
+  readonly #props = new Map<PropItem, Mesh<BufferGeometry, MeshStandardNodeMaterial>>();
+  readonly #propGeometries = new Map<PropGeometry, BufferGeometry>();
+  #propBounds: Box3 | null = null;
 
   readonly #key = new SpotLight(0xffffff, 0, 0, Math.PI / 2, 1, 2);
   readonly #keyTarget = new Object3D();
@@ -186,6 +194,42 @@ export class Stage {
     this.#updateBackground();
   }
 
+  /** Props stay visible over a shadow-catching backdrop: only the sweep turns into the catcher. */
+  setProps(props: readonly PropItem[]): void {
+    const wanted = new Set(props);
+    for (const [item, mesh] of this.#props) {
+      if (wanted.has(item)) continue;
+      this.#root.remove(mesh);
+      mesh.material.dispose();
+      this.#props.delete(item);
+    }
+    for (const item of props) {
+      if (this.#props.has(item)) continue;
+      let geometry = this.#propGeometries.get(item.geometry);
+      if (!geometry) this.#propGeometries.set(item.geometry, geometry = propGeometry(item.geometry));
+      const material = propMaterial(item);
+      material.envNode = this.#worldEnv;
+      const mesh = propMesh(item, geometry, material);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      this.#props.set(item, mesh);
+      this.#root.add(mesh);
+    }
+    const used = new Set(Array.from(this.#props.values(), (m) => m.geometry));
+    for (const [source, geometry] of this.#propGeometries) {
+      if (used.has(geometry)) continue;
+      geometry.dispose();
+      this.#propGeometries.delete(source);
+    }
+    this.#propBounds = null;
+    for (const item of props) {
+      const { min, max } = propWorldBounds(item);
+      const box = new Box3(new Vector3(...min), new Vector3(...max));
+      this.#propBounds = this.#propBounds ? this.#propBounds.union(box) : box;
+    }
+    this.#fitShadow();
+  }
+
   setWorld(hdr: Texture, world: WorldSection): void {
     this.#worldStrength.value = world.strength;
     this.#worldRotation.value = world.rotationRad;
@@ -249,6 +293,7 @@ export class Stage {
   dispose(): void {
     this.#dropFull();
     this.setLite(null);
+    this.setProps([]);
     this.#sweep.geometry.dispose();
     this.#sweepLit.dispose();
     this.#sweepCatcher.dispose();
@@ -280,12 +325,12 @@ export class Stage {
     }
   }
 
-  /** The key's shadow frustum: just the posed part, reaching far enough for a grazing key's long shadow. */
+  /** The key's shadow frustum: the posed part and the props, reaching far enough for a grazing key's long shadow. */
   #fitShadow(): void {
     const part = this.#partSection, k = this.#key;
-    const bounds = part
-      ? new Box3(new Vector3(...part.worldBounds.min), new Vector3(...part.worldBounds.max))
-      : new Box3(new Vector3(-0.1, -0.1, 0), new Vector3(0.1, 0.1, 0.2));
+    const partBox = part ? new Box3(new Vector3(...part.worldBounds.min), new Vector3(...part.worldBounds.max)) : null;
+    const bounds = partBox && this.#propBounds ? partBox.union(this.#propBounds) : partBox ?? this.#propBounds?.clone()
+      ?? new Box3(new Vector3(-0.1, -0.1, 0), new Vector3(0.1, 0.1, 0.2));
     const sphere = bounds.getBoundingSphere(new Sphere()), r = sphere.radius * 1.2;
     const d = Math.max(r * 1.01, k.position.distanceTo(sphere.center));
     // The shadow covers the part, not the whole cone: the part's half-angle as a share of the cone's.

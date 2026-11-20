@@ -379,7 +379,7 @@ try {
   await ready(page, "bracket.stl");
 
   await check("every control in the rail is reachable with the Tab key", async () => {
-    for (const id of ["part", "filament", "lights", "world", "camera", "pose", "output", "setup", "agent"]) await openSection(page, id);
+    for (const id of ["part", "filament", "lights", "props", "world", "camera", "pose", "output", "setup", "agent"]) await openSection(page, id);
     await page.evaluate(() => {
       for (const d of document.querySelectorAll("details.light, details.fold")) d.setAttribute("open", "");
     });
@@ -446,6 +446,54 @@ try {
     expect(unnamed.length === 0, `${unnamed.length} unnamed: ${unnamed.join(", ")}`);
     expect(unlabeled.length === 0, `inputs with neither a label nor aria-label: ${unlabeled.join(" ")}`);
     return `${total} interactive nodes in the accessibility tree, each with a name; every visible input has a label or aria-label`;
+  });
+
+  await check("the Props section adds primitives from a native popover menu, edits them live and keeps an STL across a reload", async () => {
+    const props = await openSection(page, "props");
+    const menu = page.locator('[popover][aria-label="Add a prop"]');
+    const menuOpen = () => menu.evaluate((el) => el.matches(":popover-open"));
+    const addFromMenu = async (shape: string) => {
+      await props.getByRole("button", { name: "Add prop" }).click();
+      expect(await menuOpen(), "the Add menu is not an open popover");
+      await menu.getByRole("button", { name: shape, exact: true }).click();
+      expect(!(await menuOpen()), `the Add menu stays open after ${shape}`);
+    };
+    await addFromMenu("Cylinder");
+    await addFromMenu("Cube");
+    await until("two props", async () => ((await props.locator("details.light").count()) === 2 ? true : null));
+    await setNumber(page, "Cube: Location: X", "0.3");
+    await setNumber(page, "Cube: Rotation: Z", "30");
+    expect(await inputValue(page, "Cube: Location: X") === "0.3", "the location did not stick");
+    expect(await props.locator('input[aria-label="Cube: Segments"]').count() === 0, "a cube offers segments");
+    await props.locator('details[data-prop="prop-1"] > summary').click();
+    expect(await props.locator('input[aria-label="Cylinder: Segments"]').count() === 1, "a cylinder offers no segments");
+    await props.locator('details[data-prop="prop-1"] > summary').click();
+    await props.locator('label.switch:has(input[aria-label="Cylinder: On"])').click();
+    expect(await props.locator('details[data-prop="prop-1"][data-off]').count() === 1, "the row does not show the prop is off");
+    await props.locator('label.switch:has(input[aria-label="Cylinder: On"])').click();
+    await page.evaluate(() => { if (document.activeElement instanceof HTMLElement) document.activeElement.blur(); });
+    await props.screenshot({ path: join(OUT, "props-section.png") });
+
+    const stl = Buffer.alloc(84 + 50);
+    stl.writeUInt32LE(1, 80);
+    [0, 0, 0, 10, 0, 0, 0, 10, 5].forEach((v, k) => { stl.writeFloatLE(v, 84 + 12 + k * 4); });
+    const picker = page.locator('input[aria-label="Choose an STL for a prop"]');
+    await picker.setInputFiles({ name: "battery.stl", mimeType: "model/stl", buffer: stl });
+    await until("the mesh prop", async () => ((await props.locator('details[data-prop="prop-3"] .light-name').innerText().catch(() => "")) === "battery" ? true : null));
+    expect(await props.locator(".note", { hasText: "again to show it" }).count() === 0, "a fresh import says to import again");
+
+    await page.reload();
+    await page.waitForSelector(".app");
+    const reopened = await openSection(page, "props");
+    await reopened.locator('details[data-prop="prop-3"] > summary').click();
+    const missing = await reopened.locator(".note", { hasText: "again to show it" }).innerText();
+    expect(missing === "Import battery again to show it", `the note reads "${missing}"`);
+    await picker.setInputFiles({ name: "battery.stl", mimeType: "model/stl", buffer: stl });
+    await until("the note to go", async () => ((await reopened.locator(".note", { hasText: "again to show it" }).count()) === 0 ? true : null));
+    await dropFile(page, "bracket.stl", "stl");
+    await ready(page, "bracket.stl");
+    await openSection(page, "output"); // the reload folded it, and the next check reads Samples
+    return `Cylinder and Cube added from the popover and it closed after each; location and rotation typed; segments only on the cylinder; off switch marks the row; battery.stl added, after a reload the note "${missing}" and importing the same file cleared it`;
   });
 
   await check("Reset everything confirms in a native popover", async () => {
