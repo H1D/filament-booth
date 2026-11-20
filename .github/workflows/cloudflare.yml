@@ -1,0 +1,95 @@
+name: Cloudflare Pages
+
+# Pushes to main deploy booth.artems.net (Pages project filament-booth, branch main).
+# Each PR deploys a preview on <branch>.filament-booth.pages.dev and links it in a comment.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  deployments: write
+  pull-requests: write
+
+concurrency:
+  group: cf-pages-${{ github.event_name == 'pull_request' && github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+env:
+  CLOUDFLARE_PAGES_PROJECT_NAME: filament-booth
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: ${{ github.event_name == 'pull_request' && 'preview' || 'production' }}
+      url: ${{ steps.deploy.outputs['pages-deployment-alias-url'] || steps.deploy.outputs['deployment-url'] }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check deployment configuration
+        id: cfg
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          missing=()
+          [ -z "${CLOUDFLARE_ACCOUNT_ID:-}" ] && missing+=("CLOUDFLARE_ACCOUNT_ID")
+          [ -z "${CLOUDFLARE_API_TOKEN:-}" ] && missing+=("CLOUDFLARE_API_TOKEN")
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Skipping Cloudflare Pages deploy; missing ${missing[*]}"
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # The branch name reaches a shell through the wrangler command; keep only
+      # the characters Pages accepts so a crafted branch name cannot inject.
+      # A manual run on any branch other than main deploys a preview, never production.
+      - name: Pages branch name
+        id: branch
+        env:
+          RAW_BRANCH: ${{ github.event_name == 'pull_request' && github.head_ref || github.ref_name }}
+        run: |
+          safe="$(printf '%s' "$RAW_BRANCH" | tr -c 'A-Za-z0-9._\n-' '-' | cut -c1-200)"
+          echo "safe=${safe}" >> "$GITHUB_OUTPUT"
+
+      - uses: oven-sh/setup-bun@v2
+        if: steps.cfg.outputs.configured == 'true'
+        with:
+          bun-version: latest
+
+      - run: bun install --frozen-lockfile
+        if: steps.cfg.outputs.configured == 'true'
+
+      - run: bun run build
+        if: steps.cfg.outputs.configured == 'true'
+
+      - name: Cloudflare Pages deploy
+        id: deploy
+        if: steps.cfg.outputs.configured == 'true'
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy dist --project-name=${{ env.CLOUDFLARE_PAGES_PROJECT_NAME }} --branch=${{ steps.branch.outputs.safe }}
+          gitHubToken: ${{ secrets.GITHUB_TOKEN }}
+          packageManager: bun
+
+      - name: Sticky PR comment with preview URL
+        if: github.event_name == 'pull_request' && steps.cfg.outputs.configured == 'true'
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: cloudflare-preview
+          message: |
+            ## Cloudflare Pages preview
+
+            **Preview URL:** ${{ steps.deploy.outputs['pages-deployment-alias-url'] || steps.deploy.outputs['deployment-url'] }}
+            **Branch:** `${{ github.head_ref }}`
+            **Commit:** `${{ github.event.pull_request.head.sha }}`
+
+            Production (booth.artems.net) updates when this merges to `main`.
