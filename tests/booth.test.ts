@@ -782,6 +782,21 @@ describe("scenes", () => {
     expect(next.doc.camera.fStop).toBe(4);
   });
 
+  test("framing the other scenes on a fresh part is saved, even when the scene on show was framed already", async () => {
+    const rig = setup();
+    await openPart(rig, binaryStl(), 0.3);
+    const first = rig.booth.activeSceneId;
+    rig.booth.addScene();
+    rig.booth.update((d) => { d.camera.distance = m(2); });
+    rig.booth.switchScene(first);
+    rig.booth.flush();
+    await openPart(rig, binaryStl(), 0.3);
+    rig.booth.flush();
+    const next = new Booth({ storage: rig.storage, print: new FakePrint(), takePhoto: () => stubRun });
+    next.switchScene(next.scenes[1].id);
+    expect(next.doc.camera.distance).not.toBe(2);
+  });
+
   test("an edit to the scene on show writes only the document, not the scene list", () => {
     const { booth, storage } = setup();
     booth.addScene();

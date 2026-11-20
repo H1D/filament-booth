@@ -43,7 +43,7 @@ files[26]{path,purpose}:
 - Limits come from `BOUNDS` in `src/document.ts`. Do not hard-code a min or max in a panel.
 - Focal presets keep the framing by moving the camera (`setFocal` in `src/edits.ts`).
 - Plain CSS and native inputs. Popovers and menus use the native Popover API, never hand-rolled z-index.
-- `PhotoSession` files each photo under its scene (`byScene` keeps the newest per scene) and `takeAll(ids)` is the render queue: one scene after another through the same photo card, a failed photo moves on, Cancel ends the queue. Download all zips `byScene` uncompressed, since PNG is already compressed.
+- `PhotoSession` files each photo under its scene (`byScene` keeps the newest per scene) and `takeAll(ids)` is the render queue: one scene after another through the same photo card, a failed photo moves on, Cancel ends the queue. Download all zips `byScene` uncompressed, since PNG is already compressed. `connectPhotos` (wire.ts) drops a removed scene's photo and every photo once the part changes.
 - UI-only state (open sections, focus tool, photo card) lives in `src/ui/store.ts`, not in the document.
 
 ## Gotchas

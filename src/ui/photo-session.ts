@@ -25,8 +25,6 @@ export type RunView =
 export interface Shot {
   readonly id: number;
   readonly photo: Photo;
-  /** The scene photographed, or null when the session was not told. */
-  readonly sceneId: string | null;
   /** An object URL for the PNG, owned by the session. */
   readonly url: string;
 }
@@ -130,6 +128,16 @@ export class PhotoSession {
     return run;
   }
 
+  /**
+   * Keeps the newest photos only of these scenes, or of none: a removed scene
+   * has nothing to download, and a new part makes every photo out of date.
+   */
+  keepScenePhotos(sceneIds: readonly string[]): void {
+    const s = this.state.get();
+    if ([...s.byScene.keys()].every((id) => sceneIds.includes(id))) return;
+    this.state.set({ ...s, byScene: new Map([...s.byScene].filter(([id]) => sceneIds.includes(id))) });
+  }
+
   /** Stops the photo in flight and drops the rest of the queue. */
   cancel(): void {
     if (this.state.get().queued.length > 0) this.state.set({ ...this.state.get(), queued: [] });
@@ -204,7 +212,7 @@ export class PhotoSession {
 
   #addShot(photo: Photo): void {
     const s = this.state.get();
-    const shot: Shot = { id: this.#nextId++, photo, sceneId: s.sceneId, url: this.#urls.create(photo.png) };
+    const shot: Shot = { id: this.#nextId++, photo, url: this.#urls.create(photo.png) };
     const all = [...s.shots, shot];
     const dropped = all.splice(0, Math.max(0, all.length - MAX_SHOTS));
     for (const old of dropped) this.#urls.revoke(old.url);

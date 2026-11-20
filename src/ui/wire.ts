@@ -59,6 +59,20 @@ export function agentControl(
   return new AgentControl({ storage, runtime, unavailable: pythonUnavailable, pageId: crypto.randomUUID() });
 }
 
+/**
+ * Keeps the photos Download all saves in step with the booth: a removed
+ * scene's photo goes, and a different part (an open or a re-slice) drops them
+ * all, since they show a part that is no longer there.
+ */
+export function connectPhotos(booth: Booth, photos: PhotoSession): () => void {
+  let part = booth.scene.part?.mesh;
+  return booth.subscribe(() => {
+    const now = booth.scene.part?.mesh;
+    photos.keepScenePhotos(now === part ? booth.scenes.map((s) => s.id) : []);
+    part = now;
+  });
+}
+
 /** Orbiting and focus picks become document edits. A pick ends the focus tool, so the next click orbits again. */
 export function viewportEvents(booth: Booth, ui: Ui): ViewportEvents {
   return {

@@ -450,7 +450,10 @@ export class Booth {
         framed.camera.focusPartPoint = null;
         this.#stored.set(id, freezeDeep(framed));
       }
-      if (this.#stored.size > 0) this.#scenesDirty = true;
+      if (this.#stored.size > 0) {
+        this.#scenesDirty = true;
+        this.#scheduleSave();
+      }
       this.#stl = source.kind === "stl" ? source : null;
       this.#commit({ doc, shown: loaded, print: { status: "ready", loaded } });
     } catch (e) {

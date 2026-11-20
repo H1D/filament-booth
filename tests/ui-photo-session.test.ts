@@ -162,7 +162,6 @@ describe("PhotoSession", () => {
     runs[2].emit({ state: "done", photo: photo(3) });
     expect(started).toEqual([undefined, "a", undefined]);
     const s = session.state.get();
-    expect(s.shots.map((x) => x.sceneId)).toEqual(["a", "a", "b"]);
     expect([...s.byScene].map(([id, p]) => [id, p.fileName])).toEqual([["a", "part_2.png"], ["b", "part_3.png"]]);
   });
 
@@ -198,5 +197,20 @@ describe("PhotoSession", () => {
     runs[0].emit({ state: "cancelled" });
     expect(runs).toHaveLength(1);
     expect(session.state.get()).toMatchObject({ run: { phase: "cancelled" }, batchSize: 0 });
+  });
+
+  test("keepScenePhotos drops photos of scenes no longer kept", () => {
+    const runs: ScriptedRun[] = [];
+    const session = new PhotoSession(() => { const r = new ScriptedRun(); runs.push(r); return r; }, { create: () => "u", revoke: () => {} });
+    session.takeAll(["a", "b"]);
+    runs[0].emit({ state: "done", photo: photo(1) });
+    runs[1].emit({ state: "done", photo: photo(2) });
+    const before = session.state.get();
+    session.keepScenePhotos(["a", "b", "c"]);
+    expect(session.state.get()).toBe(before);
+    session.keepScenePhotos(["b"]);
+    expect([...session.state.get().byScene.keys()]).toEqual(["b"]);
+    session.keepScenePhotos([]);
+    expect(session.state.get().byScene.size).toBe(0);
   });
 });
