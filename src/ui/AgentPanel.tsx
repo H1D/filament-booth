@@ -9,9 +9,12 @@
  */
 import { useEffect, useId, useRef, useState } from "react";
 import type { AgentState } from "../agent/agent";
-import { TOKEN_PATTERN, bridgeCommand } from "../agent/protocol";
+import { AGENT_PROMPT, TOKEN_PATTERN, bridgeCommand } from "../agent/protocol";
 import { Fold, Note, Switch } from "./controls";
 import { useAgent, useHost, useUi } from "./hooks";
+
+/** Chrome sets this while DevTools automation (Playwright, Puppeteer, the chrome-devtools MCP) drives the tab. */
+const automated = (): boolean => typeof navigator !== "undefined" && navigator.webdriver === true;
 
 const PRIVACY =
   "A connected agent can change every setting, open files from the folder it runs in on this computer and save photos to it. " +
@@ -39,8 +42,8 @@ const tone = (state: AgentState): "accent" | "warn" | undefined => {
   }
 };
 
-/** The command that registers the bridge with this tab's token, and a button that copies it. */
-function Command({ text }: { text: string }) {
+/** Text to paste somewhere else, the bridge command or the prompt, and a button that copies it. */
+function Copyable({ text, kind }: { text: string; kind: "command" | "prompt" }) {
   const [copied, setCopied] = useState(false);
   useEffect(() => {
     if (!copied) return;
@@ -48,9 +51,9 @@ function Command({ text }: { text: string }) {
     return () => { clearTimeout(timer); };
   }, [copied]);
   return (
-    <div className="agent-command">
-      <code>{text}</code>
-      <button type="button" className="btn" onClick={() => {
+    <div className={`agent-${kind}`}>
+      {kind === "command" ? <code>{text}</code> : <p>{text}</p>}
+      <button type="button" className="btn" aria-label={`Copy ${kind}`} onClick={() => {
         navigator.clipboard.writeText(text).then(() => { setCopied(true); }, () => {});
       }}>{copied ? "Copied" : "Copy"}</button>
     </div>
@@ -104,10 +107,15 @@ export function AgentPanel() {
       <p className="agent-status" role="status" data-status={status.kind} data-tone={tone(state)}>{statusText(state)}</p>
       {!TOKEN_PATTERN.test(settings.token) ? null : (
         <>
-          <Command text={bridgeCommand({ port: settings.port, token: settings.token, origin: location.origin })} />
-          <Note>Run it in the folder you work in, then start Claude Code there. It needs Node.js. If booth was added before, run <code>claude mcp remove booth</code> first. When Chrome asks to let this site reach devices on your local network, allow it: the bridge runs on this computer. For another agent, add an MCP server that runs the part after <code>--</code>.</Note>
+          <Copyable kind="command" text={bridgeCommand({ port: settings.port, token: settings.token, origin: location.origin })} />
+          <Note>Run it in the folder you work in, then start a new Claude Code session there. A session that was already running does not see the new server. It needs Node.js. If booth was added before, run <code>claude mcp remove booth</code> first. When Chrome asks to let this site reach devices on your local network, allow it: the bridge runs on this computer. For another agent, add an MCP server that runs the part after <code>--</code>.</Note>
+          <Note>Then ask the agent with this prompt, with your request in place of the part in angle brackets:</Note>
+          <Copyable kind="prompt" text={AGENT_PROMPT} />
         </>
       )}
+      {automated() ? (
+        <Note tone="warn">Browser automation is driving this tab right now. Chrome shows this as "controlled by automated test software". It goes around this switch, which covers only the bridge.</Note>
+      ) : null}
       <Fold title="Port and token">
         <Field label="Port" numeric value={String(settings.port)} onCommit={(text) => { agent.setPort(Number(text.trim())); }} />
         <Field label="Token" secret value={settings.token} onCommit={(text) => { agent.setToken(text); }} />

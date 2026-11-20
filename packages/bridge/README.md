@@ -11,7 +11,10 @@ in:
 claude mcp add booth -- npx -y filament-booth --token <the token the tab shows>
 ```
 
-Then turn on **Allow a local agent to control this tab**. Other agents run
+Then start a new Claude Code session in that folder, turn on **Allow a local agent to control this
+tab**, and ask the agent with the prompt the booth shows under the command. It names the
+`booth_python` tool, so an agent that also has a browser tool does not click through the page
+instead. Other agents run
 `npx -y filament-booth --token <token>` as an MCP server.
 
 Flags: `--token <t>`, `--port <n>` (default 47615), `--app <origin>` to accept a booth served

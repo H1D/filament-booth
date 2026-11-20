@@ -1,8 +1,8 @@
 // @vitest-environment happy-dom
 import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, describe, expect, test } from "vitest";
-import { CLOSE, DEFAULT_PORT, type JobId } from "../src/agent/protocol";
+import { afterEach, describe, expect, test, vi } from "vitest";
+import { AGENT_PROMPT, CLOSE, DEFAULT_PORT, type JobId } from "../src/agent/protocol";
 import { AgentPanel } from "../src/ui/AgentPanel";
 import { Rail } from "../src/ui/Rail";
 import { TopBar } from "../src/ui/TopBar";
@@ -84,6 +84,31 @@ describe("the Agent section", () => {
     expect(commandOf(container)).toBe("claude mcp add booth -- npx -y filament-booth --token fresh-token-0001 --app " + location.origin);
     expect(inputByLabel(container, "Port").value).toBe(String(DEFAULT_PORT));
     expect(runtime.starts).toBe(0);
+  });
+
+  test("under the command is the prompt to give the agent, which names the bridge tool and rules out the browser", () => {
+    const { container } = mount(<AgentPanel />);
+    const prompt = container.querySelector(".agent-prompt p")?.textContent ?? "";
+    expect(prompt).toBe(AGENT_PROMPT);
+    expect(prompt).toContain("booth_python");
+    expect(prompt).toContain("Don't open the page in a browser");
+    expect([...(container.querySelector(".agent-prompt")?.querySelectorAll("button") ?? [])].map((b) => b.textContent)).toEqual(["Copy"]);
+  });
+
+  test("a tab driven by browser automation says that this goes around the switch", () => {
+    const webdriver = vi.spyOn(navigator, "webdriver", "get").mockReturnValue(false);
+    try {
+      expect(mount(<AgentPanel />).container.textContent).not.toContain("Browser automation is driving this tab");
+      act(() => { root?.unmount(); });
+      webdriver.mockReturnValue(true);
+      const { container } = mount(<AgentPanel />);
+      const warn = container.querySelector('.note[data-tone="warn"]')?.textContent ?? "";
+      expect(warn).toContain("Browser automation is driving this tab");
+      expect(warn).toContain("goes around this switch");
+      expect(switchInput(container).checked).toBe(false);
+    } finally {
+      vi.restoreAllMocks();
+    }
   });
 
   test("the command carries a port that is not the default", () => {
