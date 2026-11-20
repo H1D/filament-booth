@@ -339,6 +339,7 @@ try {
     // The faces the photo leaves out come after the part is on show (print/cover.ts).
     const hiddenAfter = page.waitForFunction(() => window.boothDev?.booth.scene.part?.mesh.hidden !== undefined, null, { timeout: 30_000 })
       .then(() => (performance.now() - readyAt) / 1000);
+    hiddenAfter.catch(() => {}); // awaited below; a step failing first must not leave it unhandled
     await page.screenshot({ path: join(OUT, "1-app.png") });
     const { img } = await previewShot("1-preview");
     const mask = await partMask(img.width, img.height);

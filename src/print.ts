@@ -94,7 +94,7 @@ export interface BeadMesh {
    * Only the Cycles photo leaves those out; the preview draws every face, because its
    * single-sided material would see through the slits the per-layer wobble opens. The worker
    * works them out after it has sent the mesh and the pipeline sets them when they come (about
-   * 2 s for an 8.7M-triangle part), so a photo started before then renders every face.
+   * 2 s for an 8.7M-triangle part); a Cycles photo waits for them (hiddenFacesSettled).
    */
   hidden?: Uint8Array;
   tris: number;

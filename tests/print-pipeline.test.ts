@@ -3,6 +3,8 @@ import { DEFAULT_SLICE, mm } from "../src/document";
 import { PrintPipeline, Superseded, hiddenFacesSettled, servePrint } from "../src/print";
 import type { BeadMesh } from "../src/print";
 import { PrintSession } from "../src/print/session";
+import { cyclesEngine } from "../src/photo/cycles";
+import type { Scene } from "../src/scene";
 import { MINI_GCODE, gcodeSource, recordingJob } from "./support/print";
 
 type Sent = { message: { id: number; kind: string; stage?: string }; transfer: ArrayBuffer[] };
@@ -223,6 +225,42 @@ describe("PrintPipeline against a worker that answers when told", () => {
     const loaded = await opening;
     w.raw.onerror?.({ message: "out of memory" });
     await expect(loaded.liteMesh()).rejects.toThrow("out of memory");
+    await hiddenFacesSettled(loaded.mesh);
+  });
+
+  test("a prebuilt part's null faces end the wait and leave its mesh whole", async () => {
+    const w = scriptedWorker(), p = pipeline(() => w.worker), done = await sliced();
+    const opening = p.open({ kind: "bin", url: "part.bin" }, DEFAULT_SLICE, noStage);
+    const id = w.requests[0].id;
+    w.reply({ id, kind: "opened", sliced: done.sliced, mesh: { ...done.mesh } });
+    const loaded = await opening;
+    w.reply({ id, kind: "lite", mesh: done.mesh });
+    w.reply({ id, kind: "hidden", hidden: null });
+    await hiddenFacesSettled(loaded.mesh);
+    expect(loaded.mesh.hidden).toBeUndefined();
+  });
+
+  test("a Cycles photo waits in fits for the faces a load is about to send", async () => {
+    vi.stubGlobal("crossOriginIsolated", true);
+    try {
+      const w = scriptedWorker(), p = pipeline(() => w.worker), done = await sliced();
+      const opening = p.open(gcodeSource(MINI_GCODE), DEFAULT_SLICE, noStage);
+      const id = w.requests[0].id;
+      w.reply({ id, kind: "opened", sliced: done.sliced, mesh: { ...done.mesh } });
+      const { mesh } = await opening;
+      const scene = { part: { mesh }, film: { width: 8, height: 5 } } as unknown as Scene;
+      let fit: unknown = null;
+      const fits = cyclesEngine().fits(scene).then((f) => { fit = f; });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(fit).toBeNull();
+      const hidden = new Uint8Array(mesh.tris).fill(1);
+      w.reply({ id, kind: "hidden", hidden });
+      await fits;
+      expect(fit).toBe(true);
+      expect(mesh.hidden).toBe(hidden);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   test("a worker crash rejects the live job, and the next call starts a fresh worker", async () => {

@@ -201,10 +201,16 @@ describe("opening the fixture as a file", () => {
   test("works out the hidden faces once, keeps them for a re-open, and survives an abort on the way", async () => {
     const session = new PrintSession(), src = gcodeSource(MINI_GCODE);
     const opened = await session.open(src, DEFAULT_SLICE, recordingJob());
-    const aborted = new AbortController();
-    aborted.abort();
-    const job: Job = { signal: aborted.signal, stage: () => {}, checkpoint: async () => aborted.signal.throwIfAborted() };
-    await expect(session.hidden(job)).rejects.toThrow();
+    // Aborted at the first checkpoint, then at the second, after the cover test: neither loses it.
+    for (const at of [1, 2]) {
+      const aborted = new AbortController();
+      let checkpoints = 0;
+      const job: Job = { signal: aborted.signal, stage: () => {}, checkpoint: async () => {
+        if (++checkpoints === at) aborted.abort();
+        aborted.signal.throwIfAborted();
+      } };
+      await expect(session.hidden(job)).rejects.toThrow();
+    }
     const hidden = await session.hidden(recordingJob());
     expect(hidden).toHaveLength(opened.mesh.tris);
     expect(hidden?.includes(1)).toBe(true);
