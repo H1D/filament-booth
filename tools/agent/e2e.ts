@@ -94,7 +94,7 @@ function cubeStl(sizeMm: number): Buffer {
 }
 
 const SCRIPT = `
-import bpy, time
+import bpy, math, time
 
 bpy.ops.wm.stl_import(filepath="bracket.stl")
 part = bpy.context.object
@@ -112,6 +112,14 @@ key.data.energy = 40
 key.location = (0.5, -0.4, 0.5)
 print("lights", [o.name for o in bpy.data.objects if o.type == 'LIGHT'])
 print("key", key.data.energy, tuple(round(v, 3) for v in key.location))
+
+# Props: a green wall behind the part, and the same STL again as a prop beside it.
+bpy.ops.mesh.primitive_plane_add(size=2, location=(0, 0.03, 1), rotation=(math.radians(90), 0, 0))
+wall = bpy.context.object
+wall.name = "E2E Wall"
+wall.active_material.node_tree.nodes["Principled BSDF"].inputs["Base Color"].default_value = (0.05, 0.6, 0.05, 1)
+bpy.ops.booth.prop_import(filepath="bracket.stl", location=(0.04, 0, 0))
+print("props", [o.name for o in bpy.data.objects if hasattr(o, "booth") and hasattr(o.booth, "shape")], tuple(round(v, 3) for v in bpy.context.object.dimensions))
 
 # A pause, so the script outlives the first call's wait on a machine that renders this fast.
 time.sleep(3)
@@ -248,6 +256,14 @@ try {
     expect(png.width === WIDTH && png.height === HEIGHT, `the PNG is ${png.width} by ${png.height}`);
     const lit = Array.from({ length: png.width * png.height }, (_, i) => png.data[i * 4]! + png.data[i * 4 + 1]! + png.data[i * 4 + 2]!);
     expect(new Set(lit).size > 20, "the PNG is flat: fewer than 20 distinct pixel values");
+    // The green wall the script stood up behind the part fills much of the frame.
+    let green = 0;
+    for (let i = 0; i < png.width * png.height; i++) {
+      const [r, g, b] = [png.data[i * 4]!, png.data[i * 4 + 1]!, png.data[i * 4 + 2]!];
+      if (g > r + 30 && g > b + 30) green += 1;
+    }
+    const greenShare = green / (png.width * png.height);
+    expect(greenShare > 0.1, `the wall prop is not in the photo: ${(greenShare * 100).toFixed(1)}% green pixels`);
 
     const blocks = imageBlocks(result);
     expect(blocks.length === 1, `${blocks.length} image blocks in the final report`);
@@ -265,12 +281,16 @@ try {
     }
     expect(Math.abs(key.azimuth - 51.34) < 1, `azimuth ${key.azimuth}`);
     expect(doc?.output.samples === SAMPLES && doc.output.longEdgePx === HEIGHT, `output ${JSON.stringify(doc?.output)}`);
+    const props = doc?.props ?? [];
+    expect(props.length === 2 && props[0]?.shape === "plane" && props[1]?.shape === "mesh" && props[1].name === "bracket.001",
+      `props ${JSON.stringify(props.map((p) => [p.name, p.shape]))}`);
+    expect(output.includes("props ['E2E Wall', 'bracket.001'] (0.02, 0.02, 0.02)"), `props output: ${JSON.stringify(output)}`);
 
     const card = page.locator('img.photo-frame[alt^="Finished photo"]');
     await card.waitFor();
     const size = await card.evaluate((img: HTMLImageElement) => ({ w: img.naturalWidth, h: img.naturalHeight }));
     expect(size.w === WIDTH && size.h === HEIGHT, `the photo card shows ${size.w} by ${size.h}`);
-    return `${renderSeconds.toFixed(1)} s from the call to done (${waits} waits, progress: ${[...seen].join(" | ")}); ${image.note}; ${path} is ${png.width}x${png.height}; thumbnail ${thumbnail.length} bytes (mean red ${Math.round(thumb.meanRed)}); light "${key.name}" ${key.powerW} W at azimuth ${key.azimuth.toFixed(1)}`;
+    return `${renderSeconds.toFixed(1)} s from the call to done (${waits} waits, progress: ${[...seen].join(" | ")}); ${image.note}; ${path} is ${png.width}x${png.height}; thumbnail ${thumbnail.length} bytes (mean red ${Math.round(thumb.meanRed)}); light "${key.name}" ${key.powerW} W at azimuth ${key.azimuth.toFixed(1)}; wall prop covers ${(greenShare * 100).toFixed(0)}% of the photo`;
   });
 
   await check("booth_cancel stops a runaway script as cancelled, and the next script runs", async () => {
