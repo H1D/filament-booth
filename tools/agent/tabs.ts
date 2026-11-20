@@ -240,7 +240,7 @@ export class TabServer {
 
   #onHello(session: Session, hello: Extract<TabMessage, { hello: unknown }>["hello"]): void {
     if (!sameSecret(hello.token, this.#opts.token)) {
-      this.#refuse(session, CLOSE.badToken, "wrong token: the agent's bridge was added with another token. Run claude mcp remove booth, then the command in this section again");
+      this.#refuse(session, CLOSE.badToken, "wrong token: the agent's bridge was added with another token. Run claude mcp remove booth, then the command in the Agent section again");
       return;
     }
     if (hello.protocol !== PROTOCOL) {

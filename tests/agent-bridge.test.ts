@@ -1,4 +1,4 @@
-import { createServer } from "node:net";
+import { connect, createServer } from "node:net";
 import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -886,7 +886,14 @@ describe("the real process", () => {
     return address.port;
   }
 
-  test("bun tools/agent/bridge.ts serves MCP over stdio and the tab over the loopback port, end to end", { timeout: 60_000 }, async () => {
+  /** True when something accepts a TCP connection on the port. */
+  const bound = (port: number): Promise<boolean> => new Promise((done) => {
+    const socket = connect(port, "127.0.0.1");
+    socket.once("connect", () => { socket.destroy(); done(true); });
+    socket.once("error", () => { done(false); });
+  });
+
+  test("bun tools/agent/bridge.ts serves MCP over stdio and the tab over the loopback port from the first tool call, end to end", { timeout: 60_000 }, async () => {
     const config = await folder();
     const work = await folder();
     const port = await freePort();
@@ -902,10 +909,12 @@ describe("the real process", () => {
 
     const { token } = JSON.parse(await vi.waitFor(() => readFile(join(config, "bridge.json"), "utf8"), { timeout: 10_000 })) as { token: string };
     expect((await stat(join(config, "bridge.json"))).mode & 0o777).toBe(0o600);
-    const tab = await vi.waitFor(() => FakeTab.pair(port, "e2e", token), { timeout: 10_000, interval: 100 });
-    cleanups.push(() => { tab.close(); return Promise.resolve(); });
+    // Registered for every project, a bridge starts with every agent session. One that has not been used leaves the port free.
+    expect(await bound(port)).toBe(false);
 
     const call = client.callTool({ name: "booth_python", arguments: { code: "import bpy\nprint('hello')", wait_s: 30 } });
+    const tab = await vi.waitFor(() => FakeTab.pair(port, "e2e", token), { timeout: 10_000, interval: 100 });
+    cleanups.push(() => { tab.close(); return Promise.resolve(); });
     const { job, code } = await tab.nextRun();
     expect(code).toBe("import bpy\nprint('hello')");
     tab.send({ output: { job, text: "hello\n" } });

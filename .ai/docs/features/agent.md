@@ -42,7 +42,7 @@ The agent sees three MCP tools: `booth_python` runs a script, `booth_wait` follo
 agent (MCP, stdio) -> bridge (tools/agent) -> ws://127.0.0.1:<port> -> BridgeLink -> AgentControl -> PythonRuntime (worker) -> AgentHost -> Booth
 ```
 
-The tab dials the bridge, never the other way. The bridge listens on `127.0.0.1` only and answers only a tab that says hello with the token. A fresh page makes a random token, keeps it in `booth.agent` and shows `claude mcp add booth -- npx -y filament-booth --token <token>` (`bridgeCommand` in `protocol.ts`), so the user copies one line. Without `--token` the bridge's token and default port live in `~/.config/filament-booth/bridge.json` (mode 600, created on first start). `FILAMENT_BOOTH_CONFIG_DIR` moves that folder.
+The tab dials the bridge, never the other way. The bridge listens on `127.0.0.1` only and answers only a tab that says hello with the token. A fresh page makes a random token, keeps it in `booth.agent` and shows `claude mcp add --scope user booth -- npx -y filament-booth --token <token>` (`bridgeCommand` in `protocol.ts`), so the user copies one line. User scope gives every agent session the booth, whatever folder it starts in (a T3 Code thread starts in a fresh one). The bridge binds the port on the first tool call, not at start, so an idle session does not hold it. Without `--token` the bridge's token and default port live in `~/.config/filament-booth/bridge.json` (mode 600, created on first start). `FILAMENT_BOOTH_CONFIG_DIR` moves that folder.
 
 ## Design Notes
 

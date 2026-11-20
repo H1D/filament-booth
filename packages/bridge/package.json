@@ -1,6 +1,6 @@
 {
   "name": "filament-booth",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Let a local coding agent drive the Filament booth tab (booth.artems.net) with Blender Python, over MCP.",
   "type": "module",
   "bin": {

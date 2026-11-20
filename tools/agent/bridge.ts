@@ -14,8 +14,10 @@
  *   --app <origin>                       a booth origin to accept (repeatable); the first one is also the pairing link's base
  *   --allow <dir>                        another folder the tab may read and write (repeatable)
  *
- * Register it:  claude mcp add booth -- npx -y filament-booth --token <the token the tab shows>
+ * Register it:  claude mcp add --scope user booth -- npx -y filament-booth --token <the token the tab shows>
  *          or:  claude mcp add booth -- bun <checkout>/tools/agent/bridge.ts
+ *
+ * The port is bound on the first tool call, so the sessions that never use the booth never hold it.
  *
  * MCP owns stdout. Every log line goes to stderr.
  */
@@ -218,7 +220,7 @@ export function createBridge(config: BridgeConfig): Bridge {
     }
   };
 
-  const server = new McpServer({ name: "filament-booth", version: "0.1.0" });
+  const server = new McpServer({ name: "filament-booth", version: "0.1.1" });
   const waitS = z.number().min(1).max(MAX_WAIT_S).default(DEFAULT_WAIT_S)
     .describe(`How long to wait for the script to finish, in seconds (1 to ${MAX_WAIT_S}). When it runs longer the call returns state "running" and the script keeps going.`);
 
@@ -303,10 +305,9 @@ export async function main(argv: readonly string[], env: NodeJS.ProcessEnv, cwd:
     app,
   });
 
-  const listening = await running.tabs.listen();
-  console.error(listening.ok
-    ? `filament-booth bridge: listening on 127.0.0.1:${listening.port}, folders ${roots.join(", ")}`
-    : `filament-booth bridge: port ${port} is not available (${listening.reason}). The tools retry it on every call.`);
+  // The port is taken on the first tool call, not here. Registered for every project, the bridge
+  // starts with every agent session, and an idle one must not hold the port the working one needs.
+  console.error(`filament-booth bridge: ready, folders ${roots.join(", ")}. It listens on 127.0.0.1:${port} from the first booth tool call.`);
 
   await running.server.connect(new StdioServerTransport());
   const stop = (): void => {

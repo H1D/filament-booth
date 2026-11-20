@@ -124,7 +124,7 @@ test("the pairing hash the bridge writes is the one the page reads", () => {
 
 test("the command the page shows names --port and --app only when the bridge's defaults would be wrong", () => {
   expect(bridgeCommand({ port: DEFAULT_PORT, token: "abcdefgh12345678", origin: "https://booth.artems.net" }))
-    .toBe("claude mcp add booth -- npx -y filament-booth --token abcdefgh12345678");
+    .toBe("claude mcp add --scope user booth -- npx -y filament-booth --token abcdefgh12345678");
   expect(bridgeCommand({ port: 5000, token: "abcdefgh12345678", origin: "http://localhost:5173" }))
-    .toBe("claude mcp add booth -- npx -y filament-booth --token abcdefgh12345678 --port 5000 --app http://localhost:5173");
+    .toBe("claude mcp add --scope user booth -- npx -y filament-booth --token abcdefgh12345678 --port 5000 --app http://localhost:5173");
 });
