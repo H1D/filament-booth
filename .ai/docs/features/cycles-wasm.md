@@ -31,5 +31,7 @@ files[9]{path,purpose}:
 
 - Rebuild only after a change to `cycles/api/`, a patch or a version pin. Then rerun `bun tools/parity/run.ts`.
 - Pointers cross to JS as signed 32-bit. Read them unsigned.
-- Sampling time is set by the scene (frame coverage of the dense part, bead shader, HDR world). Bounce limits, adaptive sampling and the pixel filter cost nothing measurable. See the table in `cycles/README.md`.
+- Sampling time is set by the scene (frame coverage of the dense part, bead shader, HDR world). Bounce limits and the pixel filter cost nothing measurable. Adaptive sampling was only measured at 64 samples, below its automatic minimum of 84. See the table in `cycles/README.md`.
+- The part has two bead shaders: triangles with a vertex on the bed get the plate's bump, the rest a copy without it (`wallTriangles`, `cb_mesh_shader_index`). That saves about a tenth of sampling, and parity against native Blender is unchanged.
+- Passes cross to JavaScript bottom row first. Progress snapshots hold the colour only; the albedo and normal guides arrive with the final frame, for the denoiser.
 - Licences of Cycles and its libraries are listed in `cycles/README.md`. Ship their notices with the app.

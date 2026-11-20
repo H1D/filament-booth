@@ -27,7 +27,8 @@ export interface CyclesModule {
     focusDistance: number, clipStart: number): void;
   _cb_mesh(nverts: number, ntris: number, positions: number, indices: number, normals: number): number;
   _cb_mesh_attribute(mesh: number, name: number, components: number, data: number): number;
-  _cb_object(mesh: number, shader: number, tfm: number, flags: number): number;
+  _cb_mesh_shader_index(mesh: number, index: number): number;
+  _cb_object(mesh: number, shader: number, secondShader: number, tfm: number, flags: number): number;
   _cb_shader_bead(r: number, g: number, b: number, ior: number, anisotropy: number,
     mottleScale: number, mottleAmp: number, roughMin: number, plateRough: number,
     plateTextured: number, grainPerM: number, bumpDistanceM: number): number;
@@ -126,6 +127,20 @@ export function plateMask(mesh: BeadMesh, out: Float32Array = new Float32Array(m
   return out;
 }
 
+/**
+ * 1 on triangles with no vertex on the plate face, 0 on the rest. The plate's bump has
+ * strength 0 on the first kind, so they take a bead shader without the bump (see
+ * cb_shader_bead).
+ */
+export function wallTriangles(mesh: BeadMesh, out: Uint8Array = new Uint8Array(mesh.index.length / 3)): Uint8Array {
+  const onPlate = (v: number) => mesh.position[v * 3 + 2] <= PLATE_EPS;
+  for (let t = 0; t < out.length; t++) {
+    const i = t * 3;
+    out[t] = onPlate(mesh.index[i]) || onPlate(mesh.index[i + 1]) || onPlate(mesh.index[i + 2]) ? 0 : 1;
+  }
+  return out;
+}
+
 /** The print path direction, dequantised. */
 export function pathTangents(mesh: BeadMesh, out: Float32Array = new Float32Array(mesh.tangent.length)): Float32Array {
   for (let i = 0; i < out.length; i++) out[i] = mesh.tangent[i] / 32767;
@@ -217,9 +232,18 @@ function uploadPart(M: CyclesModule, part: PartSection): void {
   // Not "tangent": Cycles resolves that name to the UV tangent, not to a mesh attribute.
   attribute(M, handle, "path_tangent", 3, nverts, (out) => pathTangents(mesh, out));
   const { baseColor, plate } = material;
-  const shader = check(M, M._cb_shader_bead(...baseColor, material.ior, material.anisotropy, material.mottleScale,
-    material.mottleAmp, ROUGH_MIN, plate.rough, plate.textured ? 1 : 0, plate.grainPerM, plate.bumpDistanceM), "bead shader");
-  copyToHeap(M, Float32Array.from(part.toWorld), (tfm) => check(M, M._cb_object(handle, shader, tfm, OBJECT_PART), "part"));
+  const bead = (textured: boolean) => check(M, M._cb_shader_bead(...baseColor, material.ior, material.anisotropy, material.mottleScale,
+    material.mottleAmp, ROUGH_MIN, plate.rough, textured ? 1 : 0, plate.grainPerM, plate.bumpDistanceM), "bead shader");
+  const shader = bead(plate.textured);
+  // The textured plate's bump costs about a tenth of sampling; only triangles on the plate need it.
+  let walls = -1;
+  const ntris = mesh.index.length / 3;
+  if (plate.textured && ntris > 0) {
+    walls = bead(false);
+    onHeap(M, Math.ceil(ntris / 4), (view) => wallTriangles(mesh, new Uint8Array(view.buffer, view.byteOffset, ntris)),
+      (index) => check(M, M._cb_mesh_shader_index(handle, index), "part shaders"));
+  }
+  copyToHeap(M, Float32Array.from(part.toWorld), (tfm) => check(M, M._cb_object(handle, shader, walls, tfm, OBJECT_PART), "part"));
 }
 
 function uploadBackdrop(M: CyclesModule, backdrop: BackdropSection): void {
@@ -229,7 +253,7 @@ function uploadBackdrop(M: CyclesModule, backdrop: BackdropSection): void {
         check(M, M._cb_mesh(backdrop.positions.length / 3, backdrop.index.length / 3, positions, indices, normals), "backdrop mesh"))));
   const shader = check(M, M._cb_shader_principled(...backdrop.albedo, backdrop.roughness), "backdrop shader");
   copyToHeap(M, IDENTITY, (tfm) =>
-    check(M, M._cb_object(handle, shader, tfm, backdrop.shadowCatcher ? OBJECT_SHADOW_CATCHER : 0), "backdrop"));
+    check(M, M._cb_object(handle, shader, -1, tfm, backdrop.shadowCatcher ? OBJECT_SHADOW_CATCHER : 0), "backdrop"));
 }
 
 function uploadEmitter(M: CyclesModule, e: Emitter): void {
@@ -256,14 +280,20 @@ export interface Passes {
   readonly normal: Float32Array | null;
 }
 
-/** Copies the newest snapshot out of the heap, or null before the first one. */
+/** Copies the newest snapshot out of the heap, top row first, or null before the first one.
+ *  The albedo and normal guides are there once the render has ended. */
 export function readPasses(M: CyclesModule, width: number, height: number): Passes | null {
-  const n = width * height * 4;
+  const row = width * 4;
   const samples = M._cb_passes_lock();
   try {
+    // Cycles keeps the bottom row first. Flipping here keeps the work off its session thread.
     const copy = (which: number) => {
       const ptr = M._cb_pass(which);
-      return ptr ? heapFloats(M.wasmMemory, ptr, n).slice() : null;
+      if (!ptr) return null;
+      const src = heapFloats(M.wasmMemory, ptr, row * height);
+      const out = new Float32Array(row * height);
+      for (let y = 0; y < height; y++) out.set(src.subarray((height - 1 - y) * row, (height - y) * row), y * row);
+      return out;
     };
     const rgba = copy(PASS_RGBA);
     return rgba && { samples, rgba, albedo: copy(PASS_ALBEDO), normal: copy(PASS_NORMAL) };

@@ -37,7 +37,7 @@
 import { AGX_LOOKS, type AgxLook } from "./document";
 import type { FilmSection } from "./scene";
 
-/** Scene-linear Rec.709, premultiplied alpha. `albedo` and `normal` guide the denoiser when present. */
+/** Scene-linear Rec.709, premultiplied alpha. `albedo` and `normal` guide the denoiser when present (a final Cycles frame). */
 export interface RadianceFrame {
   readonly width: number;
   readonly height: number;
@@ -106,7 +106,8 @@ export function parseManifest(json: unknown): AgxManifest {
   };
 }
 
-function halfToFloat(h: number): number {
+/** One IEEE half (binary16), as its 16 bits, to a number. */
+export function halfToFloat(h: number): number {
   const exponent = (h >> 10) & 31;
   const mantissa = h & 1023;
   const sign = h & 0x8000 ? -1 : 1;
@@ -304,8 +305,7 @@ function paint(width: number, height: number, rgba: Uint8ClampedArray): Offscree
 /**
  * AgX with the film's look, sRGB encode, PNG. A transparent film keeps alpha;
  * an opaque one is written fully opaque. Loads the look's LUT files on first use.
- * Denoising is not available yet: `film.denoise` and the frame's guides are
- * ignored, and the PNG is the undenoised frame.
+ * Denoising happens before this, in the photo desk (src/photo/denoise.ts).
  */
 export async function develop(frame: RadianceFrame, film: FilmSection): Promise<Blob> {
   const rgba = toneMapFrame(frame, await loadAgx(film.look));

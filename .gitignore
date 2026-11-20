@@ -27,3 +27,4 @@ dist-ssr
 !vendor/muon-protocol/dist
 tools/ui/out/
 tools/e2e/out/
+tools/denoise/out/

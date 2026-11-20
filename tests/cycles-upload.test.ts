@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { expect, test } from "vitest";
 import { packBeadWord, PLATE_EPS, type BeadMesh } from "../src/print";
-import { decodeRgbe, estimateHeapBytes, HEAP_LIMIT_BYTES, heapFloats, partNormals, partRoughness, plateMask } from "../src/photo/cycles-upload";
+import { decodeRgbe, estimateHeapBytes, HEAP_LIMIT_BYTES, heapFloats, partNormals, partRoughness, plateMask, wallTriangles } from "../src/photo/cycles-upload";
 import type { BeadMaterial } from "../src/scene";
 
 function mesh(words: number[], normals: number[], z: number[]): BeadMesh {
@@ -56,6 +56,12 @@ test("wall normals tilt less by their layer's flatten factor and skins keep thei
 test("the plate mask marks vertices on the bed", () => {
   const mask = plateMask(mesh([0, 0, 0], new Array(9).fill(0), [0, PLATE_EPS, PLATE_EPS * 2]));
   expect([...mask]).toEqual([1, 1, 0]);
+});
+
+test("only triangles with no vertex on the bed skip the plate's bump", () => {
+  // Vertices 0 and 1 are on the bed. Triangles: all off it, one corner on it, all on it.
+  const m = { ...mesh([0, 0, 0, 0, 0], new Array(15).fill(0), [0, PLATE_EPS, 1e-3, 2e-3, 3e-3]), index: Uint32Array.of(2, 3, 4, 1, 2, 3, 0, 1, 0) };
+  expect([...wallTriangles(m)]).toEqual([1, 0, 0]);
 });
 
 test("the studio HDR decodes to the values Blender reads from it", () => {

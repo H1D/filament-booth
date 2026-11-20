@@ -37,6 +37,11 @@ function frame(samples: number): RadianceFrame {
   return { width: 4, height: 2, samples, rgba: new Float32Array(32) };
 }
 
+/** A final Cycles frame: it carries the denoiser's guides. */
+function guided(samples: number): RadianceFrame {
+  return { ...frame(samples), albedo: new Float32Array(32), normal: new Float32Array(32) };
+}
+
 interface FakeBitmap extends ImageBitmap {
   closed: boolean;
 }
@@ -50,6 +55,8 @@ class Bench {
   readonly log: string[] = [];
   readonly bitmaps: FakeBitmap[] = [];
   readonly developed: RadianceFrame[] = [];
+  readonly denoised: RadianceFrame[] = [];
+  denoiseFails: string | null = null;
   readonly films: FilmSection[] = [];
   readonly png = new Blob(["png"]);
   loadGate: Deferred<void> | null = null;
@@ -77,6 +84,11 @@ class Bench {
       };
       this.bitmaps.push(bitmap);
       return bitmap;
+    },
+    denoise: async (noisy) => {
+      this.denoised.push(noisy);
+      if (this.denoiseFails !== null) throw new Error(this.denoiseFails);
+      return { ...noisy, rgba: noisy.rgba.map(() => 0.5) };
     },
     develop: async (developing, film) => {
       this.developed.push(developing);
@@ -174,8 +186,8 @@ class FakeEngine implements PhotoEngine {
     this.#current.onPass(f, fraction);
   }
 
-  complete(samples: number): void {
-    this.#current?.resolve(frame(samples));
+  complete(samples: number, made: (samples: number) => RadianceFrame = frame): void {
+    this.#current?.resolve(made(samples));
   }
 
   crash(message: string): void {
@@ -248,6 +260,48 @@ describe("a photo that goes well", () => {
     cycles.complete(64);
     await run.result;
     expect(bench.films).toEqual([scene.film]);
+  });
+
+  test("denoises a Cycles frame before developing it", async () => {
+    const { engines: [cycles], desk, bench } = setup();
+    const run = desk.take(scene, "bracket");
+    await tick();
+    cycles.complete(64, guided);
+    const photo = await run.result;
+    expect(bench.denoised).toHaveLength(1);
+    expect(bench.developed[0].rgba.every((v) => v === 0.5)).toBe(true);
+    expect(photo.denoising).toEqual({ kind: "denoised" });
+  });
+
+  test("develops the noisy frame and says why when the denoiser fails", async () => {
+    const { engines: [cycles], desk, bench } = setup();
+    bench.denoiseFails = "this browser has no WebGPU";
+    const run = desk.take(scene, "bracket");
+    await tick();
+    cycles.complete(64, guided);
+    const photo = await run.result;
+    expect(bench.developed[0].rgba.every((v) => v === 0)).toBe(true);
+    expect(photo.denoising).toEqual({ kind: "failed", reason: "this browser has no WebGPU" });
+  });
+
+  test("leaves the frame alone when the film says not to denoise", async () => {
+    const { engines: [cycles], desk, bench } = setup();
+    const run = desk.take({ ...scene, film: { ...scene.film, denoise: false } }, "bracket");
+    await tick();
+    cycles.complete(64, guided);
+    const photo = await run.result;
+    expect(bench.denoised).toHaveLength(0);
+    expect(photo.denoising).toEqual({ kind: "off" });
+  });
+
+  test("a frame without guides, as the raster engine makes, is developed as it is", async () => {
+    const { engines: [cycles], desk, bench } = setup();
+    const run = desk.take(scene, "bracket");
+    await tick();
+    cycles.complete(64);
+    const photo = await run.result;
+    expect(bench.denoised).toHaveLength(0);
+    expect(photo.denoising).toEqual({ kind: "failed", reason: "this engine gives no albedo and normal guides" });
   });
 
   test("a failed tone map load ends the photo without trying an engine", async () => {

@@ -12,6 +12,7 @@ import type { AgxLook } from "../document";
 import { develop, loadAgx, quickLook, type AgxData, type RadianceFrame } from "../film";
 import type { FilmSection, Scene } from "../scene";
 import { setTimer, type Schedule } from "../schedule";
+import { denoise } from "./denoise";
 
 /** What ended sampling. A photo that ran to its target says so too. */
 export type StoppedBy =
@@ -19,6 +20,12 @@ export type StoppedBy =
   /** limitS is the limit the photo was taken under, so the card still says it after the setting changes. */
   | { readonly kind: "time-limit"; readonly limitS: number }
   | { readonly kind: "user" };
+
+/** Whether the developed frame went through the denoiser, and why not when it was asked to. */
+export type Denoising =
+  | { readonly kind: "denoised" }
+  | { readonly kind: "off" }
+  | { readonly kind: "failed"; readonly reason: string };
 
 export interface Photo {
   readonly png: Blob;
@@ -30,6 +37,7 @@ export interface Photo {
   /** Samples the photo was asked for. `samples` is lower when sampling stopped early. */
   readonly targetSamples: number;
   readonly stoppedBy: StoppedBy;
+  readonly denoising: Denoising;
   /** A label for the status line. */
   readonly engine: "cycles" | "raster";
   readonly docRev: number;
@@ -74,12 +82,14 @@ export interface PhotoEngine {
 }
 
 /**
- * The steps that need a browser (canvas, fetch) and the clocks. The defaults are
- * film.ts, Date.now and setTimeout; tests pass fakes.
+ * The steps that need a browser (canvas, fetch, WebGPU) and the clocks. The
+ * defaults are film.ts, denoise.ts, Date.now and setTimeout; tests pass fakes.
  */
 export interface PhotoTools {
   readonly loadAgx: (look: AgxLook) => Promise<AgxData>;
   readonly quickLook: (frame: RadianceFrame, lut: AgxData, maxEdgePx: number) => ImageBitmap;
+  /** The frame with its colour denoised. Rejects when it cannot be. */
+  readonly denoise: (frame: RadianceFrame) => Promise<RadianceFrame>;
   readonly develop: (frame: RadianceFrame, film: FilmSection) => Promise<Blob>;
   /** Milliseconds since the epoch. */
   readonly now: () => number;
@@ -87,7 +97,9 @@ export interface PhotoTools {
   readonly schedule: Schedule;
 }
 
-const BROWSER_TOOLS: PhotoTools = { loadAgx: (look) => loadAgx(look), quickLook, develop, now: Date.now, schedule: setTimer };
+const BROWSER_TOOLS: PhotoTools = {
+  loadAgx: (look) => loadAgx(look), quickLook, denoise: async (frame) => (await denoise(frame)).frame, develop, now: Date.now, schedule: setTimer,
+};
 
 const QUICK_LOOK_INTERVAL_MS = 500;
 const QUICK_LOOK_EDGE_PX = 512;
@@ -328,9 +340,11 @@ class Run implements PhotoRun {
   async #develop(engine: PhotoEngine, frame: RadianceFrame): Promise<void> {
     this.#stopClock();
     this.#publish({ state: "developing" });
+    const { frame: developing, denoising } = await this.#denoise(frame);
+    if (this.#settled) return;
     let png: Blob;
     try {
-      png = await this.#tools.develop(frame, this.#scene.film);
+      png = await this.#tools.develop(developing, this.#scene.film);
     } catch (error) {
       this.#end({ state: "failed", message: `Could not develop the photo: ${errorText(error)}` });
       return;
@@ -345,10 +359,23 @@ class Run implements PhotoRun {
         samples: frame.samples,
         targetSamples: this.#scene.film.samples,
         stoppedBy: this.#stoppedBy(frame),
+        denoising,
         engine: engine.id,
         docRev: this.#scene.docRev,
       },
     });
+  }
+
+  /** A denoiser failure costs the denoising, not the photo: the noisy frame is developed instead. */
+  async #denoise(frame: RadianceFrame): Promise<{ frame: RadianceFrame; denoising: Denoising }> {
+    if (!this.#scene.film.denoise) return { frame, denoising: { kind: "off" } };
+    if (!frame.albedo || !frame.normal) return { frame, denoising: { kind: "failed", reason: "this engine gives no albedo and normal guides" } };
+    try {
+      return { frame: await this.#tools.denoise(frame), denoising: { kind: "denoised" } };
+    } catch (error) {
+      console.error("denoise failed", error);
+      return { frame, denoising: { kind: "failed", reason: errorText(error) } };
+    }
   }
 
   #stoppedBy(frame: RadianceFrame): StoppedBy {

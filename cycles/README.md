@@ -73,7 +73,14 @@ from arithmetic, not from settings.
   frees the session and confirms, and only then is it terminated. Terminating it straight away
   is not enough. Cycles' threads are nested workers busy in wasm, and Chromium stops those by
   force only two seconds after their parent goes: 16 cores stayed busy for 2.2 to 2.5 s.
-- Passes arrive about every 1 to 2 s as RGBA float, plus the denoising albedo and normal guides.
+- Passes arrive every 1 to 6 s (Cycles spaces its updates out as a render goes on) as RGBA float,
+  bottom row first; `readPasses` flips them in the worker. Cycles copies them on its session thread
+  between batches, with no path traced meanwhile, so progress copies the colour only. The denoising
+  albedo and normal guides are copied once, with the final tile, which Cycles also writes when a
+  render is finished early. At 1600 x 2000 on the scale fixture this took the copies from 1.14 s
+  (16 snapshots, 71 ms each, when every snapshot held all three passes, flipped and widened on
+  that thread) to 0.34 s (17 snapshots) over about 100 s of sampling. `RenderStats.snapshotMs`
+  reports it.
 - Posting the scene structured-clones the part's mesh on the main thread: 106 to 154 ms over four
   renders of 10 million triangles (about 280 MB). The print pipeline could make this free by
   allocating `BeadMesh` buffers on a `SharedArrayBuffer`. The page is cross-origin isolated
@@ -162,6 +169,7 @@ same day, still sampled its scene in 22.5 and 22.8 s, so the machine is not the 
 | pixel filter 1.0 px | 58.5 s |
 | mottle amplitude 0 (the noise node stays in the graph) | 51.8 s |
 | no plate bump (Voronoi and noise height) | 47.4 s |
+| the plate bump on plate triangles only (now the default, see below) | 44.9 to 50.8 s |
 | world strength 0 | 45.6 s |
 | adaptive off, bounces 8, no plate bump | 48.3 s |
 | anisotropy 0, mottle 0, no plate bump, world 0 | 36.8 s |
@@ -172,8 +180,20 @@ made of is the scene: how much of the frame, and of the bounce rays off the swee
 10-million-triangle part (the fixture's camera fills the frame with it; the proof's vase stood
 on a plane under an empty sky), and the bead shader with the HDR world (anisotropic GGX, the plate
 bump evaluated on every bead hit, world importance sampling) against the proof's plain Principled
-BSDF and constant world. The plate bump is computed everywhere and only shows on the plate face;
-dropping it would save about a tenth but would change the photo wherever the plate is seen.
+BSDF and constant world.
+
+The plate bump used to be computed on every bead hit and only shows on the plate face. Its
+strength is the plate mask, which is 0 on any triangle with no vertex on the bed, and a bump of
+strength 0 returns the normal it was given. So `uploadPart` gives such triangles the bead shader
+built without the Voronoi, the noise and their three evaluations for the bump
+(`cb_mesh_shader_index`, two shaders on `cb_object`); triangles on the plate keep the full one.
+Parity against native Blender, which keeps the bump on every bead, is unchanged for all seven
+fixtures (within 0.01 dB of the table above). In one session: 52.6 and 54.5 s of sampling before, 44.9, 47.0, 49.0
+and 50.8 s after, 45.7 and 47.3 s with no plate bump at all (`--query plate=0`).
+
+Adaptive sampling cannot show up in this table: at the threshold 0.004 Cycles' automatic minimum
+is ceil(16 / 0.004^0.3) = 84 samples, so at 64 samples it never stops a pixel. At the default 256
+samples it can, which these runs do not measure.
 
 Cancel, `bun tools/parity/run.ts --cancel`, Chromium's CPU time sampled every 50 ms: with 13 to
 18 cores busy before the abort, Chromium is under one core 130 ms after a cancel while sampling

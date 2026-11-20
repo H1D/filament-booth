@@ -51,58 +51,61 @@ void collect_log(const LogLevel level, const char * /*file_line*/, const char * 
   g_log += "\n";
 }
 
-/* Copies every requested pass of a tile, flipped to top row first and widened to RGBA. */
+/* Copies passes out for JavaScript, bottom row first as Cycles stores them (readPasses flips
+ * them). Cycles calls this on its session thread between batches of samples, so no path is traced
+ * while it runs: progress copies the colour only, and the denoiser's guides are copied once, with
+ * the final tile. Cycles writes the final tile also when a render is finished early. */
 class SnapshotDriver : public OutputDriver {
  public:
   explicit SnapshotDriver(Booth *b) : b_(b) {}
 
   void write_render_tile(const Tile &tile) override
   {
-    copy(tile);
+    copy(tile, b_->aux_passes);
   }
 
   bool update_render_tile(const Tile &tile) override
   {
-    copy(tile);
+    copy(tile, false);
     return true;
   }
 
  private:
-  void copy(const Tile &tile)
+  void copy(const Tile &tile, const bool guides)
   {
     if (!(tile.size == tile.full_size)) {
       return;
     }
-    const int w = tile.size.x;
-    const int h = tile.size.y;
-    vector<float> raw;
+    const size_t n = size_t(tile.size.x) * size_t(tile.size.y);
     const std::lock_guard<std::mutex> lock(b_->snapshot.mutex);
-    for (int p = 0; p < SNAP_COUNT; p++) {
-      if (p != SNAP_RGBA && !b_->aux_passes) {
-        continue;
-      }
-      const int channels = (p == SNAP_RGBA) ? 4 : 3;
-      raw.resize(size_t(w) * h * channels);
-      if (!tile.get_pass_pixels(kPassNames[p], channels, raw.data())) {
-        continue;
-      }
+    const double t0 = now_ms();
+    for (int p = 0; p < (guides ? int(SNAP_COUNT) : SNAP_RGBA + 1); p++) {
       vector<float> &out = b_->snapshot.pixels[p];
-      out.resize(size_t(w) * h * 4);
-      for (int y = 0; y < h; y++) {
-        const float *src = raw.data() + size_t(h - 1 - y) * w * channels;
-        float *dst = out.data() + size_t(y) * w * 4;
-        for (int x = 0; x < w; x++) {
-          dst[x * 4 + 0] = src[x * channels + 0];
-          dst[x * 4 + 1] = src[x * channels + 1];
-          dst[x * 4 + 2] = src[x * channels + 2];
-          dst[x * 4 + 3] = (channels == 4) ? src[x * channels + 3] : 1.0f;
+      out.resize(n * 4);
+      if (p == SNAP_RGBA) {
+        if (!tile.get_pass_pixels(kPassNames[p], 4, out.data())) {
+          out.clear();
         }
+        continue;
+      }
+      raw_.resize(n * 3);
+      if (!tile.get_pass_pixels(kPassNames[p], 3, raw_.data())) {
+        out.clear();
+        continue;
+      }
+      for (size_t i = 0; i < n; i++) {
+        out[i * 4 + 0] = raw_[i * 3 + 0];
+        out[i * 4 + 1] = raw_[i * 3 + 1];
+        out[i * 4 + 2] = raw_[i * 3 + 2];
+        out[i * 4 + 3] = 1.0f;
       }
     }
     b_->snapshot.pending = true;
+    b_->snapshot.copy_ms += now_ms() - t0;
   }
 
   Booth *b_;
+  vector<float> raw_;
 };
 
 /* The final tile arrives with a Progress sample that counts no new samples, hence the max. */
@@ -447,7 +450,8 @@ CB_EXPORT int cb_passes_lock()
   return booth().snapshot.samples;
 }
 
-/* SnapshotPass, RGBA float, width * height * 4, top row first. Null until the pass exists. */
+/* SnapshotPass, RGBA float, width * height * 4, bottom row first. Null until the pass exists:
+ * the albedo and normal guides exist only once the render has ended. */
 CB_EXPORT const float *cb_pass(int which)
 {
   const vector<float> &pixels = booth().snapshot.pixels[which];
@@ -460,7 +464,8 @@ CB_EXPORT void cb_passes_unlock()
 }
 
 /* Milliseconds. 0: start to first sample (scene sync and BVH), 1: first sample to end,
- * 2: BVH build (object and scene level, from the scene update stats). */
+ * 2: BVH build (object and scene level, from the scene update stats), 3: copying passes out for
+ * JavaScript, all snapshots together (the session thread traces no path meanwhile). */
 CB_EXPORT double cb_time_ms(int which)
 {
   Booth &b = booth();
@@ -484,6 +489,10 @@ CB_EXPORT double cb_time_ms(int which)
         }
       }
       return ms;
+    }
+    case 3: {
+      const std::lock_guard<std::mutex> lock(b.snapshot.mutex);
+      return b.snapshot.copy_ms;
     }
   }
   return 0.0;

@@ -217,6 +217,7 @@ async function scale() {
       const s = r.stats;
       console.log(`run ${i + 1}: ${r.outcome} ${r.error} ${r.samples} samples, total ${(r.totalMs / 1000).toFixed(1)} s, `
         + `start to first sample ${(s.syncMs / 1000).toFixed(1)} s (BVH ${(s.bvhMs / 1000).toFixed(1)} s), sampling ${(s.samplingMs / 1000).toFixed(1)} s, `
+        + `copying ${r.passes} snapshots out ${(s.snapshotMs / 1000).toFixed(2)} s, `
         + `heap ${(s.heapBytes / 2 ** 20).toFixed(0)} MiB, Cycles peak ${(s.cyclesPeakBytes / 2 ** 20).toFixed(0)} MiB, threads ${s.threads}, `
         + `main thread blocked ${r.mainThreadBlockMs.toFixed(0)} ms in render(), largest timer lag ${r.maxTimerLagMs.toFixed(0)} ms`);
     });

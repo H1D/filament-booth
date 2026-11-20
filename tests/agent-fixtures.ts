@@ -88,7 +88,8 @@ export class ControlledRun implements PhotoRun {
     const film = this.scene.film;
     const photo: Photo = {
       png: new Blob(["a png"]), fileName: `${this.partName}_20261119-2200.png`, width: film.width, height: film.height,
-      samples: film.samples, targetSamples: film.samples, stoppedBy: { kind: "samples" }, engine: "cycles", docRev: this.docRev, ...over,
+      samples: film.samples, targetSamples: film.samples, stoppedBy: { kind: "samples" },
+      denoising: { kind: "denoised" }, engine: "cycles", docRev: this.docRev, ...over,
     };
     this.#over = true;
     this.emit({ state: "done", photo });

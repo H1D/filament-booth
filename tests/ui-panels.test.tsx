@@ -226,11 +226,15 @@ describe("the output section", () => {
     expect(booth.doc.output.timeLimitS).toBe(300);
   });
 
-  test("offers no denoise switch, because no denoiser exists yet", () => {
+  test("offers a denoise switch, on by default, that writes the document", () => {
     const { booth } = boothWith();
     const { container } = mount(booth, <OutputPanel />);
     const switches = [...container.querySelectorAll('[role="switch"]')].map((el) => el.getAttribute("aria-label"));
-    expect(switches).toEqual(["Transparent background"]);
+    expect(switches).toEqual(["Transparent background", "Denoise"]);
+    const denoise = container.querySelector<HTMLInputElement>('[role="switch"][aria-label="Denoise"]');
+    expect(denoise?.checked).toBe(true);
+    act(() => { denoise?.click(); });
+    expect(booth.doc.output.denoise).toBe(false);
   });
 });
 

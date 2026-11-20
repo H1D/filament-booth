@@ -765,7 +765,9 @@ export const RNA: { readonly [K in RnaTypeName]: RnaType } = {
       samples: p.num("samples", "samples"),
       time_limit: p.num("timeLimitS", "timeLimitS", "s, 0 for none"),
       device: fixed("CPU", "Cycles runs on the CPU in WebAssembly"),
-      use_denoising: fixed(false, "no denoiser exists in the booth"),
+      use_denoising: p.bool("denoise"),
+      denoiser: fixed("OPENIMAGEDENOISE", "the booth runs Open Image Denoise on the graphics card"),
+      denoising_prefilter: fixed("FAST", "the albedo and normal guides go to the denoiser unfiltered"),
       use_adaptive_sampling: fixed(true),
       ...cyclesFilm,
       pixel_filter_type: fixed("BLACKMAN_HARRIS"),
@@ -1000,7 +1002,6 @@ export const UNMAPPED: Readonly<Record<string, string>> = {
   "studio.lights[].id": "a light's identity: Python holds it in the object's handle",
   "studio.lights[].kind": "chosen when the light is added: object.light_add makes an area light, booth.scrim_add a scrim",
   "output.viewTransform.kind": "always AgX: scene.view_settings.view_transform reads 'AgX'",
-  "output.denoise": "no denoiser exists in the booth, so scene.cycles.use_denoising is fixed False",
 };
 
 /** Every document path the table reads or writes, `[]` standing for any light. */
