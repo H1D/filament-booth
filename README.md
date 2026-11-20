@@ -107,8 +107,9 @@ Without `--token`, the token and default port are in `~/.config/filament-booth/b
 session's bridge holds it. Start this bridge with `--port <n>`, then run
 `bun tools/agent/bridge.ts --pair --port <n>` for a link that carries that port.
 
-The connection was tested from `localhost` origins in Chromium. Chrome may ask to allow
-booth.artems.net to reach devices on your local network the first time the switch connects. Firefox
+Chrome asks to let booth.artems.net reach devices on your local network the first time the switch
+connects. Allow it. Denied, the status stays at "Waiting for the bridge" and the console shows
+`ERR_BLOCKED_BY_LOCAL_NETWORK_ACCESS_CHECKS`. Allow it again in the site settings. Firefox
 and Safari are untested.
 
 `bun run bridge:build` bundles the bridge for Node into `packages/bridge/bridge.mjs`, which is what

@@ -105,7 +105,7 @@ export function AgentPanel() {
       {!TOKEN_PATTERN.test(settings.token) ? null : (
         <>
           <Command text={bridgeCommand({ port: settings.port, token: settings.token, origin: location.origin })} />
-          <Note>Run it in the folder you work in, then start Claude Code there. It needs Node.js. If booth was added before, run <code>claude mcp remove booth</code> first. For another agent, add an MCP server that runs the part after <code>--</code>.</Note>
+          <Note>Run it in the folder you work in, then start Claude Code there. It needs Node.js. If booth was added before, run <code>claude mcp remove booth</code> first. When Chrome asks to let this site reach devices on your local network, allow it: the bridge runs on this computer. For another agent, add an MCP server that runs the part after <code>--</code>.</Note>
         </>
       )}
       <Fold title="Port and token">
