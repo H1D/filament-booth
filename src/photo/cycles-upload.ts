@@ -262,16 +262,19 @@ export function uploadScene(M: CyclesModule, scene: Scene, world: WorldImage, th
   if (scene.lights.floorCards) uploadFloorCards(M, scene.lights.floorCards);
 }
 
+/** What a render again may change. */
+export type Frame = Pick<Scene, "film" | "camera">;
+
 /**
- * Readies the session of a finished render for `scene`, which differs from that render's scene in
- * its camera and film only: Cycles keeps the rest, and its BVH (cb_session_again).
+ * Readies the session of a finished render for another with this camera and film: Cycles keeps
+ * the rest of the scene, and its BVH (cb_session_again).
  */
-export function uploadAgain(M: CyclesModule, scene: Scene): void {
-  check(M, M._cb_session_again(scene.film.width, scene.film.height), "session again");
-  uploadFrame(M, scene);
+export function uploadAgain(M: CyclesModule, frame: Frame): void {
+  check(M, M._cb_session_again(frame.film.width, frame.film.height), "session again");
+  uploadFrame(M, frame);
 }
 
-function uploadFrame(M: CyclesModule, { film, camera }: Scene): void {
+function uploadFrame(M: CyclesModule, { film, camera }: Frame): void {
   M._cb_film(film.samples, film.adaptiveThreshold, film.maxBounces, film.diffuseBounces, film.glossyBounces,
     film.transmissionBounces, film.clampDirect, film.clampIndirect, film.filterWidthPx, film.transparent ? 1 : 0, 1);
   M._cb_camera(...camera.position, ...camera.target, ...camera.up, camera.fovYRad, camera.apertureRadiusM,

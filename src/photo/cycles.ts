@@ -28,16 +28,16 @@ export const IDLE_MS = 120_000;
 interface Parked {
   readonly worker: Worker;
   readonly scene: Scene;
-  /** Whether the part's hidden faces had come when it rendered (BeadMesh.hidden arrives late). */
-  readonly culled: boolean;
+  /** The part's hidden faces as that render had them: they can arrive after the mesh (BeadMesh.hidden). */
+  readonly hidden: Uint8Array | undefined;
   readonly timer: ReturnType<typeof setTimeout>;
 }
 
-const culled = (scene: Scene): boolean => scene.part?.mesh.hidden !== undefined;
+const hiddenOf = (scene: Scene): Uint8Array | undefined => scene.part?.mesh.hidden;
 
 /** Whether `next` is `last` but for its camera and film, so Cycles can render it again. */
-export function sameButFrame(last: Scene, lastCulled: boolean, next: Scene): boolean {
-  return next.part === last.part && culled(next) === lastCulled && next.lights === last.lights &&
+export function sameButFrame(last: Scene, lastHidden: Uint8Array | undefined, next: Scene): boolean {
+  return next.part === last.part && hiddenOf(next) === lastHidden && next.lights === last.lights &&
     next.backdrop === last.backdrop && next.world === last.world;
 }
 
@@ -54,16 +54,28 @@ export function cyclesEngine(options: CyclesEngineOptions = {}): PhotoEngine {
     if (p) clearTimeout(p.timer);
     return p;
   };
+  const release = (): void => unpark()?.worker.terminate();
   const take = (scene: Scene): { worker: Worker; again: boolean } => {
     const p = unpark();
-    if (p && sameButFrame(p.scene, p.culled, scene)) return { worker: p.worker, again: true };
+    if (p && sameButFrame(p.scene, p.hidden, scene)) return { worker: p.worker, again: true };
     p?.worker.terminate();
     return { worker: new Worker(new URL("./cycles-worker.ts", import.meta.url), { type: "module", name: "cycles" }), again: false };
   };
-  const park = (worker: Worker, scene: Scene, wasCulled: boolean): void => {
-    unpark()?.worker.terminate();
-    parked = { worker, scene, culled: wasCulled, timer: setTimeout(() => { parked = null; worker.terminate(); }, IDLE_MS) };
+  const park = (worker: Worker, scene: Scene, hidden: Uint8Array | undefined): void => {
+    release();
+    const drop = (): void => {
+      if (parked?.worker === worker) unpark();
+      worker.terminate();
+    };
+    // A parked worker has nothing to say: an error or a message means it cannot be trusted again.
+    worker.onmessage = drop;
+    worker.onerror = drop;
+    parked = { worker, scene, hidden, timer: setTimeout(drop, IDLE_MS) };
   };
+  if (typeof document !== "undefined") {
+    // A hidden tab's timers may wait for minutes: give the heap back now.
+    document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") release(); });
+  }
   return {
     id: "cycles",
     fits: async (scene) => {
@@ -82,8 +94,8 @@ export function cyclesEngine(options: CyclesEngineOptions = {}): PhotoEngine {
     },
     render: (scene, onPass, signal) => {
       if (signal.aborted && signal.reason !== "finish") return Promise.reject(signal.reason);
-      const { worker, again } = take(scene), wasCulled = culled(scene);
-      return render(scene, again, worker, () => park(worker, scene, wasCulled), onPass, signal, options);
+      const { worker, again } = take(scene), hidden = hiddenOf(scene);
+      return render(scene, again, worker, () => park(worker, scene, hidden), onPass, signal, options);
     },
   };
 }
@@ -120,7 +132,8 @@ function render(
     signal.addEventListener("abort", onAbort);
     worker.onmessage = (event: MessageEvent<WorkerReply>) => {
       const reply = event.data;
-      if (reply.type === "done" && !settled) park();
+      // Only a session that rendered a sample is whole: a Finish during its setup may stop that half way.
+      if (reply.type === "done" && !settled && reply.passes.samples > 0) park();
       else if (reply.type !== "pass") worker.terminate();
       if (settled) return;
       switch (reply.type) {
@@ -147,8 +160,8 @@ function render(
     };
     const request: RenderRequest = {
       type: "render",
-      scene,
-      again,
+      // A render again reads the frame only: the mesh is not cloned for nothing.
+      ...(again ? { again, scene: { film: scene.film, camera: scene.camera } } : { again, scene }),
       moduleUrl: new URL(`${BASE}cycles/cycles_booth.mjs`, location.href).href,
       hdrUrl: new URL(`${BASE}hdr/${scene.world.hdrId}.hdr`, location.href).href,
       poolSize: navigator.hardwareConcurrency + 4,

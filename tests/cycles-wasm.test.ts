@@ -27,9 +27,9 @@ async function render(scene: Scene, during?: () => void): Promise<{ passes: Pass
 async function renderIn(scene: Scene, again: boolean, during?: () => void): Promise<{ passes: Passes; state: number; snapshots: number }> {
   if (again) uploadAgain(M, scene);
   else uploadScene(M, scene, world);
-  expect(M._cb_render_start()).toBe(0);
   let snapshots = 0;
-  let version = 0;
+  let version = M._cb_passes_version(); // it counts on across a session's renders
+  expect(M._cb_render_start()).toBe(0);
   while (M._cb_render_state() === RenderState.running) {
     await wait(5);
     if (M._cb_passes_version() !== version) {
@@ -174,6 +174,8 @@ function frames(): Scene[] {
     a,
     { ...a, camera: moved },
     { ...a, film: { ...film, width: 80, height: 50, samples: 8 } },
+    { ...a, film: { ...film, width: 60, height: 96, adaptiveThreshold: 0, filterWidthPx: 2.5 } },
+    { ...a, film: { ...film, width: 128, height: 80, adaptiveThreshold: 0.01 } },
     { ...a, film: { ...film, transparent: true } },
     { ...a, camera: { ...camera, apertureRadiusM: 0.004 } },
     a,
@@ -191,6 +193,7 @@ test("rendering again with a new camera or film matches a fresh session, pixel f
       expect(run.passes.samples).toBe(scene.film.samples);
       expect(run.passes.rgba, `render ${i}`).toEqual(fresh[i].rgba);
       expect(run.passes.albedo, `render ${i}`).toEqual(fresh[i].albedo);
+      expect(run.passes.normal, `render ${i}`).toEqual(fresh[i].normal);
     }
   } finally {
     M._cb_session_free();
@@ -206,6 +209,7 @@ test("a render again after Finish renders its full sample count", async () => {
     const again = await renderIn(a, true);
     expect(again.passes.samples).toBe(small.samples);
     expect(again.passes.rgba).toEqual(fresh.rgba);
+    expect(again.passes.normal).toEqual(fresh.normal);
   } finally {
     M._cb_session_free();
   }
@@ -239,5 +243,5 @@ test("a render again builds no BVH and reuses the heap", async () => {
   }
   expect(bvh[0]).toBeGreaterThan(0);
   expect(bvh.slice(1)).toEqual(bvh.slice(1).map(() => 0));
-  expect(heaps.at(-1)).toBe(heaps[2]);
+  expect(heaps.at(-1)).toBe(heaps[4]); // after the largest frame
 }, 120_000);

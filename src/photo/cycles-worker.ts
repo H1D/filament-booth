@@ -15,17 +15,18 @@
  * two seconds after their parent goes (measured: 16 cores busy for 2.2 to 2.5 s).
  */
 import type { Scene } from "../scene";
-import { decodeRgbe, loadCycles, readPasses, RenderState, uploadAgain, uploadScene, type CyclesModule, type Passes } from "./cycles-upload";
+import { decodeRgbe, loadCycles, readPasses, RenderState, uploadAgain, uploadScene, type CyclesModule, type Frame, type Passes } from "./cycles-upload";
 
-export interface RenderRequest {
+interface Request {
   readonly type: "render";
-  readonly scene: Scene;
-  /** The scene is the last render's, which finished, but for its camera and film. False on a worker's first render. */
-  readonly again: boolean;
   readonly moduleUrl: string;
   readonly hdrUrl: string;
   readonly poolSize: number;
 }
+export type RenderRequest =
+  | Request & { readonly again: false; readonly scene: Scene }
+  /** The last render's scene, which finished, with this camera and film. Never a worker's first. */
+  | Request & { readonly again: true; readonly scene: Frame };
 export type ControlMessage = RenderRequest | { readonly type: "finish" } | { readonly type: "cancel" };
 
 export interface RenderStats {
@@ -35,6 +36,7 @@ export interface RenderStats {
   /** Time Cycles' session thread spent copying passes out, tracing no path meanwhile. */
   readonly snapshotMs: number;
   readonly heapBytes: number;
+  /** Cycles' own high-water mark over every render of the session. */
   readonly cyclesPeakBytes: number;
   readonly threads: number;
 }
@@ -62,7 +64,7 @@ async function fetchWorld(url: string) {
   return decodeRgbe(new Uint8Array(await response.arrayBuffer()));
 }
 
-function emptyPasses(scene: Scene): Passes {
+function emptyPasses(scene: Frame): Passes {
   return { samples: 0, rgba: new Float32Array(scene.film.width * scene.film.height * 4), albedo: null, normal: null };
 }
 
@@ -76,10 +78,11 @@ async function render(request: RenderRequest): Promise<void> {
     post({ type: "cancelled" });
     return;
   }
-  if (world) uploadScene(M, scene, world);
-  else uploadAgain(M, scene);
+  if (request.again) uploadAgain(M, request.scene);
+  else if (world) uploadScene(M, request.scene, world);
+  // Before the start: a render again can publish its first pass at once. It counts on across renders.
+  let version = M._cb_passes_version();
   if (M._cb_render_start() < 0) throw new Error(M.UTF8ToString(M._cb_error()));
-  let version = M._cb_passes_version(); // counts on across the session's renders
   for (;;) {
     await new Promise((resolve) => setTimeout(resolve, POLL_MS));
     if (cancelRequested) {

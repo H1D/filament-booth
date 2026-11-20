@@ -381,6 +381,7 @@ CB_EXPORT int cb_session_again(int width, int height)
     b.snapshot.pending = false;
     b.snapshot.copy_ms = 0.0;
   }
+  b.discard = false;
   b.t_start = 0.0;
   b.t_first_sample = 0.0;
   b.t_end = 0.0;
