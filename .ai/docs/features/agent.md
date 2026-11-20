@@ -21,6 +21,8 @@ files[21]{path,purpose}:
   src/agent/agent.ts,AgentControl is the switch and one script at a time and the store the UI reads
   src/ui/AgentPanel.tsx,the Agent rail section and the top bar badge with its popover
   tools/agent/bridge.ts,bridge CLI and the three MCP tools
+  tools/agent/cli.ts,entry for the Node bundle that the filament-booth npm package ships
+  packages/bridge,the filament-booth npm package (bun run bridge:build writes bridge.mjs)
   tools/agent/tabs.ts,loopback WebSocket server for the tab and file access
   tools/agent/jobs.ts,job table and the report the agent sees
   tools/agent/vendor-pyodide.ts,copies the pinned Pyodide from node_modules into public/pyodide
@@ -40,7 +42,7 @@ The agent sees three MCP tools: `booth_python` runs a script, `booth_wait` follo
 agent (MCP, stdio) -> bridge (tools/agent) -> ws://127.0.0.1:<port> -> BridgeLink -> AgentControl -> PythonRuntime (worker) -> AgentHost -> Booth
 ```
 
-The tab dials the bridge, never the other way. The bridge listens on `127.0.0.1` only and answers only a tab that says hello with the token. Its token and default port live in `~/.config/filament-booth/bridge.json` (mode 600, created on first start). `FILAMENT_BOOTH_CONFIG_DIR` moves that folder.
+The tab dials the bridge, never the other way. The bridge listens on `127.0.0.1` only and answers only a tab that says hello with the token. A fresh page makes a random token, keeps it in `booth.agent` and shows `claude mcp add booth -- npx -y filament-booth --token <token>` (`bridgeCommand` in `protocol.ts`), so the user copies one line. Without `--token` the bridge's token and default port live in `~/.config/filament-booth/bridge.json` (mode 600, created on first start). `FILAMENT_BOOTH_CONFIG_DIR` moves that folder.
 
 ## Design Notes
 
@@ -56,7 +58,7 @@ The tab dials the bridge, never the other way. The bridge listens on `127.0.0.1`
 - **Writes.** Every assignment is one `booth.update`, so `parseDocument` validates it and a refused value leaves the document as it was. Session state that is not a booth setting (`scene.render.filepath`, the active object) lives in `AgentHost` and survives a restarted interpreter.
 - **Render.** `bpy.ops.render.render(write_still=True)` goes through `PhotoSession.take()`, so the photo card shows an agent's photo as it shows PHOTO. A path ending in `.png` is the file. Any other path is a folder and the photo's own name is added. The agent gets a JPEG thumbnail with a 768 px long edge and the absolute path written. `bpy.ops.render.opengl()` renders a preview through `rasterEngine(viewport)` and is a `RuntimeError` where the page has no viewport.
 - **Files.** `bpy.ops.wm.stl_import(filepath=...)` and `render.filepath` name paths on the agent's machine. The tab asks the bridge to read or write them, and only for the running job. A relative path or a `//` prefix resolves against the bridge's working directory, symlinks are resolved first, and the result must sit inside that directory or one given with `--allow`.
-- **Origins.** The bridge accepts `http://localhost:5173`, `http://127.0.0.1:5173` and each `--app <origin>`. Any other `Origin`, or none, is refused over the open socket so the page can read why.
+- **Origins.** The bridge accepts `BRIDGE_ORIGINS` (`https://booth.artems.net`, `http://localhost:5173`, `http://127.0.0.1:5173`) and each `--app <origin>`. The command the page shows adds `--app` for any other origin. Any other `Origin`, or none, is refused over the open socket so the page can read why.
 - **Newest tab wins.** A second tab with the token replaces the first, which is closed with `CLOSE.replaced`.
 
 ## Gotchas
@@ -66,7 +68,7 @@ The tab dials the bridge, never the other way. The bridge listens on `127.0.0.1`
 - Headless Chromium draws the preview with software GL, which stalls the main thread for seconds. After a photo it stalled for 13 s in one run, so `booth_cancel` can wait out its 10 s grace and return `running` with "cancel requested, waiting for the tab to confirm". `booth_wait` then follows it to `cancelled`. In the hardware-GPU session the same script took 5 s, 3 of them a pause written into the script, and a cancel confirmed within 50 ms.
 - The bridge waits 15 s for a tab before it returns the pairing instructions. `BridgeConfig.tabWaitMs` shortens it in tests. The command line has no flag for it.
 - A busy port means another agent session's bridge holds it. The bridge stays up and every tool call retries the bind.
-- Verified only from `localhost` and `127.0.0.1` origins in Chromium. A page on a public HTTPS origin dialling `ws://127.0.0.1` can be blocked by the browser, and that case is open. Firefox and Safari are untested.
+- From an https origin, Chromium blocks `ws://127.0.0.1` with `ERR_BLOCKED_BY_LOCAL_NETWORK_ACCESS_CHECKS` until the user allows local network access, and headless denies it. With `context.grantPermissions(["local-network-access"])` a PR preview paired with the Node bundle (Chromium 156). That check is manual, not in a suite. Firefox and Safari are untested. Firefox and Safari are untested.
 - `public/pyodide` is written by `bun tools/agent/vendor-pyodide.ts` after a version change. Do not edit it. Its files are served from the page's own origin, so the booth makes no CDN call.
 - A thumbnail of a photo with a transparent background is drawn onto black, because JPEG has no alpha.
 - Run the bridge in tests and scripts with `FILAMENT_BOOTH_CONFIG_DIR` set. Without it, `--pair` and the server create `~/.config/filament-booth/bridge.json`.

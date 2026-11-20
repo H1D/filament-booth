@@ -61,6 +61,7 @@ export function agentWith(options: { readonly unavailable?: string } = {}): {
     pageId: "page-1",
     openSocket: sockets.open,
     schedule: clock.schedule,
+    newToken: () => "fresh-token-0001",
   });
   return { agent, runtime, sockets, clock, store };
 }

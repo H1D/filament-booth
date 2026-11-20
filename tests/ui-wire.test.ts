@@ -55,7 +55,9 @@ test("agent control is built over the real parts and starts nothing until the sw
     expect(agent.state.get().status).toMatchObject({ kind: "unavailable", reason: expect.stringContaining("cross-origin isolated") as string });
     expect(agent.state.get().settings.enabled).toBe(false);
   }
-  expect(storage.size).toBe(0);
+  // The only thing written is the page's own pairing token, with the switch off.
+  expect([...storage.keys()]).toEqual(["booth.agent"]);
+  expect(JSON.parse(storage.get("booth.agent")!)).toMatchObject({ enabled: false, token: expect.stringMatching(/^[0-9a-f]{32}$/) as string });
 });
 
 // ---- connectViewport -----------------------------------------------------------------------

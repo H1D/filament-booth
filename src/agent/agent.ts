@@ -70,7 +70,12 @@ export interface AgentDeps {
   readonly pageId: string;
   readonly openSocket?: (url: string) => SocketLike;
   readonly schedule?: Schedule;
+  /** A new pairing token, for a page that has none. Random unless a test fixes it. */
+  readonly newToken?: () => string;
 }
+
+/** 16 random bytes as hex, the same shape the bridge's own bridge.json token has. */
+export const randomToken = (): string => Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, "0")).join("");
 
 const DEFAULT_SETTINGS: AgentSettings = { enabled: false, port: DEFAULT_PORT, token: "" };
 
@@ -215,6 +220,8 @@ export class AgentControl {
       status: reason === null ? { kind: "off" } : { kind: "unavailable", reason },
       running: null,
     });
+    // A page with no token makes one, so the command it shows is complete and survives a reload.
+    if (settings.token === "") this.#remember({ ...this.state.get().settings, token: (deps.newToken ?? randomToken)() });
     if (reason === null && settings.enabled) this.#start();
   }
 

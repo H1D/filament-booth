@@ -464,22 +464,26 @@ try {
 
   const agentSwitch = page.getByRole("switch", { name: "Allow a local agent to control this tab" });
 
-  await check("the Agent section starts off, asks for a pairing and says what an agent can do", async () => {
+  await check("the Agent section starts off, shows the one command with the page's own token and says what an agent can do", async () => {
     await openSection(page, "agent");
-    expect(await agentSwitch.isDisabled(), "the switch is available with no token");
+    expect(await agentSwitch.isEnabled(), "the switch is disabled though the page made a token");
     const status = await text(page, ".agent .agent-status");
-    expect(status.includes("--pair"), `status: ${status}`);
-    const note = await text(page, '[data-section="agent"] .note');
+    expect(status.includes("Run the command below"), `status: ${status}`);
+    const command = await text(page, ".agent-command code");
+    expect(/^claude mcp add booth -- npx -y filament-booth --token [0-9a-f]{32}/.test(command), `command: ${command}`);
+    const note = (await page.locator('[data-section="agent"] .note').allTextContents()).join(" ");
     expect(/change every setting/.test(note) && /open files/.test(note) && /save photos/.test(note) && /only to 127\.0\.0\.1/.test(note), `note: ${note}`);
     expect(await page.locator(".topbar .agent-badge").count() === 0, "the badge shows while the switch is off");
-    return `switch disabled, status "${status}", note names settings, files, photos and 127.0.0.1`;
+    return `switch available, command "${command}", note names settings, files, photos and 127.0.0.1`;
   });
 
-  await check("a token enables the switch, and turning it on loads Python in the real worker and waits for a bridge", async () => {
+  await check("a pasted token replaces the page's own, and turning it on loads Python in the real worker and waits for a bridge", async () => {
+    await page.locator(".agent details.fold").evaluate((fold) => { (fold as HTMLDetailsElement).open = true; });
     const token = page.getByRole("textbox", { name: "Token" });
     await token.fill("9c1e47a0d2b35f86e4a1");
     await token.press("Enter");
-    expect(await agentSwitch.isEnabled(), "the switch is still disabled after a token was entered");
+    expect(await agentSwitch.isEnabled(), "the switch is disabled after a token was entered");
+    expect((await text(page, ".agent-command code")).includes("--token 9c1e47a0d2b35f86e4a1"), "the command does not carry the pasted token");
     expect(await token.getAttribute("type") === "password", "the token field is not masked");
     await agentSwitch.click();
     const starting = await text(page, ".agent .agent-status");
@@ -501,7 +505,7 @@ try {
     await page.locator(".topbar .agent-badge").waitFor({ state: "detached" });
     const status = await text(page, ".agent .agent-status");
     const saved = await page.evaluate(() => localStorage.getItem("booth.agent"));
-    expect(status === "Off" && saved !== null && JSON.parse(saved).enabled === false, `status ${status}, saved ${saved}`);
+    expect(status.startsWith("Off") && saved !== null && JSON.parse(saved).enabled === false, `status ${status}, saved ${saved}`);
     expect(await agentSwitch.isChecked() === false, "the switch is still on");
     return "popover opened from the badge, Turn off agent control removed the badge, the status reads Off and the switch is remembered off";
   });
