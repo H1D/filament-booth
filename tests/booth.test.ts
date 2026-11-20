@@ -854,7 +854,7 @@ describe("sceneWith", () => {
     const doc = rig.booth.doc;
     const scene = rig.booth.scene;
     const small = rig.booth.sceneWith((d) => { d.output.longEdgePx = 768; d.output.samples = 16; });
-    expect(small.film).toMatchObject({ width: 614, height: 768, samples: 16 });
+    expect(small.film).toMatchObject({ width: 768, height: 768, samples: 16 });
     expect(small.lights).toBe(scene.lights);
     expect(rig.booth.doc).toBe(doc);
     expect(rig.booth.scene).toBe(scene);

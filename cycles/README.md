@@ -115,7 +115,7 @@ coordinates, not along the print path its comment describes.
 Parity, `bun tools/parity/run.ts`, 256 samples, adaptive threshold 0.004, Standard view transform,
 8 bit. Fixtures a to d are hand-built scenes at 640 x 400. Fixtures e to g go `defaultDocument()`
 and two looks through the app's own path (G-code, print session, named edits, `compileScene`) on a
-real bead mesh, at 512 x 640 (the document's 4:5 at a 640 px long edge). Fixture (d) is compared
+real bead mesh, at 640 x 640 (the document's square at a 640 px long edge). Fixture (d) is compared
 over 50 % grey because its film is transparent.
 
 | Fixture | Checks | PSNR dB, native BVH2 | PSNR dB, native Embree | Mean abs diff /255 | Over 4/255 | Alpha mean abs diff /255 |
@@ -124,9 +124,11 @@ over 50 % grey because its film is transparent.
 | b | ellipse key with spread 60, part-only rim with spread 40, part-only scrim | 57.86 | 57.92 | 0.050 | 0.22 % | 0 |
 | c | floor cards (the faded disc) with a dark glossy part | 67.52 | not run | 0.010 | 0.00 % | 0 |
 | d | f/2.8 at 12 cm, transparent film, shadow catcher | 61.27 | 61.30 | 0.054 | 0.00 % | 0.014 |
-| e | the default document: PETG Basic under the studio look | 61.42 | not run | 0.039 | 0.01 % | 0 |
-| f | the dark look (part-only strips and scrims) with PLA Matte | 58.88 | not run | 0.032 | 0.04 % | 0 |
-| g | the gradient look (floor card ring), turntable 40 degrees, resting on the right face | 54.48 | not run | 0.184 | 0.05 % | 0 |
+| e | the default document: PETG Basic under the studio look | 58.74 | not run | 0.069 | 0.02 % | 0 |
+| f | the dark look (part-only strips and scrims) with PLA Matte | 56.46 | not run | 0.055 | 0.06 % | 0 |
+| g | the gradient look (floor card ring), turntable 40 degrees, resting on the right face | 53.98 | not run | 0.196 | 0.07 % | 0 |
+
+Fixtures e to g were 61.42, 58.88 and 54.48 dB when the default document was 4:5 (512 x 640).
 
 Fixture (c) was 69.43 dB before the floor ring became the faded disc its contract describes (it
 was a hard-edged annulus). It moved because the scene changed, not the agreement: the table

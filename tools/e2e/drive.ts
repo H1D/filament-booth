@@ -474,7 +474,7 @@ try {
     return sizes.join("; ");
   });
 
-  await flow("5", "PHOTO through Cycles at 800x1000, 64 samples, against the preview", async () => {
+  await flow("5", "PHOTO through Cycles at 1000x1000, 64 samples, against the preview", async () => {
     await withBsch04(true);
     await applyLook("studio");
     await setColour(GREEN);
@@ -663,10 +663,10 @@ try {
     return `focus at ${f3(focus)} m (front edge ${f3(e.nearDepthM)} m, back edge ${f3(e.farDepthM)} m); gradient energy f/11 -> f/2.8, ${row("preview", p11, p28)}; ${row("Cycles", c11, c28)}; photos ${(cSharp.ms / 1000).toFixed(1)} s at f/11, ${(cSoft.ms / 1000).toFixed(1)} s at f/2.8`;
   });
 
-  await flow("12", "LEKV2 at 1600x2000, 256 samples through Cycles", async () => {
+  await flow("12", "LEKV2 at 1600x1600, 256 samples through Cycles", async () => {
     await load("", true);
     const parseMs = await openPart(LEKV2, "plate_1.gcode");
-    // The default limit is 5 minutes and this photo takes about 40. It must run to its samples.
+    // The default limit is 5 minutes and this photo takes over half an hour. It must run to its samples.
     await setTimeLimit("No limit", 0);
     await setField("output", "Samples", "256");
     const tris = await page.evaluate(() => window.boothDev?.booth.scene.part?.mesh.tris ?? 0);
@@ -683,7 +683,7 @@ try {
   });
 
   await flow("13", "a 30 second time limit cuts a 64 sample photo short", async () => {
-    // 64 samples at 800x1000 take about 53 s unlimited. The control offers 30 seconds, not 20.
+    // 64 samples at 1000x1000 take about 63 s unlimited. The control offers 30 seconds, not 20.
     await withBsch04(true);
     await setOutput(1000, 64);
     await setTimeLimit("30 seconds", 30);
@@ -703,6 +703,8 @@ try {
     await load("", true);
     await openPart(LEKV2, "plate_1.gcode");
     // shots.json hero_light: turntable 80, camera azimuth 0, elevation 22, 0.8 m, 85 mm, f/11, 1600 x 2000.
+    await (await openSection(page, "camera")).locator('fieldset[aria-label="Aspect ratio"] input[value="4:5"]').check();
+    await until("a 4:5 film", () => page.evaluate(() => { const f = window.boothDev?.booth.scene.film; return f !== undefined && f.width * 5 === f.height * 4; }), 5000);
     const orbit = (await openSection(page, "camera")).locator("details.fold", { hasText: "Orbit" });
     if ((await orbit.getAttribute("open")) === null) await orbit.locator("> summary").click();
     await setField("camera", "Azimuth", "0");

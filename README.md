@@ -133,8 +133,8 @@ the `filament-booth` npm package ships. Publish it with `npm publish` from `pack
   WebGPU adapter. It re-runs itself inside a headless gamescope and drives a headful Chromium there.
   Test parts come from `$BOOTH_REF` (default `~/.t3/scratch/lekv2-photoreal-ref`) and native
   Blender from `$BLENDER` (default `~/apps/blender-5.2.3-linux-x64/blender`). Screenshots and
-  photos go to `tools/e2e/out/`. Flow 12 alone renders the 180 mm part at 1600 x 2000 and 256
-  samples, about 40 minutes here, so it sets the time limit to No limit (the app's default is 5
+  photos go to `tools/e2e/out/`. Flow 12 alone renders the 180 mm part at 1600 x 1600 and 256
+  samples, half an hour or more here (about 40 minutes at 1600 x 2000), so it sets the time limit to No limit (the app's default is 5
   minutes). Flow 13 sets a 30 second limit and checks that a 64 sample photo stops early. `table` (preview against Cycles brightness for the five looks)
   and `hero` (the preview against an old reference still) run only when named.
 - `bun tools/parity/run.ts` renders parity fixtures in the browser's Cycles and in native

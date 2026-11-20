@@ -3,6 +3,7 @@ import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, test } from "vitest";
 import type { Booth } from "../src/booth";
+import { CameraPanel } from "../src/ui/CameraPanel";
 import { FilamentPanel } from "../src/ui/FilamentPanel";
 import { LightsPanel } from "../src/ui/LightsPanel";
 import { OutputPanel } from "../src/ui/OutputPanels";
@@ -178,13 +179,33 @@ describe("the part section with nothing open", () => {
   });
 });
 
+describe("the camera section", () => {
+  test("from the square default an aspect preset is taken as labelled, and then keeps the frame's orientation", () => {
+    const { booth } = boothWith();
+    const { container } = mount(booth, <CameraPanel />);
+    const pick = (label: string) => {
+      const radio = container.querySelector(`fieldset[aria-label="Aspect ratio"] input[value="${label}"]`);
+      if (!(radio instanceof HTMLInputElement)) throw new Error(`no ${label} radio`);
+      act(() => { radio.click(); });
+    };
+    expect(booth.doc.output.aspect).toEqual({ w: 1, h: 1 });
+    pick("16:9");
+    expect(booth.doc.output.aspect).toEqual({ w: 16, h: 9 });
+    pick("4:5");
+    expect(booth.doc.output.aspect).toEqual({ w: 5, h: 4 });
+    pick("1:1");
+    pick("4:5");
+    expect(booth.doc.output.aspect).toEqual({ w: 4, h: 5 });
+  });
+});
+
 describe("the output section", () => {
   test("shows the pixel size the photo will have and follows the long edge", () => {
     const { booth } = boothWith();
     const { container } = mount(booth, <OutputPanel />);
-    expect(container.querySelector(".readout.size")?.textContent).toContain("1600 by 2000 px");
+    expect(container.querySelector(".readout.size")?.textContent).toContain("1600 by 1600 px");
     typeInto(input(container, "Long edge value, px"), "1000");
-    expect(container.querySelector(".readout.size")?.textContent).toContain("800 by 1000 px");
+    expect(container.querySelector(".readout.size")?.textContent).toContain("1000 by 1000 px");
   });
 
   test("the time limit offers No limit, 30 seconds and 1 to 60 minutes, and starts at 5 minutes", () => {

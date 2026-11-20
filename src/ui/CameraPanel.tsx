@@ -31,10 +31,12 @@ function presetOf(aspect: Aspect): string | null {
   return match?.label ?? null;
 }
 
-/** A preset keeps the frame's orientation: a landscape frame stays landscape when the ratio changes. */
+/** A preset keeps the frame's orientation: a landscape frame stays landscape when the ratio changes.
+ *  A square frame has none, so it takes the preset as labelled. */
 function applyAspect(label: string, current: Aspect): Aspect {
   const preset = ASPECT_PRESETS.find((p) => p.label === label);
   if (preset === undefined) return current;
+  if (current.w === current.h) return { w: preset.w, h: preset.h };
   const short = Math.min(preset.w, preset.h);
   const long = Math.max(preset.w, preset.h);
   return current.w > current.h ? { w: long, h: short } : { w: short, h: long };
