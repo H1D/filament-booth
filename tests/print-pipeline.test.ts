@@ -65,8 +65,9 @@ describe("PrintPipeline over a real worker", () => {
     const w = inProcessWorker();
     await pipeline(() => w.worker).open(gcodeSource(MINI_GCODE), DEFAULT_SLICE, noStage);
     const answer = w.sent.find((s) => s.message.kind === "opened");
-    expect(answer?.transfer).toHaveLength(5);
-    expect(new Set(answer?.transfer).size).toBe(5);
+    // position, normal, tangent, word, index, and the hidden flags (print/cover.ts)
+    expect(answer?.transfer).toHaveLength(6);
+    expect(new Set(answer?.transfer).size).toBe(6);
   });
 
   test("builds the lite mesh once, from the cached centreline", async () => {

@@ -26,19 +26,24 @@ function gauss(rand: () => number): number { // Box-Muller
   return Math.sqrt(-2 * Math.log(1 - rand())) * Math.cos(2 * Math.PI * rand());
 }
 
+/** The wobble of each layer counter, drawn in the order the layers first appear in `runs`. */
+function layerJitter(runs: readonly Run[], jitter: number = JITTER): Map<number, [number, number]> {
+  const rand = seeded(1);
+  const jit = new Map<number, [number, number]>();
+  for (const r of runs) if (!jit.has(r.layer)) jit.set(r.layer, [gauss(rand) * jitter, gauss(rand) * jitter]);
+  return jit;
+}
+
 /**
  * Per-layer jitter, first-layer line ends extended W/4 (they squash into the
  * wall they end at), W clipped to the calibrated range. `jitter` is the wobble
  * sigma in mm; 0 gives a perfect printer, which the parity test relies on.
  */
 export function centreline(runs: Run[], H: number = H0, jitter: number = JITTER): Centreline {
-  const rand = seeded(1);
-  const jit = new Map<number, [number, number]>();
+  const jit = layerJitter(runs, jitter);
   const P: number[] = [], Z: number[] = [], W: number[] = [], FL: number[] = [], V: number[] = [];
   for (const r of runs) {
-    let wobble = jit.get(r.layer);
-    if (!wobble) { wobble = [gauss(rand) * jitter, gauss(rand) * jitter]; jit.set(r.layer, wobble); }
-    const [jx, jy] = wobble;
+    const [jx, jy] = jit.get(r.layer) ?? [0, 0];
     const px: number[] = [], py: number[] = [], pw: number[] = [], pv: number[] = [];
     for (let k = 0; k < r.pts.length / 2; k++) { // drop duplicate / sub-2-um steps, as gcode_mesh.py
       if (k && Math.hypot(r.pts[2 * k] - r.pts[2 * k - 2], r.pts[2 * k + 1] - r.pts[2 * k - 1]) <= MIN_STEP) continue;

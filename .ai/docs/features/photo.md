@@ -34,6 +34,7 @@ files[11]{path,purpose}:
 - The denoiser is OIDN 2.5's `rt_hdr_alb_nrm` UNet, as Blender runs it for Cycles with the "Fast" prefilter: HDR colour with the noisy albedo and normal guides. Autoexposure, the PU transfer function, 16 px alignment and tiles overlapping by 96 px follow OIDN's code, so tiled output equals untiled. Tiles stay under 768 MB of GPU memory.
 - Measured with `bun tools/denoise/run.ts` against `oidnDenoise` 2.5.0: 61 to 62 dB PSNR after AgX, worst pixel 1/255. 1600x2000 denoises in 0.9 s on an RTX 3060 (4 tiles). On the BSCH-04 part at 16 samples, PSNR against a 512 sample render goes from 29.7 dB noisy to 43.2 dB denoised.
 - The time limit's clock stops before denoising, so denoising never cuts sampling short.
+- Cycles gets only the part's faces a ray can reach (`visiblePart`: `BeadMesh.hidden` from print/cover.ts): on BSCH-04 7.27M of 8.66M triangles, BVH 14 % faster, heap 230 MiB smaller, sampling about 10 % faster, the image within 62 to 67 dB of the full mesh. The heap estimate counts only those triangles.
 - Only colour is denoised. Alpha stays as sampled, so with a transparent background the shadow's alpha keeps its noise.
 - Progress states are `preparing | rendering | developing | done | cancelled | failed`. `finishNow()` develops what has been sampled.
 - AgX is Blender 5.2.3's own, baked by `tools/blender/bake_agx.py` into `public/lut/` (57³ base cube plus per-look 49³ warps). Worst error 0.68/255.

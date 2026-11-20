@@ -28,6 +28,12 @@ export const EDGE = 0.6;
 export const KEEP: ReadonlySet<string> = new Set([
   "Outer wall", "Overhang wall", "Top surface", "Bottom surface", "Bridge", "Gap infill",
 ]);
+/** Extrusions that stay in the printed part, the ones that hide a bead's face (cover.ts). Support, brim,
+ *  skirt, prime tower and purge lines come off it, and an unknown feature counts as off. */
+export const PART: ReadonlySet<string> = new Set([
+  "Outer wall", "Inner wall", "Overhang wall", "Sparse infill", "Internal solid infill", "Solid infill",
+  "Top surface", "Bottom surface", "Bridge", "Internal Bridge", "Internal bridge", "Gap infill", "Floating vertical shell",
+]);
 /** Everything not listed is a wall (0). */
 export const FEAT_CODE: ReadonlyMap<string, FeatureCode> = new Map([
   ["Top surface", 1], ["Bridge", 2], ["Bottom surface", 3],

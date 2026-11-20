@@ -2,6 +2,7 @@
 import type { Centreline } from "../print";
 import { INNER_WALL_MIN_WIDTH, JITTER, KEEP } from "./calibration";
 import { centreline } from "./centreline";
+import { coverFaces } from "./cover";
 import { exposedInner } from "./exposed";
 import { parse } from "./gcode";
 import type { Toolpath } from "./gcode";
@@ -26,9 +27,11 @@ export function tablesOf(tp: Toolpath): PrintTables {
 export function wallsToCentreline(tp: Toolpath, H: number, jitter: number = JITTER): Centreline {
   const { runs } = tp, untagged = !tp.widthTagged;
   if (untagged) for (const r of runs) if (r.feat === "Outer wall" && r.w[0] > INNER_WALL_MIN_WIDTH) r.feat = "Inner wall";
-  const cl = centreline(runs.filter((r) => r.feat !== null && KEEP.has(r.feat)).concat(exposedInner(runs, 0.1, untagged)), H, jitter);
+  const shown = runs.filter((r) => r.feat !== null && KEEP.has(r.feat)).concat(exposedInner(runs, 0.1, untagged));
+  const cl = centreline(shown, H, jitter);
   if (!cl.n) throw new Error("no Bambu / Orca extrusions (; FEATURE: walls, skins) found in this G-code");
-  return cl;
+  // The cover test runs without the wobble, on a centreline whose points are this one's, index for index.
+  return { ...cl, cover: coverFaces(jitter === 0 ? cl : centreline(shown, H, 0), runs, H) };
 }
 
 /** G-code text to centreline and tables in one step, without the worker's stages. */

@@ -141,6 +141,50 @@ export function wallTriangles(mesh: BeadMesh, out: Uint8Array = new Uint8Array(m
   return out;
 }
 
+/** Triangles of the part Cycles renders: those not marked hidden. */
+export function visibleTriangles(mesh: BeadMesh): number {
+  const { hidden } = mesh;
+  if (!hidden) return mesh.index.length / 3;
+  let n = 0;
+  for (let t = 0; t < hidden.length; t++) if (hidden[t] === 0) n++;
+  return n;
+}
+
+/**
+ * The part as Cycles needs it: the triangles not marked hidden (BeadMesh.hidden, print/cover.ts),
+ * and only the vertices they use, renumbered in order. The mesh itself unchanged when nothing is hidden.
+ */
+export function visiblePart(mesh: BeadMesh): BeadMesh {
+  const { hidden } = mesh;
+  if (!hidden) return mesh;
+  const tris = visibleTriangles(mesh);
+  if (tris === hidden.length) return mesh;
+  const nverts = mesh.position.length / 3;
+  const index = new Uint32Array(tris * 3);
+  const remap = new Int32Array(nverts).fill(-1);
+  for (let t = 0, o = 0; t < hidden.length; t++) {
+    if (hidden[t] !== 0) continue;
+    for (let c = 0; c < 3; c++) {
+      const v = mesh.index[3 * t + c];
+      index[o++] = v;
+      remap[v] = 0;
+    }
+  }
+  let next = 0;
+  for (let v = 0; v < nverts; v++) if (remap[v] === 0) remap[v] = next++;
+  for (let k = 0; k < index.length; k++) index[k] = remap[index[k]];
+  const position = new Float32Array(next * 3), normal = new Int16Array(next * 3), tangent = new Int16Array(next * 3), word = new Float32Array(next);
+  for (let v = 0; v < nverts; v++) {
+    const m = remap[v];
+    if (m < 0) continue;
+    for (let c = 0; c < 3; c++) {
+      position[3 * m + c] = mesh.position[3 * v + c]; normal[3 * m + c] = mesh.normal[3 * v + c]; tangent[3 * m + c] = mesh.tangent[3 * v + c];
+    }
+    word[m] = mesh.word[v];
+  }
+  return { ...mesh, position, normal, tangent, word, index, tris, hidden: undefined };
+}
+
 /** The print path direction, dequantised. */
 export function pathTangents(mesh: BeadMesh, out: Float32Array = new Float32Array(mesh.tangent.length)): Float32Array {
   for (let i = 0; i < out.length; i++) out[i] = mesh.tangent[i] / 32767;
@@ -221,7 +265,8 @@ export function uploadScene(M: CyclesModule, scene: Scene, world: WorldImage, th
 }
 
 function uploadPart(M: CyclesModule, part: PartSection): void {
-  const { mesh, material } = part;
+  const { material } = part;
+  const mesh = visiblePart(part.mesh);
   const nverts = mesh.position.length / 3;
   const handle = onHeap(M, nverts * 3, (normals) => partNormals(mesh, material, normals), (normals) =>
     copyToHeap(M, mesh.position, (positions) =>

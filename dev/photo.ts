@@ -6,6 +6,7 @@
 import { m } from "../src/document";
 import type { RadianceFrame } from "../src/film";
 import { cyclesEngine } from "../src/photo/cycles";
+import { visibleTriangles } from "../src/photo/cycles-upload";
 import type { RenderStats } from "../src/photo/cycles-worker";
 import type { Scene } from "../src/scene";
 import { compiledFixture, digestOf, isCompiledName } from "../tools/parity/compiled";
@@ -123,7 +124,8 @@ async function main() {
   const { scene, digest } = await build(name);
   const page: PhotoPage = {
     state: "building", message: name, fits: "", buildMs: performance.now() - t0, digest,
-    triangles: scene.part ? scene.part.mesh.index.length / 3 : 0,
+    // What Cycles gets: the part's triangles a ray can reach.
+    triangles: scene.part ? visibleTriangles(scene.part.mesh) : 0,
     width: scene.film.width, height: scene.film.height, transparent: scene.film.transparent, runs: [], frame: null,
   };
   window.__photo = page;

@@ -7,6 +7,7 @@
 import { packBeadWord } from "../print";
 import type { BeadMesh, Centreline } from "../print";
 import { BULGE, CAP_STEPS, CORNER_COS, FAN_STEP, TOP_R } from "./calibration";
+import { COVER_BOTTOM, COVER_END, COVER_LEFT, COVER_RIGHT, COVER_TOP } from "./cover";
 
 const A = BULGE * 1e-3;
 
@@ -117,14 +118,26 @@ export function planRings(cl: Centreline, lite = false): RingPlan {
   return { din, dout, len, nring, rings, quadsMax };
 }
 
+/**
+ * Is quad k of a ring (k to k + 1) pressed against neighbouring material (cover.ts)? Quads
+ * RN/2 - 1 and RN - 1 are the top and bottom flats, the rest the right and left sides.
+ */
+function hiddenQuad(k: number, RN: number, c: number): boolean {
+  if (k === RN / 2 - 1) return (c & COVER_TOP) !== 0;
+  if (k === RN - 1) return (c & COVER_BOTTOM) !== 0;
+  return (c & (k < RN / 2 - 1 ? COVER_RIGHT : COVER_LEFT)) !== 0;
+}
+
 export function sweep(cl: Centreline, lite = false): BeadMesh {
   const { n: N, p: P, zq: Zq, wq: Wq, fl: FL, vq: Vq, h: H } = cl;
   const { n: RN, SIDE, VV, SGN, PN, PN1, VT, NT, cap: CAP } = tables(lite, H), Hm = H * 1e-3, LQ = H * 100;
   const { din, dout, len, nring, rings, quadsMax } = planRings(cl, lite);
+  const { cover } = cl;
   const st = (i: number): boolean => startOf(cl, i), en = (i: number): boolean => endOf(cl, i);
   const pos = new Float32Array(rings * RN * 3), nrm = new Int16Array(rings * RN * 3), tan = new Int16Array(rings * RN * 3);
   const word = new Float32Array(rings * RN);
   const index = new Uint32Array(quadsMax * RN * 6);
+  const hid = new Uint8Array(cover ? quadsMax * RN * 2 : 0);
   let r = 0, ti = 0, layerCount = 0;
   for (let i = 0; i < N; i++) {
     const s = st(i), e = en(i);
@@ -160,13 +173,19 @@ export function sweep(cl: Centreline, lite = false): BeadMesh {
         word[r * RN + k] = wordHere;
       }
       if (r > 0 && !(s && first)) { // quads to the previous ring of this run, minus collapsed / zero-length ones
+        // The first ring of a point joins the segment from the previous point, whose covered faces are
+        // marked hidden (cover.ts). Rings after the first at a run's end sweep its round end.
+        const covered = first && cover ? cover[i - 1] : 0;
+        const endHidden = !first && (s || e) && ((cover?.[i] ?? 0) & COVER_END) !== 0;
         for (let k = 0; k < RN; k++) {
+          const hide = endHidden || (covered !== 0 && hiddenQuad(k, RN, covered));
           const kn = (k + 1) % RN, q = [(r - 1) * RN + k, r * RN + k, r * RN + kn, (r - 1) * RN + kn];
           const tris: (readonly [number, number, number])[] = [[q[0], q[1], q[2]], [q[0], q[2], q[3]]];
           for (const [a_, b_, c_] of tris) {
             const ux = pos[3 * b_] - pos[3 * a_], uy = pos[3 * b_ + 1] - pos[3 * a_ + 1], uz = pos[3 * b_ + 2] - pos[3 * a_ + 2];
             const vx = pos[3 * c_] - pos[3 * a_], vy = pos[3 * c_ + 1] - pos[3 * a_ + 1], vz = pos[3 * c_ + 2] - pos[3 * a_ + 2];
             if ((uy * vz - uz * vy) ** 2 + (uz * vx - ux * vz) ** 2 + (ux * vy - uy * vx) ** 2 < 1e-30) continue;
+            if (hide) hid[ti / 3] = 1;
             index[ti++] = a_; index[ti++] = b_; index[ti++] = c_;
           }
         }
@@ -202,6 +221,7 @@ export function sweep(cl: Centreline, lite = false): BeadMesh {
   walls.sort((a, b) => a - b);
   return {
     position: pos, normal: nrm, tangent: tan, word, index: index.slice(0, ti), tris: ti / 3,
+    ...(cover ? { hidden: hid.slice(0, ti / 3) } : {}),
     layerCount, layerHeightM: Hm, vRefMmS: 2 * (walls[walls.length >> 1] || 50),
     bboxM: { min: [lx - cx, ly - cy, lz], max: [hx - cx, hy - cy, hz] },
   };

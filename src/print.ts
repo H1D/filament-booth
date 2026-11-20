@@ -52,6 +52,8 @@ export interface Centreline {
   fl: Uint8Array;     // bit0 run-start, bits1–2 FeatureCode
   vq: Uint8Array;     // speed in 2 mm/s
   h: Mm;              // layer height — .bin gains this field (was pinned 0.2)
+  /** Per point: which faces neighbouring material hides (print/cover.ts COVER_*). */
+  cover?: Uint8Array;
 }
 
 /**
@@ -87,6 +89,12 @@ export interface BeadMesh {
   tangent: Int16Array;    // xyz per vertex, path direction, scaled by 32767 (anisotropy)
   word: Float32Array;     // BEAD_WORD per vertex
   index: Uint32Array;
+  /**
+   * Per triangle, 1 where material presses on the face so no ray can reach it (print/cover.ts).
+   * Only the Cycles photo leaves those out; the preview draws every face, because its
+   * single-sided material would see through the slits the per-layer wobble opens.
+   */
+  hidden?: Uint8Array;
   tris: number;
   layerCount: number;
   layerHeightM: number;
@@ -255,7 +263,7 @@ function transferable(buffer: ArrayBufferLike): ArrayBuffer {
   throw new Error("a mesh buffer is shared memory and cannot be transferred");
 }
 const meshBuffers = (m: BeadMesh): ArrayBuffer[] =>
-  [m.position, m.normal, m.tangent, m.word, m.index].map((a) => transferable(a.buffer));
+  [m.position, m.normal, m.tangent, m.word, m.index, ...(m.hidden ? [m.hidden] : [])].map((a) => transferable(a.buffer));
 
 /**
  * Answers print requests on `port`. A request arriving while a job runs aborts
