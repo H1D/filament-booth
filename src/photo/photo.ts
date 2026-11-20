@@ -72,7 +72,8 @@ export class PhotoCancelled extends Error {}
 /** The engine side of the desk. Callers of the desk never see this type. */
 export interface PhotoEngine {
   readonly id: "cycles" | "raster";
-  /** Can this engine render this scene here? Cheap, cached per machine. */
+  /** Can this engine render this scene here? The machine check is cached; Cycles also waits for
+   *  the part's hidden faces when a load has only just sent the mesh (about 2 s). */
   fits(scene: Scene): Promise<true | { reason: string }>;
   /**
    * Progressive. `onPass` buffers are reused between calls. Aborting with

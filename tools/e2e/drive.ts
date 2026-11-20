@@ -335,7 +335,11 @@ try {
   await load("", true);
 
   await flow("1", "drop the BSCH-04 .gcode.3mf", async () => {
-    const readyMs = await openPart(BSCH04, BSCH04_NAME);
+    const readyMs = await openPart(BSCH04, BSCH04_NAME), readyAt = performance.now();
+    // The faces the photo leaves out come after the part is on show (print/cover.ts).
+    const hiddenAfter = page.waitForFunction(() => window.boothDev?.booth.scene.part?.mesh.hidden !== undefined, null, { timeout: 30_000 })
+      .then(() => (performance.now() - readyAt) / 1000);
+    hiddenAfter.catch(() => {}); // awaited below; a step failing first must not leave it unhandled
     await page.screenshot({ path: join(OUT, "1-app.png") });
     const { img } = await previewShot("1-preview");
     const mask = await partMask(img.width, img.height);
@@ -352,7 +356,15 @@ try {
     const facts = (await part$.locator('dl[aria-label="Slicing settings from the file"]').innerText()).replace(/\n/g, " ");
     expect(sliders === 0, `${sliders} slicing sliders in the Part section for a G-code`);
     expect(/Layer height 0\.2 mm/.test(facts), `facts: ${facts}`);
-    return `ready ${(readyMs / 1000).toFixed(1)} s after the drop; bead mesh ${mesh?.tris} triangles, ${mesh?.layers} layers; part luma ${f1(part)} on backdrop ${f1(backdrop)}; read-only facts: ${facts}`;
+    const hiddenS = await hiddenAfter;
+    const hidden = await page.evaluate(() => {
+      const m = window.boothDev?.booth.scene.part?.mesh;
+      let n = 0;
+      for (const h of m?.hidden ?? []) n += h;
+      return { n, flags: m?.hidden?.length ?? 0, tris: m?.tris ?? 0 };
+    });
+    expect(hidden.flags === hidden.tris && hidden.n > 0.1 * hidden.tris, `hidden faces ${JSON.stringify(hidden)}`);
+    return `ready ${(readyMs / 1000).toFixed(1)} s after the drop; bead mesh ${mesh?.tris} triangles, ${mesh?.layers} layers, ${hidden.n} of them hidden from the photo ${hiddenS.toFixed(1)} s after that; part luma ${f1(part)} on backdrop ${f1(backdrop)}; read-only facts: ${facts}`;
   });
 
   await flow("2", "top softbox power, then the five looks", async () => {

@@ -22,8 +22,10 @@ export function isCompiledName(name: string): name is CompiledName {
 async function openGcode(text: string): Promise<LoadedPrint> {
   const source: PrintSource = { kind: "gcode", file: new File([text], "part.gcode"), fileHash: `parity:${text.length}` };
   const job = { signal: new AbortController().signal, stage: () => {}, checkpoint: async () => {} };
-  const { sliced, mesh } = await new PrintSession().open(source, DEFAULT_SLICE, job);
-  return { source, sliced, mesh, liteMesh: async () => mesh };
+  const session = new PrintSession();
+  const { sliced, mesh } = await session.open(source, DEFAULT_SLICE, job);
+  const hidden = await session.hidden(job); // the worker sends these after the mesh; the photo leaves those faces out
+  return { source, sliced, mesh: hidden ? { ...mesh, hidden } : mesh, liteMesh: async () => mesh };
 }
 
 /** e: the document as the app opens it. f: dark look, PLA Matte (part-only strips and scrims). g: gradient look

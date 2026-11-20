@@ -7,6 +7,7 @@
  * the whole heap. Cancel rejects at once; the worker stops Cycles and is then terminated.
  */
 import type { RadianceFrame } from "../film";
+import { hiddenFacesSettled } from "../print";
 import type { Scene } from "../scene";
 import type { Passes } from "./cycles-upload";
 import { estimateHeapBytes, HEAP_LIMIT_BYTES, visibleTriangles } from "./cycles-upload";
@@ -32,6 +33,8 @@ export function cyclesEngine(options: CyclesEngineOptions = {}): PhotoEngine {
       }
       const machine = await machineFits();
       if (machine !== true) return machine;
+      // A photo right after a load waits the moment it takes for the faces no ray reaches.
+      if (scene.part) await hiddenFacesSettled(scene.part.mesh);
       const need = estimateHeapBytes(scene.part ? visibleTriangles(scene.part.mesh) : 0, scene.film.width * scene.film.height);
       return need <= HEAP_LIMIT_BYTES
         ? true

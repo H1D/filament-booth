@@ -92,7 +92,9 @@ export interface BeadMesh {
   /**
    * Per triangle, 1 where material presses on the face so no ray can reach it (print/cover.ts).
    * Only the Cycles photo leaves those out; the preview draws every face, because its
-   * single-sided material would see through the slits the per-layer wobble opens.
+   * single-sided material would see through the slits the per-layer wobble opens. The worker
+   * works them out after it has sent the mesh and the pipeline sets them when they come (about
+   * 2 s for an 8.7M-triangle part); a Cycles photo waits for them (hiddenFacesSettled).
    */
   hidden?: Uint8Array;
   tris: number;
@@ -106,22 +108,23 @@ export const PLATE_EPS = 5e-6;
 
 // ---- worker protocol (wire types stay in this file; callers see domain) ----
 
+/** Both answer "opened", then "lite", then "hidden": what the part needs first comes first. */
 type PrintRequest =
-  | { id: number; op: "open"; src: PrintSource; settings: SliceSettings } // → sliced + full mesh
-  | { id: number; op: "reslice"; settings: SliceSettings } // STL only; reuses the cached file
-  | { id: number; op: "lite" };                             // sweep cached centreline, lite rings
+  | { id: number; op: "open"; src: PrintSource; settings: SliceSettings }
+  | { id: number; op: "reslice"; settings: SliceSettings }; // STL only; reuses the cached file
 type PrintReply =
   | { id: number; kind: "stage"; stage: Stage }
   | { id: number; kind: "opened"; sliced: SlicedPrint; mesh: BeadMesh } // buffers transferred
-  | { id: number; kind: "lite"; mesh: BeadMesh }                        // buffers transferred
+  | { id: number; kind: "lite"; mesh: BeadMesh }                        // the cached centreline in lite rings; transferred
+  | { id: number; kind: "hidden"; hidden: Uint8Array | null }           // BeadMesh.hidden of the opened mesh
   | { id: number; kind: "error"; message: string };
-type Finished = Extract<PrintReply, { kind: "opened" | "lite" }>;
+type OpenedReply = Extract<PrintReply, { kind: "opened" }>;
 
 export interface LoadedPrint {
   source: PrintSource;
   sliced: SlicedPrint;
   mesh: BeadMesh;
-  /** Lazily built, cached. Moving-frames only. Rejects with Superseded once a newer open or reslice has begun. */
+  /** Sent right after the mesh. Moving-frames only. Rejects with Superseded once a newer open or reslice has begun. */
   liteMesh(): Promise<BeadMesh>;
 }
 
@@ -137,9 +140,32 @@ export class Superseded extends Error {
 
 interface LiveJob {
   id: number;
+  source: PrintSource;
+  /** The pipeline's generation when the job began. */
+  generation: number;
   onStage: (stage: string) => void;
-  resolve: (reply: Finished) => void;
+  resolve: (loaded: LoadedPrint) => void;
   reject: (error: Error) => void;
+}
+
+/** An open whose mesh has come, waiting for its lite mesh and hidden flags. */
+interface Following {
+  mesh: BeadMesh;
+  resolveLite: (mesh: BeadMesh) => void;
+  rejectLite: (error: Error) => void;
+  /** Ends the wait of hiddenFacesSettled, whether the flags came or not. */
+  settle: () => void;
+}
+
+const settling = new WeakMap<BeadMesh, Promise<void>>();
+
+/**
+ * Settles once the print worker has sent the hidden faces of `mesh` (BeadMesh.hidden), or will
+ * not: they follow the mesh by about 2 s on a large part. At once for a mesh the pipeline did not
+ * open. A photo waits for them: they save it more than that.
+ */
+export function hiddenFacesSettled(mesh: BeadMesh): Promise<void> {
+  return settling.get(mesh) ?? Promise.resolve();
 }
 
 /**
@@ -155,6 +181,8 @@ export class PrintPipeline {
   /** The worker has been sent a source, so a reslice can name only the settings. */
   private warm = false;
   private job: LiveJob | null = null;
+  /** By request id. At most one: a new request cuts the worker's follow-ups short. */
+  private readonly following = new Map<number, Following>();
   private nextId = 1;
   /** Bumped by every open and reslice; a LoadedPrint of an older generation is stale. */
   private generation = 0;
@@ -167,9 +195,10 @@ export class PrintPipeline {
   /** STL sliced with `settings`; G-code/3mf parsed; .bin read. */
   async open(src: PrintSource, settings: SliceSettings, onStage: (s: string) => void): Promise<LoadedPrint> {
     this.generation++;
+    this.stopFollowing(new Superseded("a newer print replaced this one"));
     this.source = src;
     this.warm = true;
-    return this.load(src, await this.start((id) => ({ id, op: "open", src, settings }), onStage));
+    return this.start(src, (id) => ({ id, op: "open", src, settings }), onStage);
   }
 
   /** Only reachable when source.kind === "stl" — Booth enforces; the type
@@ -178,42 +207,64 @@ export class PrintPipeline {
     const src = this.source;
     if (!src || src.kind !== "stl") throw new Error("only an opened STL can be re-sliced");
     this.generation++;
+    this.stopFollowing(new Superseded("a newer print replaced this one"));
     const resend = !this.warm; // the worker was lost: it has to be told the file again
     this.warm = true;
-    return this.load(src, await this.start((id) => (resend ? { id, op: "open", src, settings } : { id, op: "reslice", settings }), onStage));
+    return this.start(src, (id) => (resend ? { id, op: "open", src, settings } : { id, op: "reslice", settings }), onStage);
   }
 
   dispose(): void {
     this.generation++;
     this.job?.reject(new Superseded("the print pipeline was disposed"));
     this.job = null;
+    this.stopFollowing(new Superseded("the print pipeline was disposed"));
     this.discardWorker();
   }
 
-  private load(source: PrintSource, reply: Finished): LoadedPrint {
-    if (reply.kind !== "opened") throw new Error("the print worker answered an open with a lite mesh");
-    const generation = this.generation;
-    let lite: Promise<BeadMesh> | null = null;
+  /** Called in the "opened" message's own handler, so the follow-ups of the open find their place. */
+  private load(job: LiveJob, reply: OpenedReply): LoadedPrint {
+    const { generation } = job, { mesh } = reply;
+    let resolveLite: (m: BeadMesh) => void = () => {}, rejectLite: (e: Error) => void = () => {}, settle = () => {};
+    const lite = new Promise<BeadMesh>((resolve, reject) => { resolveLite = resolve; rejectLite = reject; });
+    lite.catch(() => {}); // no viewport may ever ask
+    settling.set(mesh, new Promise<void>((resolve) => { settle = resolve; }));
+    this.following.set(reply.id, { mesh, resolveLite, rejectLite, settle });
     return {
-      source, sliced: reply.sliced, mesh: reply.mesh,
-      liteMesh: () => {
-        if (generation !== this.generation) return Promise.reject(new Superseded("a newer print replaced this one"));
-        lite ??= this.start((id) => ({ id, op: "lite" }), () => {}).then((r) => {
-          if (r.kind !== "lite") throw new Error("the print worker answered a lite request with a full mesh");
-          return r.mesh;
-        }, (err: unknown) => { lite = null; throw err; });
-        return lite;
-      },
+      source: job.source, sliced: reply.sliced, mesh,
+      liteMesh: () => generation === this.generation ? lite : Promise.reject(new Superseded("a newer print replaced this one")),
     };
   }
 
-  private start(request: (id: number) => PrintRequest, onStage: (s: string) => void): Promise<Finished> {
+  private follow(reply: PrintReply, after: Following): void {
+    if (reply.kind === "lite") after.resolveLite(reply.mesh);
+    if (reply.kind === "hidden" && reply.hidden?.length === after.mesh.tris) after.mesh.hidden = reply.hidden;
+    if (reply.kind === "error") {
+      // After the mesh only the lite mesh or the hidden faces can fail: the part stays on show.
+      console.error(`the print worker, after the mesh: ${reply.message}`);
+      after.rejectLite(new Error(reply.message));
+    }
+    if (reply.kind === "hidden" || reply.kind === "error") {
+      after.settle();
+      this.following.delete(reply.id);
+    }
+  }
+
+  private stopFollowing(error: Error): void {
+    for (const after of this.following.values()) {
+      after.rejectLite(error);
+      after.settle();
+    }
+    this.following.clear();
+  }
+
+  private start(source: PrintSource, request: (id: number) => PrintRequest, onStage: (s: string) => void): Promise<LoadedPrint> {
     this.job?.reject(new Superseded("a newer print request began"));
     this.job = null;
     const worker = this.worker ?? this.spawnWorker();
-    return new Promise<Finished>((resolve, reject) => {
+    const generation = this.generation;
+    return new Promise<LoadedPrint>((resolve, reject) => {
       const id = this.nextId++;
-      this.job = { id, onStage, resolve, reject };
+      this.job = { id, source, generation, onStage, resolve, reject };
       try {
         worker.postMessage(request(id));
       } catch (err) {
@@ -226,18 +277,20 @@ export class PrintPipeline {
   private spawnWorker(): Worker {
     const worker = this.spawn();
     worker.onmessage = (ev: MessageEvent<PrintReply>) => {
-      const reply = ev.data, job = this.job;
+      const reply = ev.data, job = this.job, after = this.following.get(reply.id);
+      if (after) { this.follow(reply, after); return; }
       if (!job || reply.id !== job.id) return; // late reply of a superseded job
       if (reply.kind === "stage") { job.onStage(reply.stage); return; }
       this.job = null;
-      if (reply.kind === "error") job.reject(new Error(reply.message));
-      else job.resolve(reply);
+      if (reply.kind === "opened") job.resolve(this.load(job, reply));
+      else job.reject(new Error(reply.kind === "error" ? reply.message : `the print worker answered an open with "${reply.kind}"`));
     };
     worker.onerror = (ev: ErrorEvent) => {
-      const job = this.job;
+      const job = this.job, error = new Error(ev.message || "the print worker crashed");
       this.job = null;
       this.discardWorker();
-      job?.reject(new Error(ev.message || "the print worker crashed"));
+      job?.reject(error);
+      this.stopFollowing(error);
     };
     this.worker = worker;
     return worker;
@@ -263,7 +316,7 @@ function transferable(buffer: ArrayBufferLike): ArrayBuffer {
   throw new Error("a mesh buffer is shared memory and cannot be transferred");
 }
 const meshBuffers = (m: BeadMesh): ArrayBuffer[] =>
-  [m.position, m.normal, m.tangent, m.word, m.index, ...(m.hidden ? [m.hidden] : [])].map((a) => transferable(a.buffer));
+  [m.position, m.normal, m.tangent, m.word, m.index].map((a) => transferable(a.buffer));
 
 /**
  * Answers print requests on `port`. A request arriving while a job runs aborts
@@ -285,15 +338,16 @@ export function servePrint(port: Port): void {
       },
     };
     try {
-      if (req.op === "lite") {
-        const mesh = await session.lite(job);
-        ctl.signal.throwIfAborted();
-        send({ id: req.id, kind: "lite", mesh }, meshBuffers(mesh));
-      } else {
-        const opened = await (req.op === "open" ? session.open(req.src, req.settings, job) : session.reslice(req.settings, job));
-        ctl.signal.throwIfAborted();
-        send({ id: req.id, kind: "opened", ...opened }, meshBuffers(opened.mesh));
-      }
+      const opened = await (req.op === "open" ? session.open(req.src, req.settings, job) : session.reslice(req.settings, job));
+      ctl.signal.throwIfAborted();
+      send({ id: req.id, kind: "opened", ...opened }, meshBuffers(opened.mesh));
+      // The viewport moves the lite mesh, and only a photo needs the hidden flags: neither holds up the part.
+      const lite = await session.lite(job);
+      ctl.signal.throwIfAborted();
+      send({ id: req.id, kind: "lite", mesh: lite }, meshBuffers(lite));
+      const hidden = await session.hidden(job);
+      ctl.signal.throwIfAborted();
+      send({ id: req.id, kind: "hidden", hidden }); // copied: the session keeps them for a re-open
     } catch (err) {
       if (ctl.signal.aborted) return;
       send({ id: req.id, kind: "error", message: err instanceof Error ? err.message : String(err) });

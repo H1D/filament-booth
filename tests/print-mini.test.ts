@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { BEAD_WORD, PLATE_EPS, unpackBeadWord } from "../src/print";
 import type { BeadMesh, Centreline } from "../src/print";
 import { centrelineOfGcode } from "../src/print/toolpath";
@@ -7,6 +7,7 @@ import { sweep } from "../src/print/sweep";
 import { thin } from "../src/print/centreline";
 import { DEFAULT_SLICE, mm } from "../src/document";
 import { MINI_GCODE, gcodeSource, recordingJob, zip } from "./support/print";
+import type { Job } from "../src/print/session";
 
 const H = 0.2;
 const field = (mesh: BeadMesh, f: keyof typeof BEAD_WORD, v: number): number => unpackBeadWord(mesh.word[v], BEAD_WORD[f]);
@@ -197,12 +198,59 @@ describe("opening the fixture as a file", () => {
     expect(sliced.note).toBe("file also sets top_surface_pattern = adaptive-cubic");
   });
 
+  test("works out the hidden faces once, keeps them for a re-open, and survives an abort on the way", async () => {
+    const session = new PrintSession(), src = gcodeSource(MINI_GCODE);
+    const opened = await session.open(src, DEFAULT_SLICE, recordingJob());
+    // Aborted at the first checkpoint, then at the second, after the cover test: neither loses it.
+    for (const at of [1, 2]) {
+      const aborted = new AbortController();
+      let checkpoints = 0;
+      const job: Job = { signal: aborted.signal, stage: () => {}, checkpoint: async () => {
+        if (++checkpoints === at) aborted.abort();
+        aborted.signal.throwIfAborted();
+      } };
+      await expect(session.hidden(job)).rejects.toThrow();
+    }
+    const hidden = await session.hidden(recordingJob());
+    expect(hidden).toHaveLength(opened.mesh.tris);
+    expect(hidden?.includes(1)).toBe(true);
+    await session.open(src, DEFAULT_SLICE, recordingJob());
+    expect(await session.hidden(recordingJob())).toBe(hidden);
+  });
+
+  test("an open superseded while it fetches leaves the newer print to its lite mesh and faces", async () => {
+    // Two points of one run on layer 1, one layer of times: the smallest valid centreline .bin.
+    const N = 2, o = 4 + 13 * N + (-(4 + 13 * N) & 3), bin = new ArrayBuffer(o + 4 + 5);
+    new Uint32Array(bin, 0, 1)[0] = N;
+    new Float32Array(bin, 4, 2 * N).set([0, 0, 10, 0]);
+    new Uint16Array(bin, 4 + 8 * N, N).set([20, 20]);
+    new Uint8Array(bin, 4 + 10 * N, N).set([84, 84]);
+    new Uint8Array(bin, 4 + 11 * N, N).set([1, 0]);
+    new Uint32Array(bin, o, 1)[0] = 1;
+    let deliver = () => {};
+    // A fetch that answers after its request was aborted.
+    vi.stubGlobal("fetch", () => new Promise<Response>((resolve) => { deliver = () => resolve(new Response(bin)); }));
+    try {
+      const session = new PrintSession(), slow = new AbortController();
+      const first = session.open({ kind: "bin", url: "slow.bin" }, DEFAULT_SLICE,
+        { signal: slow.signal, stage: () => {}, checkpoint: async () => slow.signal.throwIfAborted() });
+      slow.abort();
+      const opened = await session.open(gcodeSource(MINI_GCODE), DEFAULT_SLICE, recordingJob());
+      deliver();
+      await expect(first).rejects.toThrow();
+      expect((await session.lite(recordingJob())).layerCount).toBe(opened.mesh.layerCount);
+      expect(await session.hidden(recordingJob())).toHaveLength(opened.mesh.tris);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   test("builds the lite mesh from the cached centreline without parsing again", async () => {
     const session = new PrintSession();
     const opened = await session.open(gcodeSource(MINI_GCODE), DEFAULT_SLICE, recordingJob());
     const stages: string[] = [];
     const lite = await session.lite(recordingJob(stages));
-    expect(stages).toEqual(["sweeping"]);
+    expect(stages).toEqual([]); // no reading, parsing or walls; it follows the open unasked, so no stage either
     expect(lite.tris).toBeLessThan(opened.mesh.tris);
     expect(lite.layerCount).toBe(opened.mesh.layerCount);
   });

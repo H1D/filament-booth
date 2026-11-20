@@ -6,7 +6,7 @@ import type { Run } from "../src/print/gcode";
 import { sweep } from "../src/print/sweep";
 import { uploadScene, visiblePart, visibleTriangles, type CyclesModule } from "../src/photo/cycles-upload";
 import { exportScene, type Scene } from "../src/scene";
-import { wallsToCentreline } from "../src/print/toolpath";
+import { coverOfToolpath, wallsToCentreline } from "../src/print/toolpath";
 
 const H = 0.2;
 const W = 0.42;
@@ -47,7 +47,8 @@ describe("flats", () => {
     const tp = { runs: walls, layerTime: new Float64Array(0), layerFan: new Float64Array(0), widthTagged: true };
     const cl = wallsToCentreline(tp, H, 0.02);
     expect(cl.p).not.toEqual(centreline(walls, H, 0).p);
-    const bits = [...(cl.cover ?? [])];
+    const bits = [...coverOfToolpath(tp, H)];
+    expect(bits).toHaveLength(cl.n); // point for point the wobbled centreline's
     // Points 2k and 2k + 1 are layer k's run: every layer but the outer two has both flats covered.
     for (let k = 1; k + 1 < walls.length; k++) expect(bits[2 * k] & FLATS).toBe(FLATS);
   });

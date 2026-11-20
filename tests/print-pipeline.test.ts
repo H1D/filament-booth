@@ -1,8 +1,10 @@
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { DEFAULT_SLICE, mm } from "../src/document";
-import { PrintPipeline, Superseded, servePrint } from "../src/print";
+import { PrintPipeline, Superseded, hiddenFacesSettled, servePrint } from "../src/print";
 import type { BeadMesh } from "../src/print";
 import { PrintSession } from "../src/print/session";
+import { cyclesEngine } from "../src/photo/cycles";
+import type { Scene } from "../src/scene";
 import { MINI_GCODE, gcodeSource, recordingJob } from "./support/print";
 
 type Sent = { message: { id: number; kind: string; stage?: string }; transfer: ArrayBuffer[] };
@@ -65,22 +67,29 @@ describe("PrintPipeline over a real worker", () => {
     const w = inProcessWorker();
     await pipeline(() => w.worker).open(gcodeSource(MINI_GCODE), DEFAULT_SLICE, noStage);
     const answer = w.sent.find((s) => s.message.kind === "opened");
-    // position, normal, tangent, word, index, and the hidden flags (print/cover.ts)
-    expect(answer?.transfer).toHaveLength(6);
-    expect(new Set(answer?.transfer).size).toBe(6);
+    // position, normal, tangent, word, index
+    expect(answer?.transfer).toHaveLength(5);
+    expect(new Set(answer?.transfer).size).toBe(5);
   });
 
-  test("builds the lite mesh once, from the cached centreline", async () => {
+  test("sends the lite mesh and then the hidden faces after the mesh, unasked", async () => {
     const w = inProcessWorker();
     const loaded = await pipeline(() => w.worker).open(gcodeSource(MINI_GCODE), DEFAULT_SLICE, noStage);
-    const before = w.sent.length;
-    const first = loaded.liteMesh(), second = loaded.liteMesh();
-    expect(second).toBe(first);
-    const lite: BeadMesh = await first;
+    expect(loaded.liteMesh()).toBe(loaded.liteMesh());
+    const lite: BeadMesh = await loaded.liteMesh();
     expect(lite.tris).toBeLessThan(loaded.mesh.tris);
     expect(lite.layerCount).toBe(3);
-    const stagesSince = w.sent.slice(before).filter((s) => s.message.kind === "stage").map((s) => s.message.stage);
-    expect(stagesSince).toEqual(["sweeping"]);
+    await hiddenFacesSettled(loaded.mesh);
+    const session = new PrintSession();
+    await session.open(gcodeSource(MINI_GCODE), DEFAULT_SLICE, recordingJob());
+    expect(loaded.mesh.hidden).toEqual(await session.hidden(recordingJob()));
+    expect(loaded.mesh.hidden).toHaveLength(loaded.mesh.tris);
+    expect(loaded.mesh.hidden?.includes(1)).toBe(true);
+    const kinds = w.sent.map((s) => s.message.kind);
+    expect(kinds.slice(kinds.indexOf("opened"))).toEqual(["opened", "lite", "hidden"]);
+    const [liteSent, hiddenSent] = w.sent.slice(-2);
+    expect(new Set(liteSent.transfer).size).toBe(5);
+    expect(hiddenSent.transfer).toHaveLength(0); // copied: the session keeps its own for a re-open
   });
 
   test("a second open supersedes the first, which rejects and hears nothing more", async () => {
@@ -148,6 +157,110 @@ describe("PrintPipeline against a worker that answers when told", () => {
     w.reply({ id: w.requests[1].id, kind: "stage", stage: "reading" });
     expect(heard).toEqual(["b:reading"]);
     second.catch(() => {});
+  });
+
+  test("takes the lite mesh and hidden faces even when they come in the same task as the mesh", async () => {
+    const w = scriptedWorker(), p = pipeline(() => w.worker), done = await sliced();
+    const opening = p.open(gcodeSource(MINI_GCODE), DEFAULT_SLICE, noStage);
+    const id = w.requests[0].id, hidden = new Uint8Array(done.mesh.tris).fill(1);
+    w.reply({ id, kind: "opened", sliced: done.sliced, mesh: done.mesh });
+    w.reply({ id, kind: "lite", mesh: done.mesh });
+    w.reply({ id, kind: "hidden", hidden });
+    const loaded = await opening;
+    expect(await loaded.liteMesh()).toBe(done.mesh);
+    expect(loaded.mesh.hidden).toBe(hidden);
+  });
+
+  test("a new open, a re-slice or dispose rejects a lite mesh asked for earlier and ends the wait for the faces", async () => {
+    const stl = { kind: "stl" as const, file: new File([""], "p.stl"), fileHash: "p" };
+    for (const next of ["open", "reslice", "dispose"] as const) {
+      const w = scriptedWorker(), p = pipeline(() => w.worker), done = await sliced();
+      const opening = p.open(stl, DEFAULT_SLICE, noStage);
+      w.reply({ id: w.requests[0].id, kind: "opened", sliced: done.sliced, mesh: { ...done.mesh } });
+      const loaded = await opening;
+      const lite = loaded.liteMesh(), settled = hiddenFacesSettled(loaded.mesh);
+      if (next === "open") p.open(gcodeSource(MINI_GCODE), DEFAULT_SLICE, noStage).catch(() => {});
+      if (next === "reslice") p.reslice({ ...DEFAULT_SLICE, layerHeight: mm(0.12) }, noStage).catch(() => {});
+      if (next === "dispose") p.dispose();
+      await expect(lite, next).rejects.toBeInstanceOf(Superseded);
+      await settled;
+      expect(loaded.mesh.hidden, next).toBeUndefined();
+    }
+  });
+
+  test("an error after the mesh rejects the lite mesh, ends the wait for the faces and is logged", async () => {
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const w = scriptedWorker(), p = pipeline(() => w.worker), done = await sliced();
+      const opening = p.open(gcodeSource(MINI_GCODE), DEFAULT_SLICE, noStage);
+      const id = w.requests[0].id;
+      w.reply({ id, kind: "opened", sliced: done.sliced, mesh: { ...done.mesh } });
+      const loaded = await opening;
+      w.reply({ id, kind: "error", message: "out of memory" });
+      await expect(loaded.liteMesh()).rejects.toThrow("out of memory");
+      await hiddenFacesSettled(loaded.mesh);
+      expect(logged).toHaveBeenCalledWith(expect.stringContaining("out of memory"));
+    } finally {
+      logged.mockRestore();
+    }
+  });
+
+  test("drops the lite mesh and hidden faces of a replaced print", async () => {
+    const w = scriptedWorker(), p = pipeline(() => w.worker), done = await sliced();
+    const first = p.open(gcodeSource(MINI_GCODE, "a.gcode"), DEFAULT_SLICE, noStage);
+    const a = w.requests[0].id;
+    w.reply({ id: a, kind: "opened", sliced: done.sliced, mesh: done.mesh });
+    const old = await first;
+    p.open(gcodeSource(MINI_GCODE, "b.gcode"), DEFAULT_SLICE, noStage).catch(() => {});
+    w.reply({ id: a, kind: "lite", mesh: done.mesh });
+    w.reply({ id: a, kind: "hidden", hidden: new Uint8Array(done.mesh.tris) });
+    await expect(old.liteMesh()).rejects.toBeInstanceOf(Superseded);
+    expect(old.mesh.hidden).toBeUndefined();
+  });
+
+  test("a worker crash after the mesh rejects its lite mesh", async () => {
+    const w = scriptedWorker(), p = pipeline(() => w.worker), done = await sliced();
+    const opening = p.open(gcodeSource(MINI_GCODE), DEFAULT_SLICE, noStage);
+    w.reply({ id: w.requests[0].id, kind: "opened", sliced: done.sliced, mesh: done.mesh });
+    const loaded = await opening;
+    w.raw.onerror?.({ message: "out of memory" });
+    await expect(loaded.liteMesh()).rejects.toThrow("out of memory");
+    await hiddenFacesSettled(loaded.mesh);
+  });
+
+  test("a prebuilt part's null faces end the wait and leave its mesh whole", async () => {
+    const w = scriptedWorker(), p = pipeline(() => w.worker), done = await sliced();
+    const opening = p.open({ kind: "bin", url: "part.bin" }, DEFAULT_SLICE, noStage);
+    const id = w.requests[0].id;
+    w.reply({ id, kind: "opened", sliced: done.sliced, mesh: { ...done.mesh } });
+    const loaded = await opening;
+    w.reply({ id, kind: "lite", mesh: done.mesh });
+    w.reply({ id, kind: "hidden", hidden: null });
+    await hiddenFacesSettled(loaded.mesh);
+    expect(loaded.mesh.hidden).toBeUndefined();
+  });
+
+  test("a Cycles photo waits in fits for the faces a load is about to send", async () => {
+    vi.stubGlobal("crossOriginIsolated", true);
+    try {
+      const w = scriptedWorker(), p = pipeline(() => w.worker), done = await sliced();
+      const opening = p.open(gcodeSource(MINI_GCODE), DEFAULT_SLICE, noStage);
+      const id = w.requests[0].id;
+      w.reply({ id, kind: "opened", sliced: done.sliced, mesh: { ...done.mesh } });
+      const { mesh } = await opening;
+      const scene = { part: { mesh }, film: { width: 8, height: 5 } } as unknown as Scene;
+      let fit: unknown = null;
+      const fits = cyclesEngine().fits(scene).then((f) => { fit = f; });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(fit).toBeNull();
+      const hidden = new Uint8Array(mesh.tris).fill(1);
+      w.reply({ id, kind: "hidden", hidden });
+      await fits;
+      expect(fit).toBe(true);
+      expect(mesh.hidden).toBe(hidden);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   test("a worker crash rejects the live job, and the next call starts a fresh worker", async () => {

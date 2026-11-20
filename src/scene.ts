@@ -8,7 +8,8 @@
  * kelvin, the gloss curve and the per-layer roughness each live here once.
  *
  * Invariants:
- * - A Scene and everything in it is frozen. Holding a reference is a snapshot.
+ * - A Scene and everything in it is frozen. Holding a reference is a snapshot. One exception: the
+ *   part's BeadMesh.hidden arrives once, after the mesh (print.ts hiddenFacesSettled).
  * - A section (part, lights, backdrop, world, camera, film) keeps its object
  *   identity while its inputs are unchanged, so renderers diff with `===`.
  * - This file is pure: no three.js, no DOM, no workers. It runs in Node.

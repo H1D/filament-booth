@@ -7,12 +7,12 @@ import { DEFAULT_SLICE } from "../document";
 import type { SliceSettings } from "../document";
 import type { BeadMesh, Centreline, PrintSource, SlicedPrint } from "../print";
 import { fromBin, thin } from "./centreline";
-import { parse } from "./gcode";
+import { parse, type Toolpath } from "./gcode";
 import { readHeader } from "./header";
 import { sliceStl } from "./slicer";
 import { sweep } from "./sweep";
 import { gcodeFrom3mf, isZip } from "./threemf";
-import { tablesOf, wallsToCentreline } from "./toolpath";
+import { coverOfToolpath, tablesOf, wallsToCentreline } from "./toolpath";
 
 export type Stage = "reading" | "slicing" | "parsing" | "walls" | "sweeping";
 
@@ -28,6 +28,11 @@ interface Built {
   key: string;
   sliced: SlicedPrint;
   centreline: Centreline;
+  /** Kept until hidden() has worked out the cover bits; none for a prebuilt centreline. */
+  toolpath: Toolpath | null;
+  /** Per centreline point (cover.ts), until hidden() has swept them into the flags. */
+  cover?: Uint8Array;
+  hidden?: Uint8Array | null;
 }
 
 export interface Opened {
@@ -62,11 +67,30 @@ export class PrintSession {
     return this.mesh(src, settings, job);
   }
 
+  /**
+   * Per triangle of the mesh open or reslice last sent, 1 where no ray can reach the face
+   * (cover.ts, BeadMesh.hidden); null for a prebuilt centreline. Worked out once, after which the
+   * toolpath it needed is let go.
+   */
+  async hidden(job: Job): Promise<Uint8Array | null> {
+    const built = this.built;
+    if (!built) return null;
+    if (built.hidden !== undefined) return built.hidden;
+    await job.checkpoint();
+    if (built.toolpath) {
+      built.cover = coverOfToolpath(built.toolpath, built.sliced.layerHeightMm);
+      built.toolpath = null; // before the sweep, which allocates a whole mesh again
+      await job.checkpoint();
+    }
+    built.hidden = built.cover ? sweep({ ...built.centreline, cover: built.cover }).hidden ?? null : null;
+    built.cover = undefined;
+    return built.hidden;
+  }
+
   /** The lite mesh sweeps the cached centreline: no parse, no slice. */
   async lite(job: Job): Promise<BeadMesh> {
     const built = this.built;
     if (!built) throw new Error("no print is loaded");
-    job.stage("sweeping");
     await job.checkpoint();
     return sweep(thin(built.centreline), true);
   }
@@ -76,6 +100,8 @@ export class PrintSession {
     let built = this.built?.key === key ? this.built : null;
     if (!built) {
       built = await this.build(src, settings, key, job);
+      // A superseded open must not leave its print where the newer one's lite mesh and faces read.
+      job.signal.throwIfAborted();
       this.built = built;
     }
     job.stage("sweeping");
@@ -94,7 +120,7 @@ export class PrintSession {
         layerTimeS: bin.layerTime, layerFan: bin.layerFan, filamentName: null, bedFromFile: null,
         note: "prebuilt centreline: its slicing settings are not recorded",
       };
-      return { key, sliced, centreline: bin.centreline };
+      return { key, sliced, centreline: bin.centreline, toolpath: null };
     }
     const bytes = await this.bytes;
     if (!bytes) throw new Error("the file could not be read");
@@ -120,6 +146,6 @@ export class PrintSession {
     job.stage("walls");
     await job.checkpoint();
     const centreline = wallsToCentreline(tp, sliced.layerHeightMm);
-    return { key, sliced: { ...sliced, ...tablesOf(tp) }, centreline };
+    return { key, sliced: { ...sliced, ...tablesOf(tp) }, centreline, toolpath: tp };
   }
 }
