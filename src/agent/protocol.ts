@@ -273,7 +273,8 @@ export function bridgeArgs({ port, token, origin }: { readonly port: number; rea
   return [
     "-y", BRIDGE_PACKAGE, "--token", token,
     ...(port === DEFAULT_PORT ? [] : ["--port", String(port)]),
-    ...(BRIDGE_ORIGINS.includes(origin) ? [] : ["--app", origin]),
+    // The hosted booth is the bridge's default pairing base. Any other origin is named, so the bridge's link opens this page.
+    ...(origin === new URL(BOOTH_URL).origin ? [] : ["--app", origin]),
   ];
 }
 

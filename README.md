@@ -48,6 +48,9 @@ computer.
    args = ["-y", "filament-booth", "--token", "<token>"]
    ```
 
+   `claude mcp add` keeps an existing `booth` server as it was. If you added one before, with
+   another token, port or the `bun` command, run `claude mcp remove booth` first.
+
    Each agent session starts its own bridge, and one bridge holds the port at a time. Registering
    the bridge for every project (`--scope user`) lets an unrelated session hold the port, and the
    session you are working in then reports that the port is busy.

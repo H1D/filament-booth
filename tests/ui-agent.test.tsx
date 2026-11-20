@@ -97,7 +97,14 @@ describe("the Agent section", () => {
     act(() => { agent.setToken(""); });
     expect(container.querySelector(".agent-command")).toBeNull();
     expect(switchInput(container).disabled).toBe(true);
-    expect(statusOf(container)).toBe("Off. Enter a token under Port and token");
+    expect(statusOf(container)).toBe("Off. Enter a token of 8 to 128 letters, digits, - or _ under Port and token");
+  });
+
+  test("a token the bridge would refuse shows no command", () => {
+    const { container, agent } = mount(<AgentPanel />);
+    act(() => { agent.setToken("has space"); });
+    expect(container.querySelector(".agent-command")).toBeNull();
+    expect(statusOf(container)).toContain("Enter a token");
   });
 
   test("a pairing fills the port and a masked token and leaves the switch off but available", () => {

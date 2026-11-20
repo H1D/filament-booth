@@ -1,7 +1,9 @@
 import { expect, test } from "vitest";
 import {
+  DEFAULT_PORT,
   PROTOCOL,
   ProtocolError,
+  bridgeCommand,
   pairingHash,
   parseBridgeMessage,
   parsePairingHash,
@@ -117,5 +119,12 @@ test("a frame that uses an own property called __proto__ is read as data", () =>
 test("the pairing hash the bridge writes is the one the page reads", () => {
   const token = "9c1e47a0d2b35f86e4a1";
   expect(parsePairingHash(pairingHash(47615, token))).toEqual({ port: 47615, token });
+});
+
+test("the command the page shows names --port and --app only when the bridge's defaults would be wrong", () => {
+  expect(bridgeCommand({ port: DEFAULT_PORT, token: "abcdefgh12345678", origin: "https://booth.artems.net" }))
+    .toBe("claude mcp add booth -- npx -y filament-booth --token abcdefgh12345678");
+  expect(bridgeCommand({ port: 5000, token: "abcdefgh12345678", origin: "http://localhost:5173" }))
+    .toBe("claude mcp add booth -- npx -y filament-booth --token abcdefgh12345678 --port 5000 --app http://localhost:5173");
   expect(parsePairingHash("#agent=70000.9c1e47a0d2b35f86e4a1")).toBeNull();
 });

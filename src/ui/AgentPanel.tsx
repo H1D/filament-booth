@@ -9,7 +9,7 @@
  */
 import { useEffect, useId, useRef, useState } from "react";
 import type { AgentState } from "../agent/agent";
-import { bridgeCommand } from "../agent/protocol";
+import { TOKEN_PATTERN, bridgeCommand } from "../agent/protocol";
 import { Fold, Note, Switch } from "./controls";
 import { useAgent, useHost, useUi } from "./hooks";
 
@@ -21,7 +21,7 @@ const PRIVACY =
 function statusText({ settings, status }: AgentState): string {
   switch (status.kind) {
     case "off":
-      return settings.token === "" ? "Off. Enter a token under Port and token" : "Off. Run the command below, then turn the switch on";
+      return TOKEN_PATTERN.test(settings.token) ? "Off. Run the command below, then turn the switch on" : "Off. Enter a token of 8 to 128 letters, digits, - or _ under Port and token";
     case "starting": return "Starting Python…";
     case "waiting": return `Waiting for the bridge on port ${settings.port}`;
     case "connected": return "Connected. An agent can control this tab";
@@ -102,10 +102,10 @@ export function AgentPanel() {
         hint={needsToken ? "Enter a token under Port and token first" : undefined}
         onChange={(on) => { if (on) agent.enable(); else agent.disable(); }} />
       <p className="agent-status" role="status" data-status={status.kind} data-tone={tone(state)}>{statusText(state)}</p>
-      {settings.token === "" ? null : (
+      {!TOKEN_PATTERN.test(settings.token) ? null : (
         <>
           <Command text={bridgeCommand({ port: settings.port, token: settings.token, origin: location.origin })} />
-          <Note>Run it once in the folder you work in, then start Claude Code there. It needs Node.js. For another agent, add an MCP server that runs the part after <code>--</code>.</Note>
+          <Note>Run it in the folder you work in, then start Claude Code there. It needs Node.js. If booth was added before, run <code>claude mcp remove booth</code> first. For another agent, add an MCP server that runs the part after <code>--</code>.</Note>
         </>
       )}
       <Fold title="Port and token">

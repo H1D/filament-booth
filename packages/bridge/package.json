@@ -3,8 +3,24 @@
   "version": "0.1.0",
   "description": "Let a local coding agent drive the Filament booth tab (booth.artems.net) with Blender Python, over MCP.",
   "type": "module",
-  "bin": { "filament-booth": "bridge.mjs" },
-  "files": ["bridge.mjs", "README.md"],
-  "engines": { "node": ">=20" },
-  "keywords": ["mcp", "blender", "3d-printing", "photo", "agent"]
+  "bin": {
+    "filament-booth": "bridge.mjs"
+  },
+  "files": [
+    "bridge.mjs",
+    "README.md"
+  ],
+  "scripts": {
+    "prepack": "cd ../.. && bun run bridge:build"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "mcp",
+    "blender",
+    "3d-printing",
+    "photo",
+    "agent"
+  ]
 }
