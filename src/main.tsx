@@ -9,7 +9,7 @@ import type { RenderStats } from "./photo/cycles-worker";
 import { PrintPipeline } from "./print";
 import { PhotoSession } from "./ui/photo-session";
 import { Ui } from "./ui/store";
-import { agentControl, connectViewport, photoDesk, viewportEvents } from "./ui/wire";
+import { agentControl, connectPhotos, connectViewport, photoDesk, viewportEvents } from "./ui/wire";
 import { Viewport } from "./viewport/viewport";
 
 const root = document.getElementById("root");
@@ -23,7 +23,8 @@ const booth = new Booth({
   print: new PrintPipeline(() => new Worker(new URL("./print/worker.ts", import.meta.url), { type: "module" })),
   takePhoto: (scene, partName) => desk.take(scene, partName),
 });
-const photos = new PhotoSession(() => booth.takePhoto());
+const photos = new PhotoSession((sceneId) => booth.takePhoto(sceneId), undefined, () => booth.activeSceneId);
+connectPhotos(booth, photos);
 
 async function startViewport(): Promise<Viewport | null> {
   try {

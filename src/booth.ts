@@ -37,10 +37,33 @@ export interface BoothDeps {
 }
 
 export const STORAGE_KEY = "booth.document";
+/**
+ * The scene list: names, order, which one is active, and the documents of the
+ * scenes not on show. The active scene's document is under STORAGE_KEY, so
+ * each document is stored once and a setup saved before scenes existed loads
+ * as the only scene.
+ */
+export const SCENES_KEY = "booth.scenes";
+const SCENE_NAME_MAX = 60;
 const RESLICE_QUIET_MS = 300;
 const SAVE_QUIET_MS = 500;
 
 type StlSource = Extract<PrintSource, { kind: "stl" }>;
+
+/**
+ * One scene: a whole setup of lights, camera, props and output for the open
+ * part. Every scene shows the same part, so slicing is shared: the active
+ * scene's slicing is the one in use, and a scene that becomes active takes it.
+ */
+export interface SceneEntry {
+  readonly id: string;
+  readonly name: string;
+}
+
+interface SavedScenes {
+  readonly active: string;
+  readonly scenes: readonly (SceneEntry & { readonly doc: BoothDocument | null })[];
+}
 
 export class Booth {
   readonly #deps: BoothDeps;
@@ -64,15 +87,35 @@ export class Booth {
   readonly #idleWaiters = new Set<() => void>();
   /** Meshes imported as props this session, by id. The document names them and never holds their triangles. */
   readonly #propMeshes = new Map<string, PropGeometry & { readonly name: string }>();
+  /** Every scene in order. A new array on every change, so a panel can compare it with ===. */
+  #scenes: readonly SceneEntry[];
+  #activeId: string;
+  /** The documents of the scenes not on show. The active one is #doc. */
+  readonly #stored = new Map<string, BoothDocument>();
+  /** The scene list changed since the last save, so SCENES_KEY is written too. */
+  #scenesDirty = false;
 
   constructor(deps: BoothDeps) {
     this.#deps = deps;
     this.#schedule = deps.schedule ?? setTimer;
     this.#doc = freezeDeep(restore(deps.storage));
+    const saved = restoreScenes(deps.storage);
+    if (saved === null) {
+      this.#scenes = Object.freeze([{ id: FIRST_SCENE_ID, name: "Scene 1" }]);
+      this.#activeId = FIRST_SCENE_ID;
+    } else {
+      this.#scenes = Object.freeze(saved.scenes.map(({ id, name }) => ({ id, name })));
+      this.#activeId = saved.active;
+      for (const s of saved.scenes) if (s.doc !== null) this.#stored.set(s.id, freezeDeep(s.doc));
+    }
     this.#scene = compileScene(this.#doc, null, this.#rev, undefined, this.#propMeshes);
   }
 
   get doc(): Readonly<BoothDocument> { return this.#doc; }
+  /** Every scene, in the order the user made them. */
+  get scenes(): readonly SceneEntry[] { return this.#scenes; }
+  /** The scene on show: the one the document, the preview and every edit belong to. */
+  get activeSceneId(): string { return this.#activeId; }
   get print(): PrintState { return this.#print; }
   get scene(): Scene { return this.#scene; }
 
@@ -174,10 +217,94 @@ export class Booth {
     return this.#work(this.#load(job, { kind: "bin", url }));
   }
 
-  /** Freezes the current scene into a photo run. */
-  takePhoto(): PhotoRun {
+  /**
+   * Freezes a scene into a photo run: the one on show, or another by id, which
+   * is compiled for the photo without being shown. With more than one scene,
+   * the photo's name carries the scene's name.
+   */
+  takePhoto(sceneId: string = this.#activeId): PhotoRun {
     if (this.#shown === null) throw new Error("Open a part before taking a photo");
-    return this.#deps.takePhoto(this.#scene, partNameOf(this.#shown.source));
+    const entry = this.#entry(sceneId);
+    const part = partNameOf(this.#shown.source);
+    const name = this.#scenes.length > 1 ? `${part} ${entry.name}` : part;
+    if (sceneId === this.#activeId) return this.#deps.takePhoto(this.#scene, name);
+    // The active scene is the previous scene, so sections the two share keep their objects and Cycles can render again in its session.
+    const scene = compileScene(this.#storedDoc(sceneId), this.#shown, this.#rev, this.#scene, this.#propMeshes);
+    return this.#deps.takePhoto(scene, name);
+  }
+
+  // ---- scenes ------------------------------------------------------------------
+
+  /** Adds a copy of the scene on show after it and shows the copy. Returns its id. */
+  addScene(): string {
+    const id = `scene-${crypto.randomUUID().slice(0, 8)}`;
+    const at = this.#scenes.findIndex((s) => s.id === this.#activeId) + 1;
+    const scenes = [...this.#scenes];
+    scenes.splice(at, 0, { id, name: freeName(this.#scenes) });
+    this.#stored.set(this.#activeId, this.#doc);
+    this.#setScenes(scenes, id, this.#doc);
+    return id;
+  }
+
+  /** Shows another scene. Its document becomes the one every edit and the preview use. */
+  switchScene(id: string): void {
+    if (id === this.#activeId) return;
+    const doc = this.#storedDoc(id);
+    this.#stored.delete(id);
+    this.#stored.set(this.#activeId, this.#doc);
+    this.#setScenes(this.#scenes, id, reuseUnchanged(this.#doc, doc));
+  }
+
+  /** Names a scene. The name is trimmed, must not be empty, and a name another scene has is refused. */
+  renameScene(id: string, name: string): void {
+    this.#entry(id);
+    const trimmed = name.trim().slice(0, SCENE_NAME_MAX);
+    if (trimmed === "") throw new DocumentError("scene.name", "a scene needs a name");
+    if (this.#scenes.some((s) => s.id !== id && s.name === trimmed)) throw new DocumentError("scene.name", `another scene is called ${trimmed}`);
+    if (this.#entry(id).name === trimmed) return;
+    this.#setScenes(this.#scenes.map((s) => (s.id === id ? { id, name: trimmed } : s)), this.#activeId, this.#doc);
+  }
+
+  /** Removes a scene. Removing the one on show shows its neighbour. The last scene stays. */
+  removeScene(id: string): void {
+    this.#entry(id);
+    if (this.#scenes.length === 1) throw new DocumentError("scene", "the last scene cannot be removed");
+    const at = this.#scenes.findIndex((s) => s.id === id);
+    const scenes = this.#scenes.filter((s) => s.id !== id);
+    if (id !== this.#activeId) {
+      this.#stored.delete(id);
+      this.#setScenes(scenes, this.#activeId, this.#doc);
+      return;
+    }
+    const next = scenes[Math.min(at, scenes.length - 1)].id;
+    const doc = this.#storedDoc(next);
+    this.#stored.delete(next);
+    this.#setScenes(scenes, next, reuseUnchanged(this.#doc, doc));
+  }
+
+  #entry(id: string): SceneEntry {
+    const entry = this.#scenes.find((s) => s.id === id);
+    if (entry === undefined) throw new Error(`there is no scene ${id}`);
+    return entry;
+  }
+
+  /** A stored scene's document with the slicing in use, since every scene shows the same part. */
+  #storedDoc(id: string): BoothDocument {
+    this.#entry(id);
+    const stored = this.#stored.get(id) ?? this.#doc;
+    return stored.slicing === this.#doc.slicing ? stored : freezeDeep({ ...stored, slicing: this.#doc.slicing });
+  }
+
+  #setScenes(scenes: readonly SceneEntry[], activeId: string, doc: BoothDocument): void {
+    this.#scenes = scenes === this.#scenes ? scenes : Object.freeze(scenes);
+    this.#activeId = activeId;
+    this.#scenesDirty = true;
+    if (doc !== this.#doc) {
+      this.#commit({ doc });
+      return;
+    }
+    this.#scheduleSave();
+    this.#notify();
   }
 
   /**
@@ -316,6 +443,17 @@ export class Booth {
         Object.assign(draft.camera, framePart(loaded.mesh, draft.camera, draft.output.aspect));
         draft.camera.focusPartPoint = null;
       });
+      // Every scene shows this part, so every scene is framed on it, each keeping its own angle and lens.
+      for (const [id, stored] of this.#stored) {
+        const framed = structuredClone(stored);
+        Object.assign(framed.camera, framePart(loaded.mesh, framed.camera, framed.output.aspect));
+        framed.camera.focusPartPoint = null;
+        this.#stored.set(id, freezeDeep(framed));
+      }
+      if (this.#stored.size > 0) {
+        this.#scenesDirty = true;
+        this.#scheduleSave();
+      }
       this.#stl = source.kind === "stl" ? source : null;
       this.#commit({ doc, shown: loaded, print: { status: "ready", loaded } });
     } catch (e) {
@@ -386,6 +524,13 @@ export class Booth {
   #write(): void {
     try {
       this.#deps.storage.setItem(STORAGE_KEY, JSON.stringify(this.#doc));
+      if (!this.#scenesDirty) return;
+      const saved: SavedScenes = {
+        active: this.#activeId,
+        scenes: this.#scenes.map(({ id, name }) => ({ id, name, doc: id === this.#activeId ? null : (this.#stored.get(id) ?? null) })),
+      };
+      this.#deps.storage.setItem(SCENES_KEY, JSON.stringify(saved));
+      this.#scenesDirty = false;
     } catch {
       // Quota or a blocked store. The session carries on and the next change tries again.
     }
@@ -401,6 +546,47 @@ function restore(storage: BoothDeps["storage"]): BoothDocument {
     return raw === null ? defaultDocument() : parseDocument(JSON.parse(raw));
   } catch {
     return defaultDocument();
+  }
+}
+
+const FIRST_SCENE_ID = "scene-1";
+
+/**
+ * The saved scene list, or null for one scene. A stored document that no
+ * longer parses drops that scene; a list whose active scene is missing is
+ * not used at all, since the document under STORAGE_KEY belongs to it.
+ */
+function restoreScenes(storage: BoothDeps["storage"]): SavedScenes | null {
+  try {
+    const raw = storage.getItem(SCENES_KEY);
+    if (raw === null) return null;
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed !== "object" || parsed === null || !("active" in parsed) || !("scenes" in parsed)) return null;
+    const { active, scenes } = parsed;
+    if (typeof active !== "string" || !Array.isArray(scenes)) return null;
+    const kept: { id: string; name: string; doc: BoothDocument | null }[] = [];
+    for (const s of scenes as unknown[]) {
+      if (typeof s !== "object" || s === null) continue;
+      const { id, name, doc } = s as Record<string, unknown>;
+      if (typeof id !== "string" || typeof name !== "string" || kept.some((k) => k.id === id || k.name === name)) continue;
+      if (id === active) { kept.push({ id, name, doc: null }); continue; }
+      try {
+        kept.push({ id, name, doc: parseDocument(doc) });
+      } catch {
+        // A scene saved by an older booth that no longer parses is dropped, never the whole list.
+      }
+    }
+    return kept.some((k) => k.id === active) ? { active, scenes: kept } : null;
+  } catch {
+    return null;
+  }
+}
+
+/** "Scene 2", "Scene 3": the first number no scene is named with. */
+function freeName(scenes: readonly SceneEntry[]): string {
+  for (let n = scenes.length + 1; ; n += 1) {
+    const name = `Scene ${n}`;
+    if (!scenes.some((s) => s.name === name)) return name;
   }
 }
 
