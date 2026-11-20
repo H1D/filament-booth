@@ -307,7 +307,7 @@ describe("render.render", () => {
     r.runs[0].finish();
     expect(ok(await rendering)).toEqual(["FINISHED"]);
     expect(r.log.progress).toContain("rendering 42% · about 2m30s left · time limit 5m");
-    expect(r.log.images.map((i) => i.meta)).toEqual([{ label: "render", path: null, width: 1600, height: 2000, note: "256/256 samples, Cycles" }]);
+    expect(r.log.images.map((i) => i.meta)).toEqual([{ label: "render", path: null, width: 1600, height: 2000, note: "64/64 samples, Cycles" }]);
     expect(r.log.written.size).toBe(0);
   });
 
@@ -317,7 +317,7 @@ describe("render.render", () => {
     ok(r.set("scene", "RenderSettings", "filepath", "//renders/hero.png"));
     let rendering = r.opAsync("render.render", { write_still: true });
     await vi.waitFor(() => expect(r.runs).toHaveLength(1));
-    r.runs[0].finish({ samples: 120, stoppedBy: { kind: "time-limit", limitS: 300 } });
+    r.runs[0].finish({ samples: 40, stoppedBy: { kind: "time-limit", limitS: 300 } });
     ok(await rendering);
     ok(r.set("scene", "RenderSettings", "filepath", "//renders"));
     rendering = r.opAsync("render.render", { write_still: true });
@@ -325,8 +325,8 @@ describe("render.render", () => {
     r.runs[1].finish();
     ok(await rendering);
     expect([...r.log.written.keys()]).toEqual(["/agent/renders/hero.png", "/agent/renders/bracket_20261119-2200.png"]);
-    expect(r.log.images[0].meta).toMatchObject({ path: "/agent/renders/hero.png", note: "120/256 samples, stopped by the 300 s time limit, Cycles" });
-    expect(r.log.prints).toContain("Render stopped by the 300 s time limit at 120 of 256 samples (scene.cycles.time_limit).\n");
+    expect(r.log.images[0].meta).toMatchObject({ path: "/agent/renders/hero.png", note: "40/64 samples, stopped by the 300 s time limit, Cycles" });
+    expect(r.log.prints).toContain("Render stopped by the 300 s time limit at 40 of 64 samples (scene.cycles.time_limit).\n");
   });
 
   test("with no part, or with a photo already running, it says why", async () => {

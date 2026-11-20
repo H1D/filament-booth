@@ -578,7 +578,7 @@ describe("section identity", () => {
 
   test("the film carries Blender's factory render settings and the reference overrides", () => {
     expect(first.film).toMatchObject({
-      width: 1600, height: 2000, samples: 256, timeLimitS: 300, adaptiveThreshold: 0.004, maxBounces: 12, diffuseBounces: 4,
+      width: 1600, height: 2000, samples: 64, timeLimitS: 300, adaptiveThreshold: 0.004, maxBounces: 12, diffuseBounces: 4,
       glossyBounces: 8, transmissionBounces: 12, clampDirect: 0, clampIndirect: 10, filterWidthPx: 1.5,
       transparent: false, denoise: true, look: "medium-high-contrast",
     });

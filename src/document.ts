@@ -537,7 +537,7 @@ export function defaultDocument(): BoothDocument {
     },
     pose: { turntableDeg: deg(0), restFace: "plate" },
     output: {
-      aspect: { w: 4, h: 5 }, longEdgePx: 2000, samples: 256, timeLimitS: DEFAULT_PHOTO_TIME_LIMIT_S,
+      aspect: { w: 4, h: 5 }, longEdgePx: 2000, samples: 64, timeLimitS: DEFAULT_PHOTO_TIME_LIMIT_S,
       transparentBackground: false,
       viewTransform: { kind: "agx", look: "medium-high-contrast" },
       denoise: true,

@@ -32,12 +32,12 @@ function rejectionOf(path: readonly Key[], value: unknown): DocumentError {
   throw new Error(`${path.join(".")} = ${JSON.stringify(value)} was accepted`);
 }
 
-test("the default document is PETG Basic under the studio look, 4:5 at 2000 px, 256 samples and a 5 minute photo limit", () => {
+test("the default document is PETG Basic under the studio look, 4:5 at 2000 px, 64 samples and a 5 minute photo limit", () => {
   const d = defaultDocument();
   expect(d.filament.presetId).toBe("petg-basic");
   expect(d.lookBase).toBe("studio");
   expect(d.studio.lights.length).toBeGreaterThan(0);
-  expect(d.output).toMatchObject({ aspect: { w: 4, h: 5 }, longEdgePx: 2000, samples: 256, timeLimitS: 300 });
+  expect(d.output).toMatchObject({ aspect: { w: 4, h: 5 }, longEdgePx: 2000, samples: 64, timeLimitS: 300 });
 });
 
 describe("the photo time limit", () => {
