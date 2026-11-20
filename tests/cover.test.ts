@@ -4,7 +4,8 @@ import type { Centreline } from "../src/print";
 import { COVER_BOTTOM, COVER_END, COVER_LEFT, COVER_RIGHT, COVER_TOP, coverFaces } from "../src/print/cover";
 import type { Run } from "../src/print/gcode";
 import { sweep } from "../src/print/sweep";
-import { visiblePart, visibleTriangles } from "../src/photo/cycles-upload";
+import { uploadScene, visiblePart, visibleTriangles, type CyclesModule } from "../src/photo/cycles-upload";
+import { exportScene, type Scene } from "../src/scene";
 import { wallsToCentreline } from "../src/print/toolpath";
 
 const H = 0.2;
@@ -218,5 +219,100 @@ describe("exact faces left out", () => {
     const atEnd = removed([0, 0, 5, 0]), atStart = removed([5, 0, 0, 0]);
     expect(atEnd).toBeGreaterThan(0);
     expect(atStart).toBe(atEnd);
+  });
+});
+
+describe("what each rule keeps (each test fails if its rule is taken out)", () => {
+  const layers = [0.4, 0.6, 0.8];
+
+  test("which flat stays: the top layer keeps its top, the lowest its bottom, none between layers", () => {
+    const all = layers.flatMap((z) => [run(z, [0, 0, 10, 0]), run(z, [0, 0.38, 10, 0.38], "Inner wall")]);
+    const cl = centreline(all.filter((r) => r.feat === "Outer wall"), H, 0);
+    const m = visiblePart(sweep({ ...cl, cover: coverFaces(cl, all, H) }));
+    const flatAt = new Map<number, number>();
+    for (let t = 0; t < m.index.length; t += 3) {
+      const v = [0, 1, 2].map((k) => m.index[t + k]);
+      const xs = v.map((k) => m.position[3 * k]), zs = v.map((k) => Math.round(m.position[3 * k + 2] * 1e6));
+      if (Math.max(...xs) - Math.min(...xs) < 5e-3 || zs[0] !== zs[1] || zs[1] !== zs[2]) continue;
+      flatAt.set(zs[0], (flatAt.get(zs[0]) ?? 0) + 1);
+    }
+    expect([...flatAt].sort((a, b) => a[0] - b[0])).toEqual([[200, 2], [800, 2]]);
+  });
+
+  test("a 90 degree corner is tested on square rings: the same path above and below covers its flats", () => {
+    const bends = layers.map((z) => run(z, [0, 0, 5, 0, 5, 5]));
+    const bits = cover([bends[1]], bends);
+    expect(bits[0] & FLATS).toBe(FLATS);
+    expect(bits[1] & FLATS).toBe(FLATS);
+  });
+
+  test("a gentle bend is tested on its mitred ring: a corner reaching past the bead above keeps the top", () => {
+    // A 20 degree bend at (5, 0). Above, a bead stops at x = 4.975: it would cover a square end at x = 5,
+    // but the mitred ring's outer flat corner sits 0.029 mm further on.
+    const a = 20 * Math.PI / 180;
+    const wall = (z: number) => run(z, [0, 0, 5, 0, 5 + 5 * Math.cos(a), 5 * Math.sin(a)]);
+    const short = [wall(0.4), wall(0.6), run(0.8, [-1, 0, 4.975, 0])];
+    expect(cover([short[1]], short)[0] & COVER_TOP).toBe(0);
+    const full = [wall(0.4), wall(0.6), wall(0.8)];
+    expect(cover([full[1]], full)[0] & COVER_TOP).toBe(COVER_TOP);
+  });
+
+  test("a flat under two beads with 0.07 mm of air between them keeps its top", () => {
+    // The flat's centre and both edges lie under a bead's flat; the air is between y = 0.05 and 0.12.
+    const all = [run(0.4, [0, 0, 10, 0]), run(0.6, [0, 0, 10, 0]), run(0.8, [0, -0.1, 10, -0.1], "Inner wall", 0.3), run(0.8, [0, 0.27, 10, 0.27], "Inner wall", 0.3)];
+    expect(cover([all[1]], all)[0] & COVER_TOP).toBe(0);
+  });
+
+  describe("a side whose groove opens onto a ledge stays", () => {
+    // The bead at y = 0.38 is pressed by a neighbour at y = 0, on its right. `miss` leaves the neighbour
+    // out of one layer, so the groove between them opens upwards or downwards.
+    const bits = (miss: number) => {
+      const all = layers.flatMap((z) => [run(z, [0, 0.38, 10, 0.38], "Inner wall"), ...(z === miss ? [] : [run(z, [0, 0, 10, 0])])]);
+      return cover([all.find((r) => r.z === 0.6 && r.feat === "Inner wall") as Run], all)[0];
+    };
+    test("closed above and below: the side goes", () => {
+      expect(bits(-1) & COVER_RIGHT).toBe(COVER_RIGHT);
+    });
+    test.each([0.8, 0.4])("no neighbour at z = %f: the side stays", (miss) => {
+      expect(bits(miss) & FLATS).toBe(FLATS);
+      expect(bits(miss) & COVER_RIGHT).toBe(0);
+    });
+  });
+
+  test("the upload gives Cycles the visible triangles only", () => {
+    const all = layers.flatMap((z) => [run(z, [0, 0, 10, 0]), run(z, [0, 0.38, 10, 0.38], "Inner wall")]);
+    const cl = centreline(all.filter((r) => r.feat === "Outer wall"), H, 0);
+    const mesh = sweep({ ...cl, cover: coverFaces(cl, all, H) });
+    const memory = new WebAssembly.Memory({ initial: 64 });
+    let brk = 16;
+    const meshes: number[][] = [];
+    const stub: Record<string, unknown> = {
+      wasmMemory: memory, _malloc: (n: number) => { const p = brk; brk += (n + 15) & ~15; return p; }, _free: () => {},
+      lengthBytesUTF8: (s: string) => s.length, stringToUTF8: () => {}, UTF8ToString: () => "",
+      _cb_mesh: (nverts: number, ntris: number) => { meshes.push([nverts, ntris]); return meshes.length; },
+    };
+    const M = new Proxy(stub, { get: (t, k: string) => (k in t ? t[k] : () => 0) }) as unknown as CyclesModule;
+    const material = {
+      baseColor: [0.5, 0.5, 0.5], ior: 1.5, anisotropy: 0, speedGain: 0, mottleScale: 1, mottleAmp: 0, overlay: "print",
+      layers: { count: 8, rough: new Float32Array(32), flatten: new Float32Array(8).fill(1), heat: new Float32Array(8) },
+      plate: { textured: false, rough: 0.4, roughUnresolved: 0.5, grainPerM: 1, bumpDistanceM: 0 },
+    };
+    const scene = {
+      film: { width: 4, height: 4, samples: 1 }, camera: { position: [0, 0, 0], target: [0, 0, 0], up: [0, 0, 1] }, world: { strength: 1, rotationRad: 0 },
+      part: { mesh, material, toWorld: new Array(16).fill(0) },
+      backdrop: { positions: new Float32Array(9), index: new Uint32Array(3), normals: new Float32Array(9), albedo: [1, 1, 1], roughness: 1 },
+      lights: { emitters: [], floorCards: null },
+    } as unknown as Scene;
+    uploadScene(M, scene, { width: 1, height: 1, rgb: new Float32Array(3) });
+    const visible = visiblePart(mesh);
+    expect(visible.tris).toBeLessThan(mesh.tris);
+    expect(meshes[0]).toEqual([visible.word.length, visible.tris]);
+  });
+
+  test("the scene file for native Blender leaves the hidden flags out", () => {
+    const scene = { part: { mesh: { position: new Float32Array(9), index: new Uint32Array(3), hidden: Uint8Array.of(1) } } } as unknown as Scene;
+    const { json, buffers } = exportScene(scene);
+    expect(JSON.parse(json).part.mesh).toEqual({ position: { buffer: "part.mesh.position", kind: "f32", length: 9 }, index: { buffer: "part.mesh.index", kind: "u32", length: 3 } });
+    expect([...buffers.keys()]).toEqual(["part.mesh.position", "part.mesh.index"]);
   });
 });

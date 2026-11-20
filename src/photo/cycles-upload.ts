@@ -143,9 +143,10 @@ export function wallTriangles(mesh: BeadMesh, out: Uint8Array = new Uint8Array(m
 
 /** Triangles of the part Cycles renders: those not marked hidden. */
 export function visibleTriangles(mesh: BeadMesh): number {
-  if (!mesh.hidden) return mesh.index.length / 3;
+  const { hidden } = mesh;
+  if (!hidden) return mesh.index.length / 3;
   let n = 0;
-  for (const h of mesh.hidden) if (h === 0) n++;
+  for (let t = 0; t < hidden.length; t++) if (hidden[t] === 0) n++;
   return n;
 }
 
@@ -155,17 +156,21 @@ export function visibleTriangles(mesh: BeadMesh): number {
  */
 export function visiblePart(mesh: BeadMesh): BeadMesh {
   const { hidden } = mesh;
-  if (!hidden || !hidden.includes(1)) return mesh;
-  const nverts = mesh.position.length / 3;
+  if (!hidden) return mesh;
   const tris = visibleTriangles(mesh);
+  if (tris === hidden.length) return mesh;
+  const nverts = mesh.position.length / 3;
   const index = new Uint32Array(tris * 3);
   const remap = new Int32Array(nverts).fill(-1);
   for (let t = 0, o = 0; t < hidden.length; t++) {
     if (hidden[t] !== 0) continue;
-    for (let c = 0; c < 3; c++) index[o++] = mesh.index[3 * t + c];
+    for (let c = 0; c < 3; c++) {
+      const v = mesh.index[3 * t + c];
+      index[o++] = v;
+      remap[v] = 0;
+    }
   }
   let next = 0;
-  for (const v of index) if (remap[v] < 0) remap[v] = 0;
   for (let v = 0; v < nverts; v++) if (remap[v] === 0) remap[v] = next++;
   for (let k = 0; k < index.length; k++) index[k] = remap[index[k]];
   const position = new Float32Array(next * 3), normal = new Int16Array(next * 3), tangent = new Int16Array(next * 3), word = new Float32Array(next);
