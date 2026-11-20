@@ -1,9 +1,11 @@
 import { describe, expect, test } from "vitest";
-import { centreline, layerJitter, thin } from "../src/print/centreline";
+import { centreline, thin } from "../src/print/centreline";
 import type { Centreline } from "../src/print";
 import { COVER_BOTTOM, COVER_END, COVER_LEFT, COVER_RIGHT, COVER_TOP, coverFaces } from "../src/print/cover";
 import type { Run } from "../src/print/gcode";
 import { sweep } from "../src/print/sweep";
+import { visiblePart, visibleTriangles } from "../src/photo/cycles-upload";
+import { wallsToCentreline } from "../src/print/toolpath";
 
 const H = 0.2;
 const W = 0.42;
@@ -16,9 +18,8 @@ function run(z: number, pts: readonly number[], feat = "Outer wall", w: number |
 }
 
 /** Cover bits of the centreline of `shown`, tested against everything in `all`. */
-function cover(shown: Run[], all: Run[], h = H, jitter = 0): number[] {
-  const cl = centreline(shown, h, jitter);
-  return [...coverFaces(cl, all, h, layerJitter(shown, jitter))];
+function cover(shown: Run[], all: Run[], h = H): number[] {
+  return [...coverFaces(centreline(shown, h, 0), all, h)];
 }
 
 const stack = (zs: readonly number[], pts: readonly number[], feat = "Outer wall") => zs.map((z) => run(z, pts, feat));
@@ -35,14 +36,17 @@ describe("flats", () => {
     expect(cover([wall(0.4)], [wall(0.4), wall(0.6)])[0] & COVER_BOTTOM).toBe(0);
   });
 
-  test("a layer leaning 4 um keeps the flat below covered, 7 um shows its edge", () => {
-    expect(cover([wall(0.4)], [wall(0.4), wall(0.6, 0.004)])[0] & COVER_TOP).toBe(COVER_TOP);
-    expect(cover([wall(0.4)], [wall(0.4), wall(0.6, 0.007)])[0] & COVER_TOP).toBe(0);
+  test.each([1, -1])("a layer leaning 4 um keeps the flat below covered, 7 um shows its edge (direction %i)", (sgn) => {
+    expect(cover([wall(0.4)], [wall(0.4), wall(0.6, sgn * 0.004)])[0] & COVER_TOP).toBe(COVER_TOP);
+    expect(cover([wall(0.4)], [wall(0.4), wall(0.6, sgn * 0.007)])[0] & COVER_TOP).toBe(0);
   });
 
   test("aligned walls stay covered under the per-layer wobble, which the test leaves out", () => {
     const walls = stack([0.4, 0.6, 0.8, 1.0, 1.2, 1.4, 1.6, 1.8], [0, 0, 10, 0]);
-    const bits = cover(walls, walls, H, 0.004);
+    const tp = { runs: walls, layerTime: new Float64Array(0), layerFan: new Float64Array(0), widthTagged: true };
+    const cl = wallsToCentreline(tp, H, 0.02);
+    expect(cl.p).not.toEqual(centreline(walls, H, 0).p);
+    const bits = [...(cl.cover ?? [])];
     // Points 2k and 2k + 1 are layer k's run: every layer but the outer two has both flats covered.
     for (let k = 1; k + 1 < walls.length; k++) expect(bits[2 * k] & FLATS).toBe(FLATS);
   });
@@ -122,6 +126,14 @@ describe("round ends", () => {
     expect(bits[0] & COVER_END).toBe(0);
   });
 
+  test("an end under a wide bead that stops 0.1 mm short keeps its end, though its segment's flats go", () => {
+    const all = buried().filter((r) => !(r.z === 0.8 && r.feat === "Inner wall" && r.pts[1] === 0));
+    all.push(run(0.8, [-1, 0, 4.9, 0], "Inner wall", 0.6));
+    const bits = cover([all.find((r) => r.z === 0.6 && r.pts[2] === 5) as Run], all);
+    expect(bits[0] & COVER_TOP).toBe(COVER_TOP);
+    expect(bits[1] & COVER_END).toBe(0);
+  });
+
   test("an end reaching past the layer above keeps its end", () => {
     // Above, the wall stops 0.1 mm after the piece's end point, short of its 0.21 mm round end.
     const all = buried(5, 5.1).filter((r) => !(r.z === 0.8 && r.pts[0] === 0));
@@ -134,10 +146,19 @@ describe("the sweep", () => {
   const all = layers.flatMap((z) => [run(z, [0, 0, 10, 0]), run(z, [0, 0.38, 10, 0.38], "Inner wall")]);
   const shown = all.filter((r) => r.feat === "Outer wall");
   const cl = centreline(shown, H, 0);
-  const culled = { ...cl, cover: coverFaces(cl, all, H, layerJitter(shown, 0)) };
+  const culled = { ...cl, cover: coverFaces(cl, all, H) };
 
-  test("leaves out covered faces and the vertices only they used", () => {
-    const plain = sweep(cl), mesh = sweep(culled);
+  test("the photo leaves out covered faces and the vertices only they used, each kept vertex as it was", () => {
+    const plain = sweep(cl), mesh = visiblePart(sweep(culled));
+    const key = (m: typeof plain, v: number) => [0, 1, 2].map((c) => m.position[3 * v + c]).join(",");
+    const attrs = (m: typeof plain, v: number) => [m.normal[3 * v], m.normal[3 * v + 1], m.normal[3 * v + 2], m.tangent[3 * v], m.tangent[3 * v + 1], m.tangent[3 * v + 2], m.word[v]].join(",");
+    const byPos = new Map<string, Set<string>>();
+    for (let v = 0; v < plain.word.length; v++) {
+      const set = byPos.get(key(plain, v)) ?? new Set<string>();
+      set.add(attrs(plain, v));
+      byPos.set(key(plain, v), set);
+    }
+    for (let v = 0; v < mesh.word.length; v++) expect(byPos.get(key(mesh, v))?.has(attrs(mesh, v))).toBe(true);
     expect(mesh.word.length).toBeLessThan(plain.word.length);
     expect(Math.max(...mesh.index)).toBe(mesh.word.length - 1);
     expect(mesh.bboxM).toEqual(plain.bboxM);
@@ -146,24 +167,35 @@ describe("the sweep", () => {
     expect(mesh.tris).toBeGreaterThan(plain.tris / 2);
   });
 
-  test("the lite mesh keeps the cover of the segments it keeps whole", () => {
-    expect(thin(culled).cover).toBeDefined();
-    expect(sweep(thin(culled), true).tris).toBeLessThan(sweep(thin(cl), true).tris);
+  test("the preview's meshes hide nothing: the lite one has no cover, the full one keeps every face", () => {
+    expect(sweep(thin(culled), true).hidden).toBeUndefined();
+    expect(sweep(culled).tris).toBe(sweep(cl).tris);
   });
 });
 
 describe("exact faces left out", () => {
   const layers = [0.4, 0.6, 0.8];
-  const tris = (c: Centreline) => sweep(c).tris;
+  const tris = (c: Centreline) => visibleTriangles(sweep(c));
 
   test.each([["forwards", [0, 0, 10, 0]], ["backwards", [10, 0, 0, 0]]] as const)(
     "a wall with an inner neighbour, %s: the middle layer loses its flats and inner side, the outer layers one flat each", (_, pts) => {
       const all = layers.flatMap((z) => [run(z, pts), run(z, [0, 0.38, 10, 0.38], "Inner wall")]);
       const shown = all.filter((r) => r.feat === "Outer wall");
       const cl = centreline(shown, H, 0);
-      const culled = { ...cl, cover: coverFaces(cl, all, H, layerJitter(shown, 0)) };
+      const culled = { ...cl, cover: coverFaces(cl, all, H) };
       // 2 triangles a quad: middle top, bottom and four inner side quads; the top layer's bottom; the lowest layer's top.
       expect(tris(culled)).toBe(tris(cl) - 2 * (6 + 1 + 1));
+      // Along its length, strictly between its flats, the middle layer keeps only its outer side (-y): two quads.
+      const m = visiblePart(sweep(culled)), mid = (z: number) => z > 0.41e-3 && z < 0.59e-3;
+      let long = 0;
+      for (let t = 0; t < m.index.length; t += 3) {
+        const v = [0, 1, 2].map((k) => m.index[t + k]);
+        const xs = v.map((k) => m.position[3 * k]), ys = v.map((k) => m.position[3 * k + 1]), zs = v.map((k) => m.position[3 * k + 2]);
+        if (Math.max(...xs) - Math.min(...xs) < 5e-3 || !zs.every(mid)) continue;
+        long++;
+        for (const y of ys) expect(y).toBeLessThan(1e-6);
+      }
+      expect(long).toBe(2 * 2);
     });
 
   test("a buried round end goes the same at a run's start as at its end", () => {
@@ -177,7 +209,7 @@ describe("exact faces left out", () => {
       const all = piece(pts);
       const shown = [all[4]];
       const cl = centreline(shown, H, 0);
-      const c = coverFaces(cl, all, H, layerJitter(shown, 0));
+      const c = coverFaces(cl, all, H);
       const end = c.findIndex((b) => (b & COVER_END) !== 0);
       expect(end).toBeGreaterThanOrEqual(0);
       const kept = Uint8Array.from(c, (b) => b & ~COVER_END);

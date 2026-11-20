@@ -7,17 +7,21 @@
  * against every extrusion of the printed part (infill and inner walls the mesh leaves out
  * included, support, brim and purge lines not).
  *
- * The test runs on the G-code's own positions, without the per-layer wobble the centreline adds
- * (layerJitter). A flat pressed on by a layer that leans a few micrometres keeps its face, but the
- * simulated wobble, about 4 um a layer, is not held against it: the slits it opens are a few
- * micrometres wide inside a groove that is dark anyway (under 0.5 % of grazing rays reach them).
+ * The test takes a centreline built without the per-layer wobble (jitter 0): its points are the
+ * wobbled one's, index for index. A flat pressed on by a layer that leans a few micrometres keeps
+ * its face, but the simulated wobble, about 4 um a layer, is not held against it: the slits it
+ * opens are a few micrometres wide inside a groove that is dark anyway.
+ *
+ * The test lines are the ring's own edges: at each end of a segment the ring the sweep places
+ * there, mitred at a gentle bend and square at a run end or a corner.
  *
  * Coverage is exact along each test line: every nearby extrusion is a capsule (its centreline
  * grown by a radius), and a line counts as covered only when the union of the capsules' spans
  * on it is the whole line. A flat must lie on the flat of the bead pressing on it (to within
  * FLAT_TOL), a side or an end inside a neighbour by MARGIN, so no air gap is ever bridged.
  * Sides and ends are tested only on beads whose flats are both covered: in a layer open to the
- * air they show in the grooves between beads.
+ * air they show in the grooves between beads. A side also needs material above and below just
+ * past its edge, so the groove beside it is closed at a ledge too.
  */
 import type { Centreline } from "../print";
 import { BULGE, CORNER_COS, PART, WIDTH_RANGE } from "./calibration";
@@ -37,6 +41,7 @@ const MARGIN = 0.01; // mm a side or end must sit inside its neighbour
 const FLAT_TOL = 0.005; // mm a flat's edge may reach past the flat pressing on it
 const BUCKET = 0.5; // mm, spatial hash cell
 const SELF = 0.15; // mm: extrusions this close to a segment's own centreline are the bead itself
+const LINE_GAP = 2 * (BULGE - FLAT_TOL); // mm: flat test lines this close leave no gap a pressing flat can miss
 
 /** The BUCKET grid every layer is hashed on: its corner (mm) and size in cells. */
 interface Grid {
@@ -193,13 +198,6 @@ function covered(layer: Layer, g: Grid, x0: number, y0: number, x1: number, y1: 
   return false;
 }
 
-/** The line at lateral offset ha .. hb from the segment a-b (right is +), reaching past each end by its mitre. */
-function lineCovered(l: Layer, g: Grid, ax: number, ay: number, bx: number, by: number, ux: number, uy: number, ma: number, mb: number,
-  ha: number, hb: number, shrink: number, self: Float64Array | null): boolean {
-  const ea = Math.abs(ha) * ma, eb = Math.abs(hb) * mb;
-  return covered(l, g, ax + uy * ha - ux * ea, ay - ux * ha - uy * ea, bx + uy * hb + ux * eb, by - ux * hb + uy * eb, shrink, self);
-}
-
 /** A round end at (ex, ey) facing (fx, fy): its surface against its own layer, its flats against the layers above and below. */
 function endCovered(g: Grid, same: Layer, above: Layer, below: Layer, ex: number, ey: number, fx: number, fy: number, h: number): boolean {
   const f = h - BULGE, flat = BULGE - FLAT_TOL;
@@ -212,12 +210,12 @@ function endCovered(g: Grid, same: Layer, above: Layer, below: Layer, ex: number
 }
 
 /**
- * Cover bits for every centreline point. `runs` are all the G-code's extrusions; `jit` the
- * per-layer wobble the centreline was built with (layerJitter in centreline.ts), taken back out
- * of its points.
+ * Cover bits for every centreline point of `cl`, built with jitter 0. `runs` are all the
+ * G-code's extrusions.
  */
-export function coverFaces(cl: Centreline, runs: readonly Run[], H: number, jit: ReadonlyMap<number, readonly [number, number]>): Uint8Array {
+export function coverFaces(cl: Centreline, runs: readonly Run[], H: number): Uint8Array {
   const cover = new Uint8Array(cl.n);
+  stamp = 0; // every layer's `seen` is new, so the stamps can start again
   const byZ = new Map<number, Run[]>();
   for (const r of runs) {
     if (r.feat === null || !PART.has(r.feat)) continue;
@@ -259,33 +257,35 @@ export function coverFaces(cl: Centreline, runs: readonly Run[], H: number, jit:
     return l;
   };
   const { fl, wq } = cl;
-  // The centreline's points without their layer's wobble, in mm.
-  const wobble = new Map<number, readonly [number, number]>();
-  for (const r of runs) {
-    const j = jit.get(r.layer);
-    if (j) wobble.set(rint(r.z * 100), j);
-  }
-  const p = new Float64Array(2 * cl.n);
-  for (let i = 0; i < cl.n; i++) {
-    const [jx, jy] = wobble.get(cl.zq[i]) ?? [0, 0];
-    p[2 * i] = cl.p[2 * i] * 1e3 - jx;
-    p[2 * i + 1] = cl.p[2 * i + 1] * 1e3 - jy;
-  }
+  const p = Float64Array.from(cl.p, (v) => v * 1e3);
   const startOf = (i: number) => i === 0 || (fl[i] & 1) === 1;
   const endOf = (i: number) => i === cl.n - 1 || (fl[i + 1] & 1) === 1;
   const half = (i: number) => wq[i] * 5e-3 / 2;
-  /** How far a plain ring reaches past its point along the path at a mitred bend, per mm of lateral offset. */
-  const mitre = (i: number): number => {
-    if (startOf(i) || endOf(i)) return 0;
-    const ax = p[2 * i] - p[2 * i - 2], ay = p[2 * i + 1] - p[2 * i - 1];
-    const bx = p[2 * i + 2] - p[2 * i], by = p[2 * i + 3] - p[2 * i + 1];
-    const la = Math.hypot(ax, ay), lb = Math.hypot(bx, by);
-    if (la === 0 || lb === 0) return 0;
-    const c = (ax * bx + ay * by) / (la * lb);
-    if (c < CORNER_COS) return 0; // a corner is swept round with a fan of plain rings
-    return Math.tan(Math.acos(Math.min(1, c)) / 2);
+  /**
+   * The ring the sweep puts at point i for the segment along (ux, uy): its right-pointing lateral
+   * per mm of offset. Mitred along the bisector at a plain point, square at a run end or a corner.
+   */
+  const ring = (i: number, ux: number, uy: number, out: Float64Array, o: number): void => {
+    if (!startOf(i) && !endOf(i)) {
+      const ix = p[2 * i] - p[2 * i - 2], iy = p[2 * i + 1] - p[2 * i - 1], il = Math.hypot(ix, iy);
+      const ox = p[2 * i + 2] - p[2 * i], oy = p[2 * i + 3] - p[2 * i + 1], olen = Math.hypot(ox, oy);
+      const dix = ix / il, diy = iy / il, dox = ox / olen, doy = oy / olen;
+      if (dix * dox + diy * doy >= CORNER_COS) {
+        let tx = dix + dox, ty = diy + doy;
+        const tl = Math.hypot(tx, ty);
+        if (tl > 1e-6) { tx /= tl; ty /= tl; } else { tx = dox; ty = doy; }
+        const mi = 1 / Math.min(Math.max(tx * dox + ty * doy, 0.35), 1);
+        out[o] = ty * mi; out[o + 1] = -tx * mi;
+        return;
+      }
+    }
+    out[o] = uy; out[o + 1] = -ux;
   };
+  const lat = new Float64Array(4);
   const self = new Float64Array(4);
+  /** The edge at lateral offsets ha (at a) and hb (at b), right positive, along the rings in `lat`. */
+  const edge = (l: Layer | null, ax: number, ay: number, bx: number, by: number, ha: number, hb: number, shrink: number, me: Float64Array | null) =>
+    l !== null && covered(l, grid, ax + lat[0] * ha, ay + lat[1] * ha, bx + lat[2] * hb, by + lat[3] * hb, shrink, me);
   const BOTH = COVER_TOP | COVER_BOTTOM, FLAT = BULGE - FLAT_TOL;
   // Points in height order, so each layer's hash is built once.
   const order = Uint32Array.from({ length: cl.n }, (_, i) => i).sort((a, b) => cl.zq[a] - cl.zq[b] || a - b);
@@ -301,19 +301,28 @@ export function coverFaces(cl: Centreline, runs: readonly Run[], H: number, jit:
     }
     if (!endOf(i)) {
       const ax = p[2 * i], ay = p[2 * i + 1], bx = p[2 * i + 2], by = p[2 * i + 3];
-      const len = Math.hypot(bx - ax, by - ay);
-      const ux = (bx - ax) / len, uy = (by - ay) / len, ma = mitre(i), mb = mitre(i + 1);
+      const len = Math.hypot(bx - ax, by - ay), ux = (bx - ax) / len, uy = (by - ay) / len;
+      ring(i, ux, uy, lat, 0);
+      ring(i + 1, ux, uy, lat, 2);
       const fa = half(i) - BULGE, fb = half(i + 1) - BULGE;
-      const flats = (l: Layer | null) => l !== null
-        && lineCovered(l, grid, ax, ay, bx, by, ux, uy, ma, mb, 0, 0, FLAT, null)
-        && lineCovered(l, grid, ax, ay, bx, by, ux, uy, ma, mb, fa, fb, FLAT, null)
-        && lineCovered(l, grid, ax, ay, bx, by, ux, uy, ma, mb, -fa, -fb, FLAT, null);
+      const steps = Math.max(1, Math.ceil(Math.max(fa, fb) / LINE_GAP));
+      const flats = (l: Layer | null) => {
+        for (let k = -steps; k <= steps; k++) if (!edge(l, ax, ay, bx, by, fa * k / steps, fb * k / steps, FLAT, null)) return false;
+        return true;
+      };
       if (flats(above)) cover[i] |= COVER_TOP;
       if (flats(below)) cover[i] |= COVER_BOTTOM;
       if ((cover[i] & BOTH) === BOTH && same) {
         self[0] = ax; self[1] = ay; self[2] = bx; self[3] = by;
-        if (lineCovered(same, grid, ax, ay, bx, by, ux, uy, ma, mb, half(i), half(i + 1), MARGIN, self)) cover[i] |= COVER_RIGHT;
-        if (lineCovered(same, grid, ax, ay, bx, by, ux, uy, ma, mb, -half(i), -half(i + 1), MARGIN, self)) cover[i] |= COVER_LEFT;
+        const ha = half(i), hb = half(i + 1);
+        for (const sgn of [1, -1]) {
+          // Pressed by its neighbour, and the groove beside it closed above and below.
+          if (edge(same, ax, ay, bx, by, sgn * ha, sgn * hb, MARGIN, self)
+            && edge(above, ax, ay, bx, by, sgn * (ha + BULGE), sgn * (hb + BULGE), 0, null)
+            && edge(below, ax, ay, bx, by, sgn * (ha + BULGE), sgn * (hb + BULGE), 0, null)) {
+            cover[i] |= sgn > 0 ? COVER_RIGHT : COVER_LEFT;
+          }
+        }
       }
     }
     // A round end, once the flats of the segment it joins are known: in height order that segment

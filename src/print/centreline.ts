@@ -6,7 +6,6 @@ import { mm } from "../document";
 import type { FeatureCode } from "../document";
 import type { Centreline } from "../print";
 import { FEAT_CODE, H0, JITTER, MIN_STEP, WIDTH_RANGE } from "./calibration";
-import { COVER_END } from "./cover";
 import { rint } from "./exposed";
 import type { Run } from "./gcode";
 
@@ -27,11 +26,8 @@ function gauss(rand: () => number): number { // Box-Muller
   return Math.sqrt(-2 * Math.log(1 - rand())) * Math.cos(2 * Math.PI * rand());
 }
 
-/**
- * The wobble of each layer counter, drawn in the order the layers first appear in `runs`.
- * The centreline and the cover test (cover.ts) must use the same one.
- */
-export function layerJitter(runs: readonly Run[], jitter: number = JITTER): Map<number, [number, number]> {
+/** The wobble of each layer counter, drawn in the order the layers first appear in `runs`. */
+function layerJitter(runs: readonly Run[], jitter: number = JITTER): Map<number, [number, number]> {
   const rand = seeded(1);
   const jit = new Map<number, [number, number]>();
   for (const r of runs) if (!jit.has(r.layer)) jit.set(r.layer, [gauss(rand) * jitter, gauss(rand) * jitter]);
@@ -113,13 +109,10 @@ export function thin(cl: Centreline): Centreline {
     }
     idx.push(i); turn = len = 0; last = i;
   }
-  // A segment kept whole keeps its cover bits; a merged one keeps none. Run ends are always kept.
-  const { cover } = cl;
   return {
     n: idx.length,
     p: Float32Array.from({ length: 2 * idx.length }, (_, k) => p[2 * idx[k >> 1] + (k & 1)]),
     zq: Uint16Array.from(idx, (i) => cl.zq[i]), wq: Uint8Array.from(idx, (i) => wq[i]),
     fl: Uint8Array.from(idx, (i) => fl[i]), vq: Uint8Array.from(idx, (i) => cl.vq[i]), h: cl.h,
-    ...(cover ? { cover: Uint8Array.from(idx, (i, m) => (idx[m + 1] === i + 1 ? cover[i] : cover[i] & COVER_END)) } : {}),
   };
 }

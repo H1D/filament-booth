@@ -670,6 +670,8 @@ export interface SceneFile {
 export function exportScene(scene: Scene): SceneFile {
   const buffers = new Map<string, SceneBuffer>();
   const walk = (value: unknown, path: string): unknown => {
+    // BeadMesh.hidden: only the browser's Cycles leaves those faces out; native Blender renders every face.
+    if (value instanceof Uint8Array) return undefined;
     if (isSceneBuffer(value)) {
       buffers.set(path, value);
       return { buffer: path, kind: bufferKind(value), length: value.length };

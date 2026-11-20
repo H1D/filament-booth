@@ -9,7 +9,7 @@
 import type { RadianceFrame } from "../film";
 import type { Scene } from "../scene";
 import type { Passes } from "./cycles-upload";
-import { estimateHeapBytes, HEAP_LIMIT_BYTES } from "./cycles-upload";
+import { estimateHeapBytes, HEAP_LIMIT_BYTES, visibleTriangles } from "./cycles-upload";
 import type { PhotoEngine } from "./photo";
 import type { RenderRequest, RenderStats, WorkerReply } from "./cycles-worker";
 
@@ -32,7 +32,7 @@ export function cyclesEngine(options: CyclesEngineOptions = {}): PhotoEngine {
       }
       const machine = await machineFits();
       if (machine !== true) return machine;
-      const need = estimateHeapBytes(scene.part ? scene.part.mesh.index.length / 3 : 0, scene.film.width * scene.film.height);
+      const need = estimateHeapBytes(scene.part ? visibleTriangles(scene.part.mesh) : 0, scene.film.width * scene.film.height);
       return need <= HEAP_LIMIT_BYTES
         ? true
         : { reason: `needs about ${(need / 1e9).toFixed(1)} GB, over the 4 GB WebAssembly limit` };

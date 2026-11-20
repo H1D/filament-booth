@@ -40,8 +40,7 @@ describe.skipIf(!REF)("mesher parity with gcode_mesh.py (set BOOTH_REF to the le
     const py = spawnSync("python3", ["-c", PYTHON, REF ?? "", join(REF ?? "", GCODE), join(dir, "ref")], { encoding: "utf8", maxBuffer: 1 << 26 });
     if (py.status !== 0) throw new Error(`gcode_mesh.py failed: ${py.stderr}`);
     ({ centreline: cl, tables } = centrelineOfGcode(readFileSync(join(REF ?? "", GCODE), "utf8"), 0.2, 0));
-    // gcode_mesh.py sweeps every face; the faces cover.ts leaves out are not part of the parity.
-    mesh = sweep({ ...cl, cover: undefined });
+    mesh = sweep(cl);
   }, 600_000);
 
   afterAll(() => { if (dir) rmSync(dir, { recursive: true, force: true }); });

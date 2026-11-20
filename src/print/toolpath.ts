@@ -1,7 +1,7 @@
 /** Parsed toolpath to centreline: which extrusions are visible, and the tables the print reports. */
 import type { Centreline } from "../print";
 import { INNER_WALL_MIN_WIDTH, JITTER, KEEP } from "./calibration";
-import { centreline, layerJitter } from "./centreline";
+import { centreline } from "./centreline";
 import { coverFaces } from "./cover";
 import { exposedInner } from "./exposed";
 import { parse } from "./gcode";
@@ -30,7 +30,8 @@ export function wallsToCentreline(tp: Toolpath, H: number, jitter: number = JITT
   const shown = runs.filter((r) => r.feat !== null && KEEP.has(r.feat)).concat(exposedInner(runs, 0.1, untagged));
   const cl = centreline(shown, H, jitter);
   if (!cl.n) throw new Error("no Bambu / Orca extrusions (; FEATURE: walls, skins) found in this G-code");
-  return { ...cl, cover: coverFaces(cl, runs, H, layerJitter(shown, jitter)) };
+  // The cover test runs without the wobble, on a centreline whose points are this one's, index for index.
+  return { ...cl, cover: coverFaces(jitter === 0 ? cl : centreline(shown, H, 0), runs, H) };
 }
 
 /** G-code text to centreline and tables in one step, without the worker's stages. */

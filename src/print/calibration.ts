@@ -32,7 +32,7 @@ export const KEEP: ReadonlySet<string> = new Set([
  *  skirt, prime tower and purge lines come off it, and an unknown feature counts as off. */
 export const PART: ReadonlySet<string> = new Set([
   "Outer wall", "Inner wall", "Overhang wall", "Sparse infill", "Internal solid infill", "Solid infill",
-  "Top surface", "Bottom surface", "Bridge", "Internal bridge", "Gap infill", "Floating vertical shell",
+  "Top surface", "Bottom surface", "Bridge", "Internal Bridge", "Internal bridge", "Gap infill", "Floating vertical shell",
 ]);
 /** Everything not listed is a wall (0). */
 export const FEAT_CODE: ReadonlyMap<string, FeatureCode> = new Map([

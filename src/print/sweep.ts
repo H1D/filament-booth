@@ -137,6 +137,7 @@ export function sweep(cl: Centreline, lite = false): BeadMesh {
   const pos = new Float32Array(rings * RN * 3), nrm = new Int16Array(rings * RN * 3), tan = new Int16Array(rings * RN * 3);
   const word = new Float32Array(rings * RN);
   const index = new Uint32Array(quadsMax * RN * 6);
+  const hid = new Uint8Array(cover ? quadsMax * RN * 2 : 0);
   let r = 0, ti = 0, layerCount = 0;
   for (let i = 0; i < N; i++) {
     const s = st(i), e = en(i);
@@ -173,17 +174,18 @@ export function sweep(cl: Centreline, lite = false): BeadMesh {
       }
       if (r > 0 && !(s && first)) { // quads to the previous ring of this run, minus collapsed / zero-length ones
         // The first ring of a point joins the segment from the previous point, whose covered faces are
-        // left out (cover.ts). Rings after the first at a run's end sweep its round end.
+        // marked hidden (cover.ts). Rings after the first at a run's end sweep its round end.
         const covered = first && cover ? cover[i - 1] : 0;
         const endHidden = !first && (s || e) && ((cover?.[i] ?? 0) & COVER_END) !== 0;
-        for (let k = 0; k < RN && !endHidden; k++) {
-          if (covered && hiddenQuad(k, RN, covered)) continue;
+        for (let k = 0; k < RN; k++) {
+          const hide = endHidden || (covered !== 0 && hiddenQuad(k, RN, covered));
           const kn = (k + 1) % RN, q = [(r - 1) * RN + k, r * RN + k, r * RN + kn, (r - 1) * RN + kn];
           const tris: (readonly [number, number, number])[] = [[q[0], q[1], q[2]], [q[0], q[2], q[3]]];
           for (const [a_, b_, c_] of tris) {
             const ux = pos[3 * b_] - pos[3 * a_], uy = pos[3 * b_ + 1] - pos[3 * a_ + 1], uz = pos[3 * b_ + 2] - pos[3 * a_ + 2];
             const vx = pos[3 * c_] - pos[3 * a_], vy = pos[3 * c_ + 1] - pos[3 * a_ + 1], vz = pos[3 * c_ + 2] - pos[3 * a_ + 2];
             if ((uy * vz - uz * vy) ** 2 + (uz * vx - ux * vz) ** 2 + (ux * vy - uy * vx) ** 2 < 1e-30) continue;
+            if (hide) hid[ti / 3] = 1;
             index[ti++] = a_; index[ti++] = b_; index[ti++] = c_;
           }
         }
@@ -214,33 +216,12 @@ export function sweep(cl: Centreline, lite = false): BeadMesh {
   }
   const cx = (lx + hx) / 2, cy = (ly + hy) / 2;
   for (let o = 0; o < pos.length; o += 3) { pos[o] -= cx; pos[o + 1] -= cy; }
-  // Vertices only left-out faces used (cover.ts) go too, renumbered in order.
-  let vcount = rings * RN, tris = index.slice(0, ti);
-  let position = pos, normal = nrm, tangent = tan, words = word;
-  if (cl.cover) {
-    const remap = new Int32Array(vcount).fill(-1);
-    for (const v of tris) remap[v] = 0;
-    let next = 0;
-    for (let v = 0; v < vcount; v++) if (remap[v] === 0) remap[v] = next++;
-    if (next < vcount) {
-      position = new Float32Array(next * 3); normal = new Int16Array(next * 3); tangent = new Int16Array(next * 3); words = new Float32Array(next);
-      for (let v = 0; v < vcount; v++) {
-        const m = remap[v];
-        if (m < 0) continue;
-        position.set(pos.subarray(3 * v, 3 * v + 3), 3 * m);
-        normal.set(nrm.subarray(3 * v, 3 * v + 3), 3 * m);
-        tangent.set(tan.subarray(3 * v, 3 * v + 3), 3 * m);
-        words[m] = word[v];
-      }
-      tris = tris.map((v) => remap[v]);
-      vcount = next;
-    }
-  }
   const walls: number[] = []; // typical bead speed of the walls: the speed gloss is relative to it
   for (let i = 0; i < N; i++) if ((FL[i] >> 1) === 0) walls.push(Vq[i]);
   walls.sort((a, b) => a - b);
   return {
-    position, normal, tangent, word: words, index: tris, tris: ti / 3,
+    position: pos, normal: nrm, tangent: tan, word, index: index.slice(0, ti), tris: ti / 3,
+    ...(cover ? { hidden: hid.slice(0, ti / 3) } : {}),
     layerCount, layerHeightM: Hm, vRefMmS: 2 * (walls[walls.length >> 1] || 50),
     bboxM: { min: [lx - cx, ly - cy, lz], max: [hx - cx, hy - cy, hz] },
   };
