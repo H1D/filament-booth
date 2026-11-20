@@ -7,6 +7,7 @@
 import { packBeadWord } from "../print";
 import type { BeadMesh, Centreline } from "../print";
 import { BULGE, CAP_STEPS, CORNER_COS, FAN_STEP, TOP_R } from "./calibration";
+import { COVER_BOTTOM, COVER_END, COVER_LEFT, COVER_RIGHT, COVER_TOP } from "./cover";
 
 const A = BULGE * 1e-3;
 
@@ -117,6 +118,20 @@ export function planRings(cl: Centreline, lite = false): RingPlan {
   return { din, dout, len, nring, rings, quadsMax };
 }
 
+/**
+ * Is quad k of a ring (k to k + 1) pressed against neighbouring material? Quads RN/2 - 1 and
+ * RN - 1 are the top and bottom flats, the rest the right and left sides. A side goes only when
+ * both flats go too: in a layer with open air above or below, the sides show in the grooves
+ * between beads and, at grazing angles, past the edge of the layer.
+ */
+function hiddenQuad(k: number, RN: number, c: number): boolean {
+  const half = RN / 2;
+  if (k === half - 1) return (c & COVER_TOP) !== 0;
+  if (k === RN - 1) return (c & COVER_BOTTOM) !== 0;
+  const side = k < half - 1 ? COVER_RIGHT : COVER_LEFT;
+  return (c & (side | COVER_TOP | COVER_BOTTOM)) === (side | COVER_TOP | COVER_BOTTOM);
+}
+
 export function sweep(cl: Centreline, lite = false): BeadMesh {
   const { n: N, p: P, zq: Zq, wq: Wq, fl: FL, vq: Vq, h: H } = cl;
   const { n: RN, SIDE, VV, SGN, PN, PN1, VT, NT, cap: CAP } = tables(lite, H), Hm = H * 1e-3, LQ = H * 100;
@@ -160,7 +175,17 @@ export function sweep(cl: Centreline, lite = false): BeadMesh {
         word[r * RN + k] = wordHere;
       }
       if (r > 0 && !(s && first)) { // quads to the previous ring of this run, minus collapsed / zero-length ones
+        // The first ring of a point joins the segment from the previous point. Its flats are left
+        // out where the next layer up or down presses on them (cover.ts); caps and fans keep theirs.
+        const covered = first && cl.cover ? cl.cover[i - 1] : 0;
+        // Rings after the first at a run's end point sweep its round end.
+        // Like a side, only on a bead with material above and below: in an open layer the end shows in its groove.
+        const joined = cl.cover ? cl.cover[s ? i : i - 1] : 0;
+        const endHidden = !first && (s || e) && cl.cover !== undefined && (cl.cover[i] & COVER_END) !== 0
+          && (joined & (COVER_TOP | COVER_BOTTOM)) === (COVER_TOP | COVER_BOTTOM);
+        if (endHidden) { first = false; r++; return; }
         for (let k = 0; k < RN; k++) {
+          if (covered && hiddenQuad(k, RN, covered)) continue;
           const kn = (k + 1) % RN, q = [(r - 1) * RN + k, r * RN + k, r * RN + kn, (r - 1) * RN + kn];
           const tris: (readonly [number, number, number])[] = [[q[0], q[1], q[2]], [q[0], q[2], q[3]]];
           for (const [a_, b_, c_] of tris) {
