@@ -539,7 +539,7 @@ describe("section identity", () => {
     expect(limit.film.timeLimitS).toBe(0);
     expect(limit.camera).toBe(first.camera);
     const wide = recompile(edited((d) => { d.output.aspect = { w: 16, h: 9 }; }));
-    expect(wide.film).toMatchObject({ width: 2000, height: 1125 });
+    expect(wide.film).toMatchObject({ width: 1600, height: 900 });
     expect(wide.camera).not.toBe(first.camera);
     expect(wide.camera.fovYRad).toBeLessThan(first.camera.fovYRad);
   });
@@ -579,7 +579,7 @@ describe("section identity", () => {
 
   test("the film carries Blender's factory render settings and the reference overrides", () => {
     expect(first.film).toMatchObject({
-      width: 1600, height: 2000, samples: 64, timeLimitS: 300, adaptiveThreshold: 0.004, maxBounces: 12, diffuseBounces: 4,
+      width: 1600, height: 1600, samples: 32, timeLimitS: 300, adaptiveThreshold: 0.004, maxBounces: 12, diffuseBounces: 4,
       glossyBounces: 8, transmissionBounces: 12, clampDirect: 0, clampIndirect: 10, filterWidthPx: 1.5,
       transparent: false, denoise: true, look: "medium-high-contrast",
     });
@@ -632,7 +632,7 @@ describe("exportScene", () => {
               material: { layers: { rough: { buffer: "part.material.layers.rough", kind: "f32", length: 404 } } } },
       backdrop: { positions: { buffer: "backdrop.positions" } },
       camera: { focalMm: 85 },
-      film: { width: 1600, height: 2000 },
+      film: { width: 1600, height: 1600 },
     });
     expect(json.length).toBeLessThan(30000);
     expect(json).not.toContain("Float32Array");

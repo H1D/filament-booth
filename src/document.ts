@@ -601,7 +601,8 @@ export function parseDocument(json: unknown): BoothDocument {
 /** Five minutes: a full-size photo of a big part otherwise runs for half an hour. */
 export const DEFAULT_PHOTO_TIME_LIMIT_S = 300;
 
-/** PETG Basic under the studio look, the hero_light camera, 4:5 at 2000 px. */
+/** PETG Basic under the studio look and the hero_light camera, sized for a marketplace listing:
+ *  square at 1600 px, which Amazon recommends for its zoom, and 32 samples, which hold up there. */
 export function defaultDocument(): BoothDocument {
   return {
     version: DOC_VERSION,
@@ -622,7 +623,7 @@ export function defaultDocument(): BoothDocument {
     },
     pose: { turntableDeg: deg(0), restFace: "plate" },
     output: {
-      aspect: { w: 4, h: 5 }, longEdgePx: 2000, samples: 64, timeLimitS: DEFAULT_PHOTO_TIME_LIMIT_S,
+      aspect: { w: 1, h: 1 }, longEdgePx: 1600, samples: 32, timeLimitS: DEFAULT_PHOTO_TIME_LIMIT_S,
       transparentBackground: false,
       viewTransform: { kind: "agx", look: "medium-high-contrast" },
       denoise: true,

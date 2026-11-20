@@ -48,12 +48,13 @@ export function OutputPanel() {
   return (
     <>
       <Slider label="Long edge" unit="px" mapping={LONG_EDGE} value={output.longEdgePx} defaultValue={DEFAULTS.output.longEdgePx}
+        hint="1600 px suits a marketplace listing: Amazon zooms images from 1000 px and recommends 1600 or more. Go larger for print."
         onChange={(v) => { edit((d) => { d.output.longEdgePx = v; }); }} />
       <p className="readout size" aria-live="polite">
         {film.width} by {film.height} px, {megapixels.toFixed(1)} megapixels
       </p>
       <Slider label="Samples" mapping={SAMPLES} value={output.samples} defaultValue={DEFAULTS.output.samples}
-        hint="The quality you are aiming for. More samples means less noise and a longer wait. With Denoise on, 64 is usually enough. The time limit below caps the wait."
+        hint="The quality you are aiming for. More samples means less noise and a longer wait. With Denoise on, 32 holds up in a listing's full-size zoom. Go higher for print or close-ups. The time limit below caps the wait."
         onChange={(v) => { edit((d) => { d.output.samples = v; }); }} />
       <Select label="Time limit" value={String(output.timeLimitS)} options={timeLimitOptions(output.timeLimitS)}
         hint="The longest a photo may take. When the time is up, the photo is made from the samples taken so far, so it may be a little noisier than the target. It stops sooner if the samples are done first. A photo can also be finished early."

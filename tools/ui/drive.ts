@@ -502,11 +502,11 @@ try {
     const open = await page.evaluate(() => document.querySelector(".confirm")?.matches(":popover-open") === true);
     expect(open, "the confirmation is not an open popover");
     await page.locator(".confirm").getByRole("button", { name: "Reset everything" }).click();
-    await until("samples back at 64", async () => ((await inputValue(page, "Samples")) === "64" ? true : null));
+    await until("samples back at 32", async () => ((await inputValue(page, "Samples")) === "32" ? true : null));
     const closed = await page.evaluate(() => document.querySelector(".confirm")?.matches(":popover-open") === false);
     expect(closed, "the popover stays open after confirming");
     expect((await standIn(page))?.hasPart === true, "the open part was dropped by the reset");
-    return "popover opened from the button, Reset everything restored samples to 64 and left the part open";
+    return "popover opened from the button, Reset everything restored samples to 32 and left the part open";
   });
 
 
