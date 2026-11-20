@@ -17,6 +17,7 @@ bun run build          # tsc -b && vite build into dist/
 bun run ui:drive       # panels on dev/panels.html with fakes, headless Chromium
 bun run e2e [flows]    # real app in a hardware-GPU Chromium (needs gamescope, Blender 5.2.3)
 bun run agent          # the agent bridge: an MCP server on stdio plus the loopback socket the tab dials (--pair prints the link)
+bun run bridge:build   # bundle the bridge for Node into packages/bridge/bridge.mjs, the filament-booth npm package
 bun run agent:drive    # agent Python on dev/agent.html with the real worker, headless Chromium
 bun run agent:e2e      # real MCP client, real bridge, real app, a real Cycles photo (--gpu for the hardware-GPU session)
 bun tools/parity/run.ts          # browser Cycles against native Blender, PSNR per fixture

@@ -6,13 +6,16 @@
  * scene logic. It relays a script to the tab and the tab's output, progress,
  * images and outcome back, and reads and writes files on this machine for the tab.
  *
+ *   npx -y filament-booth --token <t>    serve with the token the booth tab shows (the published package)
  *   bun tools/agent/bridge.ts            serve: what the agent's MCP config runs
  *   bun tools/agent/bridge.ts --pair     print the port, token and pairing link, then exit
+ *   --token <t>                          use this token instead of the one in bridge.json
  *   --port <n>                           listen on this port instead of the one in bridge.json
  *   --app <origin>                       a booth origin to accept (repeatable); the first one is also the pairing link's base
  *   --allow <dir>                        another folder the tab may read and write (repeatable)
  *
- * Register it:  claude mcp add booth -- bun <checkout>/tools/agent/bridge.ts
+ * Register it:  claude mcp add booth -- npx -y filament-booth --token <the token the tab shows>
+ *          or:  claude mcp add booth -- bun <checkout>/tools/agent/bridge.ts
  *
  * MCP owns stdout. Every log line goes to stderr.
  */
@@ -26,13 +29,11 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/protocol.js";
 import type { CallToolResult, ServerNotification, ServerRequest } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
-import { DEFAULT_PORT, pairingHash } from "../../src/agent/protocol";
+import { BOOTH_URL, BRIDGE_ORIGINS, DEFAULT_PORT, TOKEN_PATTERN, pairingHash } from "../../src/agent/protocol";
 import { Jobs, ToolRefusal, refusalResult, toMcpResult, type ProgressSink, type Reported } from "./jobs";
 import { TabServer } from "./tabs";
 
-export const DEFAULT_APP = "http://localhost:5173/";
-/** The origins the dev server uses, accepted without --app. */
-const DEV_ORIGINS = ["http://localhost:5173", "http://127.0.0.1:5173"] as const;
+export const DEFAULT_APP = BOOTH_URL;
 export const DEFAULT_WAIT_S = 50;
 export const MAX_WAIT_S = 600;
 export const TAB_WAIT_MS = 15_000;
@@ -64,6 +65,8 @@ export class UsageError extends Error {
 export interface CliOptions {
   readonly mode: "serve" | "pair";
   readonly port: number | null;
+  /** From --token: the token the booth tab made, used instead of bridge.json's. */
+  readonly token: string | null;
   /** The booth URLs given with --app, in order. */
   readonly apps: readonly URL[];
   /** Absolute folders given with --allow. */
@@ -78,6 +81,7 @@ export function parseArgs(argv: readonly string[], cwd: string): CliOptions {
       options: {
         pair: { type: "boolean" },
         port: { type: "string" },
+        token: { type: "string" },
         app: { type: "string", multiple: true },
         allow: { type: "string", multiple: true },
       },
@@ -90,6 +94,9 @@ export function parseArgs(argv: readonly string[], cwd: string): CliOptions {
   if (values.port !== undefined) {
     port = Number(values.port);
     if (!Number.isInteger(port) || port < 1 || port > 65535) throw new UsageError(`--port: expected a port from 1 to 65535, got ${values.port}`);
+  }
+  if (values.token !== undefined && !TOKEN_PATTERN.test(values.token)) {
+    throw new UsageError("--token: expected 8 to 128 letters, digits, - or _. Copy the command from the booth's Agent section again.");
   }
   const apps = (values.app ?? []).map((app) => {
     let url: URL;
@@ -104,6 +111,7 @@ export function parseArgs(argv: readonly string[], cwd: string): CliOptions {
   return {
     mode: values.pair === true ? "pair" : "serve",
     port,
+    token: values.token ?? null,
     apps,
     allow: (values.allow ?? []).map((dir) => resolve(cwd, dir)),
   };
@@ -143,7 +151,7 @@ export async function loadBridgeFile(dir: string): Promise<BridgeFile> {
     throw new UsageError(`${file} is not valid JSON. Fix it, or delete it to get a new token.`);
   }
   const { port, token } = (parsed ?? {}) as Partial<Record<keyof BridgeFile, unknown>>;
-  if (typeof port !== "number" || !Number.isInteger(port) || port < 1 || port > 65535 || typeof token !== "string" || !/^[A-Za-z0-9_-]{8,128}$/.test(token)) {
+  if (typeof port !== "number" || !Number.isInteger(port) || port < 1 || port > 65535 || typeof token !== "string" || !TOKEN_PATTERN.test(token)) {
     throw new UsageError(`${file} needs a "port" from 1 to 65535 and a "token" of 8 to 128 letters, digits, - or _. Fix it, or delete it to get a new token.`);
   }
   if (((await stat(file)).mode & 0o077) !== 0) await chmod(file, 0o600);
@@ -270,7 +278,8 @@ export function createBridge(config: BridgeConfig): Bridge {
 
 export async function main(argv: readonly string[], env: NodeJS.ProcessEnv, cwd: string): Promise<void> {
   const cli = parseArgs(argv, cwd);
-  const file = await loadBridgeFile(configDir(env));
+  // A token from the tab needs no file: the bridge then writes nothing to this machine but what scripts save.
+  const file = cli.token === null ? await loadBridgeFile(configDir(env)) : { port: DEFAULT_PORT, token: cli.token };
   const port = cli.port ?? file.port;
   const app = cli.apps[0] ?? new URL(DEFAULT_APP);
 
@@ -289,7 +298,7 @@ export async function main(argv: readonly string[], env: NodeJS.ProcessEnv, cwd:
   const running = createBridge({
     port,
     token: file.token,
-    origins: [...DEV_ORIGINS, ...cli.apps.map((url) => url.origin)],
+    origins: [...BRIDGE_ORIGINS, ...cli.apps.map((url) => url.origin)],
     roots,
     app,
   });
@@ -308,7 +317,8 @@ export async function main(argv: readonly string[], env: NodeJS.ProcessEnv, cwd:
   process.once("SIGINT", stop);
 }
 
-if (import.meta.main) {
+/** The command line entry, for Bun here and for the Node build in the npm package. */
+export async function run(): Promise<void> {
   try {
     await main(process.argv.slice(2), process.env, process.cwd());
   } catch (error) {
@@ -316,3 +326,5 @@ if (import.meta.main) {
     process.exit(error instanceof UsageError ? 2 : 1);
   }
 }
+
+if (import.meta.main) await run();

@@ -28,3 +28,5 @@ dist-ssr
 tools/ui/out/
 tools/e2e/out/
 tools/denoise/out/
+# Built by bun run bridge:build, published to npm, not committed.
+packages/bridge/bridge.mjs

@@ -9,7 +9,8 @@
  */
 import { useEffect, useId, useRef, useState } from "react";
 import type { AgentState } from "../agent/agent";
-import { Note, Switch } from "./controls";
+import { bridgeCommand } from "../agent/protocol";
+import { Fold, Note, Switch } from "./controls";
 import { useAgent, useHost, useUi } from "./hooks";
 
 const PRIVACY =
@@ -20,7 +21,7 @@ const PRIVACY =
 function statusText({ settings, status }: AgentState): string {
   switch (status.kind) {
     case "off":
-      return settings.token === "" ? "Off. Open the link that bun tools/agent/bridge.ts --pair prints, or paste its port and token below" : "Off";
+      return settings.token === "" ? "Off. Enter a token under Port and token" : "Off. Run the command below, then turn the switch on";
     case "starting": return "Starting Python…";
     case "waiting": return `Waiting for the bridge on port ${settings.port}`;
     case "connected": return "Connected. An agent can control this tab";
@@ -37,6 +38,24 @@ const tone = (state: AgentState): "accent" | "warn" | undefined => {
     default: return undefined;
   }
 };
+
+/** The command that registers the bridge with this tab's token, and a button that copies it. */
+function Command({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (!copied) return;
+    const timer = setTimeout(() => { setCopied(false); }, 1500);
+    return () => { clearTimeout(timer); };
+  }, [copied]);
+  return (
+    <div className="agent-command">
+      <code>{text}</code>
+      <button type="button" className="btn" onClick={() => {
+        navigator.clipboard.writeText(text).then(() => { setCopied(true); }, () => {});
+      }}>{copied ? "Copied" : "Copy"}</button>
+    </div>
+  );
+}
 
 /** A text field that applies its value on Enter or blur, as the number fields do, so a half-typed port never dials. */
 function Field({ label, value, onCommit, secret, numeric }: {
@@ -80,11 +99,19 @@ export function AgentPanel() {
   return (
     <div className="agent" ref={top}>
       <Switch label="Allow a local agent to control this tab" checked={settings.enabled} disabled={cannotRun || needsToken}
-        hint={needsToken ? "Pair first: open the link from the bridge, or paste its port and token" : undefined}
+        hint={needsToken ? "Enter a token under Port and token first" : undefined}
         onChange={(on) => { if (on) agent.enable(); else agent.disable(); }} />
       <p className="agent-status" role="status" data-status={status.kind} data-tone={tone(state)}>{statusText(state)}</p>
-      <Field label="Port" numeric value={String(settings.port)} onCommit={(text) => { agent.setPort(Number(text.trim())); }} />
-      <Field label="Token" secret value={settings.token} onCommit={(text) => { agent.setToken(text); }} />
+      {settings.token === "" ? null : (
+        <>
+          <Command text={bridgeCommand({ port: settings.port, token: settings.token, origin: location.origin })} />
+          <Note>Run it once in the folder you work in, then start Claude Code there. It needs Node.js. For another agent, add an MCP server that runs the part after <code>--</code>.</Note>
+        </>
+      )}
+      <Fold title="Port and token">
+        <Field label="Port" numeric value={String(settings.port)} onCommit={(text) => { agent.setPort(Number(text.trim())); }} />
+        <Field label="Token" secret value={settings.token} onCommit={(text) => { agent.setToken(text); }} />
+      </Fold>
       <Note>{PRIVACY}</Note>
     </div>
   );

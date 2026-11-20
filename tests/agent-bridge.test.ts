@@ -542,7 +542,11 @@ describe("resolveInRoots", () => {
 
 describe("the command line", () => {
   test("no flags serves with the defaults", () => {
-    expect(parseArgs([], "/work")).toEqual({ mode: "serve", port: null, apps: [], allow: [] });
+    expect(parseArgs([], "/work")).toEqual({ mode: "serve", port: null, token: null, apps: [], allow: [] });
+  });
+
+  test("--token is the token the booth tab made", () => {
+    expect(parseArgs(["--token", "fresh-token-0001"], "/work").token).toBe("fresh-token-0001");
   });
 
   test("--pair, --port, --app and --allow are read, with --allow resolved against the working directory", () => {
@@ -558,6 +562,8 @@ describe("the command line", () => {
     [["--port", "http"], "--port"],
     [["--app", "booth.example"], "--app"],
     [["--app", "ftp://booth.example"], "--app"],
+    [["--token", "short"], "--token"],
+    [["--token", "has space in it"], "--token"],
     [["--nope"], "nope"],
     [["stray"], "stray"],
   ])("%j is a usage error that names %s", (argv, mention) => {

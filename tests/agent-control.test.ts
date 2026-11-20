@@ -1,10 +1,12 @@
 import { describe, expect, test } from "vitest";
-import { AGENT_STORAGE_KEY, AgentControl, OUTPUT_BATCH_MS, PROGRESS_WINDOW_MS } from "../src/agent/agent";
+import { AGENT_STORAGE_KEY, AgentControl, OUTPUT_BATCH_MS, PROGRESS_WINDOW_MS, randomToken } from "../src/agent/agent";
 import { RETRY_FIRST_MS } from "../src/agent/link";
 import { CLOSE, DEFAULT_PORT, type JobId, type TabMessage } from "../src/agent/protocol";
 import { FakeRuntime, ManualClock, Sockets, type FakeSocket } from "./agent-wire-fixtures";
 
 const TOKEN = "9c1e47a0d2b35f86e4a1";
+/** The token a page with none makes for itself. */
+const FRESH = "fresh-token-0001";
 const job = (id: string): JobId => id as JobId;
 const tick = (): Promise<void> => new Promise((resolve) => { setTimeout(resolve, 0); });
 
@@ -31,6 +33,7 @@ function rig(options: { readonly saved?: unknown; readonly unavailable?: string;
     pageId: "page-1",
     openSocket: sockets.open,
     schedule: clock.schedule,
+    newToken: () => FRESH,
   });
   return { control, runtime, sockets, clock, store };
 }
@@ -56,9 +59,20 @@ const framesOf = (socket: FakeSocket, kind: string): TabMessage[] => socket.mess
 describe("the switch", () => {
   test("a fresh page is off and starts nothing: no Python, no socket", () => {
     const r = rig();
-    expect(r.control.state.get()).toEqual({ settings: { enabled: false, port: DEFAULT_PORT, token: "" }, status: { kind: "off" }, running: null });
+    expect(r.control.state.get()).toEqual({ settings: { enabled: false, port: DEFAULT_PORT, token: FRESH }, status: { kind: "off" }, running: null });
     expect(r.runtime.starts).toBe(0);
     expect(r.sockets.all).toHaveLength(0);
+  });
+
+  test("a fresh page makes a token and remembers it, so the command it shows survives a reload", () => {
+    const r = rig();
+    expect(stored(r)).toEqual({ enabled: false, port: DEFAULT_PORT, token: FRESH });
+    expect(rig({ saved: { enabled: false, port: 5000, token: TOKEN } }).control.settings.token).toBe(TOKEN);
+  });
+
+  test("the real token is 32 hex digits and differs per page", () => {
+    expect(randomToken()).toMatch(/^[0-9a-f]{32}$/);
+    expect(randomToken()).not.toBe(randomToken());
   });
 
   test("the pairing link fills the port and token and leaves the switch off", () => {
@@ -72,6 +86,7 @@ describe("the switch", () => {
 
   test("it does nothing without a token", () => {
     const r = rig();
+    r.control.setToken("");
     r.control.enable();
     expect(status(r)).toBe("off");
     expect(r.runtime.starts).toBe(0);
@@ -134,9 +149,9 @@ describe("the switch", () => {
     ["not JSON", "{oops"],
     ["a null record", "null"],
     ["the wrong types", JSON.stringify({ enabled: "yes", port: "5000", token: 7 })],
-  ])("a saved record that is %s gives the defaults", (_name, saved) => {
+  ])("a saved record that is %s gives the defaults and a new token", (_name, saved) => {
     const r = rig({ saved });
-    expect(r.control.settings).toEqual({ enabled: false, port: DEFAULT_PORT, token: "" });
+    expect(r.control.settings).toEqual({ enabled: false, port: DEFAULT_PORT, token: FRESH });
   });
 
   test("a saved port out of range is replaced by the default and the rest is kept", () => {

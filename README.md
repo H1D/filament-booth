@@ -31,51 +31,34 @@ and start photos in the open booth tab by writing Blender Python. The agent talk
 The tab connects to that bridge on `127.0.0.1` after you turn a switch on. Nothing leaves your
 computer.
 
-1. Install the dependencies and start the app.
+1. Open the booth at <https://booth.artems.net> in Chrome or Edge and go to **Setup → Agent**. The
+   page makes its own token and shows one command with it. Copy it and run it in the folder you
+   want the agent to work in. It needs Node.js.
 
    ```sh
-   bun install
-   bun run dev        # http://localhost:5173
+   claude mcp add booth -- npx -y filament-booth --token <token>
    ```
 
-2. Register the bridge with your agent, in the project folder you will ask it from. Use the absolute
-   path of this checkout.
+   For Codex or Cursor, add an MCP server that runs the part after `--`:
 
-   ```sh
-   claude mcp add booth -- bun /path/to/filament-booth/tools/agent/bridge.ts
+   ```toml
+   # ~/.codex/config.toml
+   [mcp_servers.booth]
+   command = "npx"
+   args = ["-y", "filament-booth", "--token", "<token>"]
    ```
 
    Each agent session starts its own bridge, and one bridge holds the port at a time. Registering
    the bridge for every project (`--scope user`) lets an unrelated session hold the port, and the
    session you are working in then reports that the port is busy.
 
-   Codex reads `~/.codex/config.toml`.
+2. Start the agent in that folder.
 
-   ```toml
-   [mcp_servers.booth]
-   command = "bun"
-   args = ["/path/to/filament-booth/tools/agent/bridge.ts"]
-   ```
-
-   Cursor reads `~/.cursor/mcp.json`.
-
-   ```json
-   { "mcpServers": { "booth": { "command": "bun", "args": ["/path/to/filament-booth/tools/agent/bridge.ts"] } } }
-   ```
-
-3. Print the pairing link and open it in Chrome or Edge.
-
-   ```sh
-   bun tools/agent/bridge.ts --pair
-   #   Filament booth bridge
-   #     port   47615
-   #     token  9c1e47a0d2b35f86e4a1
-   #     link   http://localhost:5173/#agent=47615.9c1e47a0d2b35f86e4a1
-   ```
-
-   The page stores the port and token, removes them from the address bar, and opens the **Agent**
-   section below **Setup**. If the agent calls a tool and no tab pairs within 15 seconds, the tool
-   result contains the same link.
+3. Running the booth from this checkout instead (`bun install && bun run dev`, then
+   <http://localhost:5173>)? The command the page shows works there too. To run the bridge from
+   source, register `bun /path/to/filament-booth/tools/agent/bridge.ts` instead. Without
+   `--token` it keeps its own token in `~/.config/filament-booth/bridge.json`, and
+   `bun tools/agent/bridge.ts --pair` prints a link that gives that token to the page.
 
 4. Turn on **Allow a local agent to control this tab**. The status line reads "Starting Python…",
    then "Waiting for the bridge on port 47615", then "Connected". While the switch is on, an
@@ -107,20 +90,26 @@ reads and writes only inside that folder and the folders you pass with `--allow`
 
 ### Options
 
-`bun tools/agent/bridge.ts` takes these flags. The agent's MCP config can pass them as arguments.
+`npx -y filament-booth` and `bun tools/agent/bridge.ts` take these flags. The agent's MCP config can
+pass them as arguments.
 
+- `--token <t>` uses the token the page shows. Without it the bridge uses the one in `bridge.json`.
 - `--port <n>` listens on this port instead of the one in `bridge.json`.
 - `--app <origin>` accepts a page served from another origin, for example `http://localhost:4173`
-  for `bun run preview`. The first `--app` is also the base of the pairing link.
+  for `bun run preview`. `https://booth.artems.net` and `http://localhost:5173` need no flag. The first `--app` is also the base of the pairing link.
 - `--allow <dir>` lets scripts read and write one more folder.
 
-The token and default port are in `~/.config/filament-booth/bridge.json`, mode 600, created on first
-start. Set `FILAMENT_BOOTH_CONFIG_DIR` to use another folder. If the port is busy, another agent
+Without `--token`, the token and default port are in `~/.config/filament-booth/bridge.json`, mode
+600, created on first start. Set `FILAMENT_BOOTH_CONFIG_DIR` to use another folder. If the port is busy, another agent
 session's bridge holds it. Start this bridge with `--port <n>`, then run
 `bun tools/agent/bridge.ts --pair --port <n>` for a link that carries that port.
 
-The connection was tested from `localhost` origins in Chromium. A page on a public HTTPS origin may
-be blocked from connecting to `ws://127.0.0.1`, and Firefox and Safari are untested.
+The connection was tested from `localhost` origins in Chromium. Chrome may ask to allow
+booth.artems.net to reach devices on your local network the first time the switch connects. Firefox
+and Safari are untested.
+
+`bun run bridge:build` bundles the bridge for Node into `packages/bridge/bridge.mjs`, which is what
+the `filament-booth` npm package ships. Publish it with `npm publish` from `packages/bridge`.
 
 ## Checks
 

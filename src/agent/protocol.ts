@@ -255,14 +255,40 @@ export function parseBridgeMessage(json: unknown): BridgeMessage {
   }
 }
 
+/** The npm package that runs the bridge with Node: `npx -y filament-booth`. */
+export const BRIDGE_PACKAGE = "filament-booth";
+/** Where the booth is hosted. The pairing link starts here unless the bridge gets --app. */
+export const BOOTH_URL = "https://booth.artems.net/";
+/** Origins the bridge accepts without --app: the hosted booth and the dev server. */
+export const BRIDGE_ORIGINS: readonly string[] = [new URL(BOOTH_URL).origin, "http://localhost:5173", "http://127.0.0.1:5173"];
+/** The spelling of a token, the same on both sides. */
+export const TOKEN_PATTERN = /^[A-Za-z0-9_-]{8,128}$/;
+
+/**
+ * The one line a user pastes into a terminal to give their agent this tab:
+ * it registers the bridge with Claude Code, carrying this page's token, and
+ * the port and origin only when they are not the defaults.
+ */
+export function bridgeArgs({ port, token, origin }: { readonly port: number; readonly token: string; readonly origin: string }): string[] {
+  return [
+    "-y", BRIDGE_PACKAGE, "--token", token,
+    ...(port === DEFAULT_PORT ? [] : ["--port", String(port)]),
+    ...(BRIDGE_ORIGINS.includes(origin) ? [] : ["--app", origin]),
+  ];
+}
+
+export function bridgeCommand(page: Parameters<typeof bridgeArgs>[0]): string {
+  return `claude mcp add booth -- npx ${bridgeArgs(page).join(" ")}`;
+}
+
 /** The pairing link's hash, `#agent=<port>.<token>`. One spelling, written by the bridge and read by the page. */
 export function pairingHash(port: number, token: string): string {
   return `#agent=${port}.${token}`;
 }
 
 export function parsePairingHash(hash: string): { readonly port: number; readonly token: string } | null {
-  const match = /^#agent=(\d{1,5})\.([A-Za-z0-9_-]{8,128})$/.exec(hash);
-  if (match === null) return null;
+  const match = /^#agent=(\d{1,5})\.([A-Za-z0-9_-]+)$/.exec(hash);
+  if (match === null || !TOKEN_PATTERN.test(match[2]!)) return null;
   const port = Number(match[1]);
   return port >= 1 && port <= 65535 ? { port, token: match[2]! } : null;
 }

@@ -15,6 +15,7 @@
     "agent:e2e": "bun tools/agent/e2e.ts",
     "e2e": "bun tools/e2e/drive.ts",
     "agent": "bun tools/agent/bridge.ts",
+    "bridge:build": "bun build tools/agent/cli.ts --target=node --format=esm --outfile packages/bridge/bridge.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

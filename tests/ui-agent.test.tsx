@@ -67,6 +67,7 @@ function typeInto(el: HTMLInputElement, value: string, key = "Enter"): void {
 }
 
 const statusOf = (container: HTMLElement): string => container.querySelector(".agent-status")?.textContent ?? "";
+const commandOf = (container: HTMLElement): string => container.querySelector(".agent-command code")?.textContent ?? "";
 
 function button(container: HTMLElement, name: string): HTMLButtonElement {
   const el = [...container.querySelectorAll("button")].find((b) => b.textContent?.trim() === name);
@@ -75,13 +76,28 @@ function button(container: HTMLElement, name: string): HTMLButtonElement {
 }
 
 describe("the Agent section", () => {
-  test("with no pairing the switch is off and cannot be turned on, and the status says how to pair", () => {
+  test("a fresh page shows the one command to run, with its own token, and the switch off but available", () => {
     const { container, runtime } = mount(<AgentPanel />);
     expect(switchInput(container).checked).toBe(false);
-    expect(switchInput(container).disabled).toBe(true);
-    expect(statusOf(container)).toContain("bun tools/agent/bridge.ts --pair");
+    expect(switchInput(container).disabled).toBe(false);
+    expect(statusOf(container)).toBe("Off. Run the command below, then turn the switch on");
+    expect(commandOf(container)).toBe("claude mcp add booth -- npx -y filament-booth --token fresh-token-0001 --app " + location.origin);
     expect(inputByLabel(container, "Port").value).toBe(String(DEFAULT_PORT));
     expect(runtime.starts).toBe(0);
+  });
+
+  test("the command carries a port that is not the default", () => {
+    const { container, agent } = mount(<AgentPanel />);
+    act(() => { agent.setPort(5000); });
+    expect(commandOf(container)).toContain("--token fresh-token-0001 --port 5000");
+  });
+
+  test("with the token cleared there is no command and the switch cannot be turned on", () => {
+    const { container, agent } = mount(<AgentPanel />);
+    act(() => { agent.setToken(""); });
+    expect(container.querySelector(".agent-command")).toBeNull();
+    expect(switchInput(container).disabled).toBe(true);
+    expect(statusOf(container)).toBe("Off. Enter a token under Port and token");
   });
 
   test("a pairing fills the port and a masked token and leaves the switch off but available", () => {
@@ -92,7 +108,8 @@ describe("the Agent section", () => {
     expect(inputByLabel(container, "Token").type).toBe("password");
     expect(switchInput(container).checked).toBe(false);
     expect(switchInput(container).disabled).toBe(false);
-    expect(statusOf(container)).toBe("Off");
+    expect(statusOf(container)).toBe("Off. Run the command below, then turn the switch on");
+    expect(commandOf(container)).toContain(`--token ${TOKEN} --port 5000`);
     expect(runtime.starts).toBe(0);
     expect(sockets.all).toHaveLength(0);
   });
@@ -154,7 +171,7 @@ describe("the Agent section", () => {
 
   test("the privacy note says what a connected agent can do and where the page connects", () => {
     const { container } = mount(<AgentPanel />);
-    const note = container.querySelector(".note")?.textContent ?? "";
+    const note = [...container.querySelectorAll(".note")].map((n) => n.textContent).join(" ");
     expect(note).toContain("change every setting");
     expect(note).toContain("open files from the folder it runs in");
     expect(note).toContain("save photos to it");

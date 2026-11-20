@@ -189,6 +189,7 @@ try {
     await page.waitForSelector(".app");
     expect(new URL(page.url()).hash === "", `the address bar still has ${new URL(page.url()).hash}`);
     expect(await page.locator('details.section[data-section="agent"]').getAttribute("open") !== null, "the Agent section is closed");
+    await page.locator(".agent details.fold").evaluate((fold) => { (fold as HTMLDetailsElement).open = true; });
     const [port, token] = [await page.getByRole("textbox", { name: "Port" }).inputValue(), await page.getByRole("textbox", { name: "Token" }).inputValue()];
     expect(port === String(bridgePort) && /^[0-9a-f]{32}$/.test(token), `port ${port}, token ${token}`);
     expect(await page.getByRole("switch", { name: /control this tab/ }).isChecked() === false, "the switch is on");

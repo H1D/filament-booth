@@ -425,6 +425,9 @@ progress:indeterminate::-webkit-progress-bar {
 
 .agent { display: grid; gap: 0.5rem; }
 .agent-status { max-width: 60ch; overflow-wrap: anywhere; }
+.agent-command { display: flex; gap: 0.5rem; align-items: start; padding: 0.5rem 0.6rem; border: 1px solid var(--line-soft); border-radius: var(--radius); background: var(--bg); }
+.agent-command code { flex: 1; min-width: 0; font-size: 0.8rem; overflow-wrap: anywhere; user-select: all; }
+.agent-command .btn { flex: none; }
 .agent-badge { anchor-name: --agent-badge; }
 .agent-badge .dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--text-faint); }
 .agent-badge[data-status="connected"] .dot { background: var(--accent); }
