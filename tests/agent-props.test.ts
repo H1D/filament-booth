@@ -188,6 +188,19 @@ describe("importing an STL as a prop", () => {
     expect(b).toMatchObject({ name: "battery.001", size: [0.5, 0.5, 0.5] });
   });
 
+  test("after a reload, importing the same file again brings the saved prop back and adds nothing", async () => {
+    const before = rig();
+    ok(await before.opAsync("booth.prop_import", { filepath: "props/battery.stl" }));
+    const after = rig();
+    after.booth.importJson(before.booth.exportJson());
+    ok(after.set("prop:prop-1", "PropObject", "name", "Saved battery"));
+    expect(after.booth.scene.props).toEqual([]);
+    ok(await after.opAsync("booth.prop_import", { filepath: "props/battery.stl" }));
+    expect(after.booth.doc.props.map((p) => p.name)).toEqual(["Saved battery"]);
+    expect(after.booth.scene.props.map((p) => p.id)).toEqual(["prop-1"]);
+    expect(after.active()).toEqual({ struct: "prop:prop-1", type: "PropObject" });
+  });
+
   test("a missing file or another format is a RuntimeError that names it", async () => {
     const r = rig();
     expect(err(await r.opAsync("booth.prop_import", { filepath: "props/nothing.stl" })).message).toContain("cannot read props/nothing.stl");

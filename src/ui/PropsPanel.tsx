@@ -21,6 +21,11 @@ const AXES = [["X", 0], ["Y", 1], ["Z", 2]] as const;
 type PropPatch = Parameters<typeof patchProp>[1];
 
 
+/** A plane from the menu stands up as a wall behind the part, facing the camera: lying flat it would sit in the floor. */
+const UPRIGHT_PLANE: Parameters<typeof addProp>[1] = {
+  location: [m(0), m(0.1), m(0.1)], rotationDeg: [deg(90), deg(0), deg(0)],
+};
+
 const stem = (fileName: string): string => fileName.replace(/\.stl$/i, "");
 
 export function PropsPanel() {
@@ -90,7 +95,7 @@ export function PropsPanel() {
       <div id={menuId} ref={menu} popover="auto" aria-label="Add a prop" className="add-menu">
         <div className="group">
           {PRIMITIVES.map((shape) => (
-            <button key={shape} type="button" className="btn quiet" onClick={() => { menu.current?.hidePopover(); add(shape); }}>
+            <button key={shape} type="button" className="btn quiet" onClick={() => { menu.current?.hidePopover(); add(shape, shape === "plane" ? UPRIGHT_PLANE : {}); }}>
               {SHAPE_LABELS[shape]}
             </button>
           ))}

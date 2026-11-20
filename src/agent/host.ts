@@ -362,7 +362,8 @@ export class AgentHost {
     this.#session = { ...this.#session, active: propHandle(id) };
   }
 
-  async #readPropMesh(io: JobIo, where: string, path: string): Promise<{ mesh: string; name: string }> {
+  async #readPropMesh(io: JobIo, where: string, path: string): Promise<{ mesh: string; name: string; reconnected: boolean }> {
+    const { booth } = this.#ports;
     const name = path.split(/[\\/]/).pop() ?? path;
     if (!/\.stl$/i.test(name)) throw new HostError("RuntimeError", `${where} reads .stl files, not ${name}`);
     io.progress(`reading ${name}`, null);
@@ -374,11 +375,20 @@ export class AgentHost {
       throw new HostError("RuntimeError", `${where}: cannot read ${path}: ${errorText(e)}`);
     }
     const bytes = await untilAborted(file.arrayBuffer(), io.signal);
+    // Meshes saved props name but this session has not loaded: a reload left them hidden.
+    const missing = new Set(booth.doc.props.flatMap((p) => (p.mesh !== null && booth.propMesh(p.mesh) === null ? [p.mesh] : [])));
+    let mesh: string;
     try {
-      return { mesh: this.#ports.booth.addPropMesh(name, bytes), name };
+      mesh = booth.addPropMesh(name, bytes);
     } catch (e) {
       throw new HostError("RuntimeError", `${where}: ${name}: ${errorText(e)}`);
     }
+    const back = missing.has(mesh) ? booth.doc.props.find((p) => p.mesh === mesh) : undefined;
+    if (back !== undefined) {
+      this.#session = { ...this.#session, active: propHandle(back.id) };
+      io.print(`${where}: ${name} brought back the saved props that name it; nothing was added.\n`);
+    }
+    return { mesh, name, reconnected: back !== undefined };
   }
 
   async #open(io: JobIo, where: string, path: string, accept: "stl" | "gcode"): Promise<void> {

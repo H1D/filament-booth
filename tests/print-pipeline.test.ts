@@ -248,7 +248,7 @@ describe("PrintPipeline against a worker that answers when told", () => {
       const id = w.requests[0].id;
       w.reply({ id, kind: "opened", sliced: done.sliced, mesh: { ...done.mesh } });
       const { mesh } = await opening;
-      const scene = { part: { mesh }, film: { width: 8, height: 5 } } as unknown as Scene;
+      const scene = { part: { mesh }, film: { width: 8, height: 5 }, props: [] } as unknown as Scene;
       let fit: unknown = null;
       const fits = cyclesEngine().fits(scene).then((f) => { fit = f; });
       await new Promise((resolve) => setTimeout(resolve, 20));

@@ -91,7 +91,9 @@ export function cyclesEngine(options: CyclesEngineOptions = {}): PhotoEngine {
       if (machine !== true) return machine;
       // A photo right after a load waits the moment it takes for the faces no ray reaches.
       if (scene.part) await hiddenFacesSettled(scene.part.mesh);
-      const need = estimateHeapBytes(scene.part ? visibleTriangles(scene.part.mesh) : 0, scene.film.width * scene.film.height);
+      // Props count as part triangles: each gets its own mesh (uploadProps), and an imported STL can be large.
+      const props = scene.props.reduce((n, p) => n + p.geometry.index.length / 3, 0);
+      const need = estimateHeapBytes((scene.part ? visibleTriangles(scene.part.mesh) : 0) + props, scene.film.width * scene.film.height);
       return need <= HEAP_LIMIT_BYTES
         ? true
         : { reason: `needs about ${(need / 1e9).toFixed(1)} GB, over the 4 GB WebAssembly limit` };

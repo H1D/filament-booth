@@ -1331,8 +1331,11 @@ export interface OpHost {
   open(path: string, accept: "stl" | "gcode"): Promise<void>;
   /** Adds a prop in one booth.update and makes it bpy.context.object. `fields` are document values. */
   addProp(shape: PropShape, fields: Partial<Omit<StudioProp, "id" | "shape">>): void;
-  /** Reads an STL from the agent's machine and returns its prop mesh id (Booth.addPropMesh) and the file's name. */
-  readPropMesh(path: string): Promise<{ readonly mesh: string; readonly name: string }>;
+  /**
+   * Reads an STL from the agent's machine and returns its prop mesh id (Booth.addPropMesh) and the file's name.
+   * `reconnected` is true when saved props named the mesh but it was not loaded: they show again, and the first is bpy.context.object.
+   */
+  readPropMesh(path: string): Promise<{ readonly mesh: string; readonly name: string; readonly reconnected: boolean }>;
   /** Takes a photo through the photo card, as PHOTO does. */
   photo(writeStill: boolean): Promise<OpResult>;
   /** A raster render of the current setup at a small size. */
@@ -1499,7 +1502,7 @@ export const OPS: { readonly [K in OpName]: OpDef } = {
     },
   },
   "mesh.primitive_uv_sphere_add": {
-    doc: `Adds a UV sphere prop. It has segments / 2 rings. Smooth above 12 segments. ${ADD_DOC}`,
+    doc: `Adds a UV sphere prop. It has segments / 2 rings: ring_count may be that or its default 16, which then means segments / 2. Smooth above 12 segments. ${ADD_DOC}`,
     params: { segments: numberParam(32, true, true), ring_count: numberParam(16, true, true), radius: numberParam(1), ...PLACE_PARAMS },
     run: (args, host) => {
       const segments = num(args.segments), rings = num(args.ring_count);
@@ -1522,11 +1525,12 @@ export const OPS: { readonly [K in OpName]: OpDef } = {
   },
   "booth.prop_import": {
     doc: "Imports an STL from the agent's machine as a prop beside the part, not as the part. Read in millimetres, as the part is, and shaded flat; " +
-      "its origin is the middle of its base, so location z = 0 stands it on the floor. global_scale multiplies its size. Importing the same file again " +
-      "reconnects props that name it after a page reload. A relative path or // is the agent's folder.",
+      "its origin is the middle of its base, so location z = 0 stands it on the floor. global_scale multiplies its size. After a page reload, importing " +
+      "the same file again brings back the saved props that name it, adds nothing, and makes the first of them bpy.context.object. A relative path or // is the agent's folder.",
     params: { filepath: PATH, global_scale: numberParam(1), location: vectorParam(3), rotation: vectorParam(3) },
     run: async (args, host): Promise<OpResult> => {
-      const { mesh, name } = await host.readPropMesh(String(args.filepath));
+      const { mesh, name, reconnected } = await host.readPropMesh(String(args.filepath));
+      if (reconnected) return "FINISHED";
       const k = num(args.global_scale);
       host.addProp("mesh", { ...addedAt({ ...args, scale: null }, [k, k, k]), mesh, name: name.replace(/\.stl$/i, "") });
       return "FINISHED";

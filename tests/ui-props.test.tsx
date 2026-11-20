@@ -95,6 +95,8 @@ describe("adding props", () => {
     for (const name of ["Cube", "Cylinder", "Sphere", "Plane"]) act(() => { button(container, name).click(); });
     expect(booth.doc.props.map((p) => p.shape)).toEqual(["cube", "cylinder", "sphere", "plane"]);
     expect(booth.doc.props.map((p) => p.name)).toEqual(["Cube", "Cylinder", "Sphere", "Plane"]);
+    // A plane stands up behind the part as a wall: lying at z = 0 it would sit in the floor.
+    expect(booth.doc.props[3]).toMatchObject({ rotationDeg: [90, 0, 0], location: [0, 0.1, 0.1] });
     const last = container.querySelector('details[data-prop="prop-4"]');
     expect(last?.hasAttribute("open")).toBe(true);
     expect(container.querySelectorAll("ul[aria-label='Props'] > li")).toHaveLength(4);
