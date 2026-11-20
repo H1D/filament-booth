@@ -14,7 +14,7 @@ components[17]{name,type,path,responsibility}:
   compileScene,compiler,src/scene.ts,document plus print to an immutable Scene in Blender's frame
   Viewport,renderer,src/viewport/viewport.ts,live WebGPU preview and jittered accumulation
   PhotoDesk,service,src/photo/photo.ts,runs one photo through Cycles then raster as fallback
-  cyclesEngine,renderer,src/photo/cycles.ts,Cycles wasm in a fresh worker per render
+  cyclesEngine,renderer,src/photo/cycles.ts,Cycles wasm in a worker kept 2 min for a photo that changes only camera or film
   rasterEngine,renderer,src/photo/raster.ts,fallback photo over Viewport.accumulate
   film,util,src/film.ts,AgX tone map and PNG encode shared by both engines and the preview
   UI,view,src/ui/wire.ts,React rail wired to Booth and the viewport and the photo desk
@@ -32,7 +32,7 @@ components[17]{name,type,path,responsibility}:
 3. A control calls `booth.update(mutate)`. `Booth` clones the document, applies the edit, validates, schedules a save and bumps its private revision.
 4. `Booth` calls `compileScene(doc, print, docRev, previous)`. Unchanged sections keep their identity.
 5. Subscribers get the new `Scene`. `Viewport.show(scene)` updates only the sections whose identity changed.
-6. PHOTO calls `PhotoDesk.take(scene, partName)`. The Cycles engine uploads the scene to a fresh worker, samples, and streams passes. The desk shows a refining image and stops at the sample target or the time limit.
+6. PHOTO calls `PhotoDesk.take(scene, partName)`. The Cycles engine uploads the scene to a fresh worker, samples, and streams passes. A next photo within 2 min that changes only the camera or the film renders again in that worker, skipping the upload and the BVH build. The desk shows a refining image and stops at the sample target or the time limit.
 7. `film.develop` tone maps the linear frame with the baked AgX tables and encodes the PNG. The photo card offers Save.
 
 ## Agent Flow
@@ -51,7 +51,7 @@ When the user turns on Agent control, the tab loads Python and dials the bridge.
 - **Section identity**: change detection is `===` on `scene.part`, `lights`, `backdrop`, `world`, `camera`, `film`.
 - **One write path**: `booth.update` with mutators. No reducer, no intent union.
 - **One table per fact**: `BOUNDS` for limits, `BEAD_WORD` for vertex packing, `LayerTable` for shading numbers, `FILM_DEFAULTS` for render settings, `calibration.ts` for bead shape.
-- **Fresh worker per job**: one per slice, one per Cycles render, and a fresh Python interpreter after each cancel. Cancel is terminate.
+- **Fresh worker per job**: one per slice, one per Cycles scene setup (a photo that changes only the camera or film renders again in it), and a fresh Python interpreter after each cancel. Cancel is terminate.
 - **Ports and fakes**: `BoothDeps`, `PhotoEngine` and `PhotoTools` are injected, so tests and dev pages run without a GPU or wasm.
 - **Ground truth by script**: numbers that must match Blender are dumped from Blender by `tools/blender/` and tested against.
 

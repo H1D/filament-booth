@@ -48,7 +48,7 @@ Build switches that matter, all in `build_cycles.sh`:
 | `api/session.cpp` | Session, film, camera, render control, progressive pass snapshots |
 | `api/scene.cpp` | Meshes and attributes, the bead and backdrop materials, area lights, scrims, floor cards, world |
 | `src/photo/cycles-upload.ts` | Scene into the C API: per-vertex expansion, heap traffic, HDR decode, memory estimate |
-| `src/photo/cycles-worker.ts` | Hosts the module for one render |
+| `src/photo/cycles-worker.ts` | Hosts the module for one scene setup: a render, and renders again with a new camera or film |
 | `src/photo/cycles.ts` | `cyclesEngine(): PhotoEngine` |
 | `tools/blender/render_scene.py` | The same scene in native Blender 5.2.3 |
 | `tools/parity/` | Fixtures, the browser and Blender parity run |
@@ -61,11 +61,15 @@ from arithmetic, not from settings.
 
 ## Engine behaviour
 
-- One worker per render, terminated when it settles. A wasm heap never shrinks, so a long-lived
-  worker would keep the high-water mark of the largest part rendered (2.5 GiB at 10 million
-  triangles) for the life of the tab. A fresh worker returns it and recovers from a trap. The C
-  API supports several sessions in one module anyway: `tests/cycles-wasm.test.ts` renders three
-  in a row, and the heap stops growing after the second.
+- One worker per scene setup. A finished render's worker waits 2 min with its session; a photo
+  that changes only the camera or the film renders again there (`cb_session_again`), which keeps
+  every object, mesh and shader and so the BVH. Anything else terminates it and takes a fresh
+  worker: a wasm heap never shrinks, so a long-lived worker would keep the high-water mark of the
+  largest part rendered (2.5 GiB at 10 million triangles), and a fresh one recovers from a trap.
+  `tests/cycles-wasm.test.ts` checks that a render again equals a fresh session's pixel for pixel
+  across camera, size, sample count, transparency and depth of field, and after Finish. Cycles
+  only raises a session's sample count on its own, so `cb_film` sets it every render. The C API
+  supports several sessions in one module too: the heap stops growing after the second.
 - Abort with reason `"finish"` asks Cycles to stop after the batch of samples in flight. Cycles
   sizes a batch to about 1 s of work below 32 samples and 2 s above, so finish takes up to that
   long. It returns a frame in which every pixel has the same sample count.

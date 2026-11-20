@@ -27,7 +27,7 @@ files[11]{path,purpose}:
 - Callers never branch on the engine. A Cycles failure that is not a cancel falls through to raster.
 - A `Scene` is immutable, so edits after the press cannot reach a run.
 - One photo at a time. A new `take` cancels the one in flight and waits for its engine to stop.
-- Fresh worker per render. Cancel terminates it (about 135 ms).
+- A finished render's worker waits 2 min (`IDLE_MS`) with its Cycles session. A photo that changes only the camera or the film (the part, lights, backdrop and world are the same section objects, and the part's hidden faces have not come since) renders again there: no scene upload and no BVH build (`cb_session_again`). Anything else gets a fresh worker, which returns the heap. Cancel terminates the worker (about 135 ms).
 - `film.timeLimitS` caps the whole photo (0 means no limit, default 300 s). The desk enforces it, not the engines. When it runs out the desk stops sampling the way `finishNow()` does and develops the frame so far. It waits for the first pass, so a limit never gives an empty photo. One clock per photo, and a fallback engine inherits what is left.
 - `Photo.stoppedBy` says what ended sampling (`samples`, `time-limit` or `user`). `Photo.targetSamples` is what was asked for.
 - `film.denoise` (on by default) runs the denoiser on the final frame before developing. `Photo.denoising` is `denoised`, `off`, or `failed` with the reason. The card prints that reason. A failure (no WebGPU, no guides from the raster engine, a GPU error) develops the noisy frame.

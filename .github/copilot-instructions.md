@@ -41,7 +41,7 @@ One saved `BoothDocument` (plain JSON) is compiled by the pure function `compile
 | compileScene | `src/scene.ts` | The single lowering from document and print to `Scene`. Also `exportScene` |
 | Viewport | `src/viewport/` | Live three.js WebGPU preview, WebGL2 fallback, jittered accumulation |
 | PhotoDesk | `src/photo/photo.ts` | One photo at a time through Cycles, then raster as fallback |
-| Cycles engine | `src/photo/cycles*.ts`, `cycles/api/` | Cycles 5.2 CPU kernel in wasm, fresh worker per render |
+| Cycles engine | `src/photo/cycles*.ts`, `cycles/api/` | Cycles 5.2 CPU kernel in wasm, a worker per scene setup, kept 2 min for camera or film changes |
 | film | `src/film.ts` | Blender's AgX from baked tables, PNG encode |
 | UI | `src/ui/`, `src/App.tsx`, `src/main.tsx` | React 19 rail panels over `useSyncExternalStore` |
 | AgentControl | `src/agent/agent.ts` | The opt-in switch, one script at a time, the store the Agent panel reads |
@@ -62,7 +62,7 @@ One saved `BoothDocument` (plain JSON) is compiled by the pure function `compile
 - **Single lowering**: only `compileScene` turns settings into geometry, frames and watts.
 - **Section identity**: change detection is `===` on `scene.part`, `lights`, `backdrop`, `world`, `camera`, `film`.
 - **One table per fact**: `BOUNDS` (limits), `BEAD_WORD` (vertex packing), `LayerTable` (shading), `FILM_DEFAULTS` (render settings), `src/print/calibration.ts` (bead shape).
-- **Fresh worker per job**: one per slice, one per Cycles render. Cancel is terminate.
+- **Fresh worker per job**: one per slice, one per Cycles scene setup (a camera or film change renders again in it). Cancel is terminate.
 - **Ports and fakes**: `BoothDeps`, `PhotoEngine`, `PhotoTools` are injected. Each module has a dev page under `dev/`.
 - **Ground truth by script**: numbers that must match Blender are dumped from Blender by `tools/blender/`.
 - **Agent over the same write path**: a script's assignment is one `booth.update`, its render is `PhotoSession.take`, and its file access goes through the bridge. Nothing in `src/agent/` writes the document another way.
