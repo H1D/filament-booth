@@ -1,0 +1,10 @@
+[extend]
+useDefault = true
+
+# Fake pairing tokens used as fixtures by the agent bridge tests in tests/.
+[allowlist]
+description = "Test fixture tokens"
+regexes = [
+  '''^9c1e47a0d2b35f86e4a1$''',
+  '''^abcdefgh12345678$''',
+]
