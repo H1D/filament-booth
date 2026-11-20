@@ -202,7 +202,7 @@ describe("opening the fixture as a file", () => {
     const opened = await session.open(gcodeSource(MINI_GCODE), DEFAULT_SLICE, recordingJob());
     const stages: string[] = [];
     const lite = await session.lite(recordingJob(stages));
-    expect(stages).toEqual(["sweeping"]);
+    expect(stages).toEqual([]); // no reading, parsing or walls; it follows the open unasked, so no stage either
     expect(lite.tris).toBeLessThan(opened.mesh.tris);
     expect(lite.layerCount).toBe(opened.mesh.layerCount);
   });

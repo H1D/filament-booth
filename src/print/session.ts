@@ -7,12 +7,12 @@ import { DEFAULT_SLICE } from "../document";
 import type { SliceSettings } from "../document";
 import type { BeadMesh, Centreline, PrintSource, SlicedPrint } from "../print";
 import { fromBin, thin } from "./centreline";
-import { parse } from "./gcode";
+import { parse, type Toolpath } from "./gcode";
 import { readHeader } from "./header";
 import { sliceStl } from "./slicer";
 import { sweep } from "./sweep";
 import { gcodeFrom3mf, isZip } from "./threemf";
-import { tablesOf, wallsToCentreline } from "./toolpath";
+import { coverOfToolpath, tablesOf, wallsToCentreline } from "./toolpath";
 
 export type Stage = "reading" | "slicing" | "parsing" | "walls" | "sweeping";
 
@@ -28,6 +28,9 @@ interface Built {
   key: string;
   sliced: SlicedPrint;
   centreline: Centreline;
+  /** Kept until hidden() has worked out the flags; none for a prebuilt centreline. */
+  toolpath: Toolpath | null;
+  hidden?: Uint8Array | null;
 }
 
 export interface Opened {
@@ -62,11 +65,26 @@ export class PrintSession {
     return this.mesh(src, settings, job);
   }
 
+  /**
+   * Per triangle of the mesh open or reslice last sent, 1 where no ray can reach the face
+   * (cover.ts, BeadMesh.hidden); null for a prebuilt centreline. Worked out once, after which the
+   * toolpath it needed is let go.
+   */
+  hidden(): Uint8Array | null {
+    const built = this.built;
+    if (!built) return null;
+    if (built.hidden === undefined) {
+      const tp = built.toolpath;
+      built.hidden = tp ? sweep({ ...built.centreline, cover: coverOfToolpath(tp, built.sliced.layerHeightMm) }).hidden ?? null : null;
+      built.toolpath = null;
+    }
+    return built.hidden;
+  }
+
   /** The lite mesh sweeps the cached centreline: no parse, no slice. */
   async lite(job: Job): Promise<BeadMesh> {
     const built = this.built;
     if (!built) throw new Error("no print is loaded");
-    job.stage("sweeping");
     await job.checkpoint();
     return sweep(thin(built.centreline), true);
   }
@@ -94,7 +112,7 @@ export class PrintSession {
         layerTimeS: bin.layerTime, layerFan: bin.layerFan, filamentName: null, bedFromFile: null,
         note: "prebuilt centreline: its slicing settings are not recorded",
       };
-      return { key, sliced, centreline: bin.centreline };
+      return { key, sliced, centreline: bin.centreline, toolpath: null };
     }
     const bytes = await this.bytes;
     if (!bytes) throw new Error("the file could not be read");
@@ -120,6 +138,6 @@ export class PrintSession {
     job.stage("walls");
     await job.checkpoint();
     const centreline = wallsToCentreline(tp, sliced.layerHeightMm);
-    return { key, sliced: { ...sliced, ...tablesOf(tp) }, centreline };
+    return { key, sliced: { ...sliced, ...tablesOf(tp) }, centreline, toolpath: tp };
   }
 }
