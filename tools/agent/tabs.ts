@@ -74,6 +74,8 @@ export class TabServer {
   readonly #log: (line: string) => void;
   readonly #wss = new WebSocketServer({ noServer: true, maxPayload: MAX_FRAME_BYTES });
   #http: Server | null = null;
+  /** The bind in flight, so tool calls that arrive together share it rather than racing for the port. */
+  #binding: Promise<ListenResult> | null = null;
   #tab: Session | null = null;
   readonly #tabWaiters = new Set<() => void>();
 
@@ -86,10 +88,16 @@ export class TabServer {
   /**
    * Binds the port. Calling it again while bound is a no-op, and calling it
    * after a failure tries again: a busy port means another agent session's
-   * bridge holds it, which can end at any time.
+   * bridge holds it, which can end at any time. Calls made while a bind is
+   * in flight get its result.
    */
-  async listen(): Promise<ListenResult> {
-    if (this.#http !== null) return { ok: true, port: this.port };
+  listen(): Promise<ListenResult> {
+    if (this.#http !== null) return Promise.resolve({ ok: true, port: this.port });
+    this.#binding ??= this.#bind().finally(() => { this.#binding = null; });
+    return this.#binding;
+  }
+
+  async #bind(): Promise<ListenResult> {
     const http = createServer((_req, res) => {
       res.writeHead(404, { "content-type": "text/plain" }).end("Filament booth bridge: connect with a WebSocket.\n");
     });
@@ -240,7 +248,7 @@ export class TabServer {
 
   #onHello(session: Session, hello: Extract<TabMessage, { hello: unknown }>["hello"]): void {
     if (!sameSecret(hello.token, this.#opts.token)) {
-      this.#refuse(session, CLOSE.badToken, "wrong token: the agent's bridge was added with another token. Run claude mcp remove booth, then the command in this section again");
+      this.#refuse(session, CLOSE.badToken, "wrong token: the agent's bridge was added with another token. Run claude mcp remove booth, then the command in the Agent section again");
       return;
     }
     if (hello.protocol !== PROTOCOL) {

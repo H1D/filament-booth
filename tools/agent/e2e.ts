@@ -200,16 +200,21 @@ try {
     return `at ${page.url()}, port ${port}, token filled, status "${await agentStatus(page)}"`;
   });
 
-  await check("clicking the switch loads Python in its worker and connects to the bridge", async () => {
+  await check("clicking the switch loads Python and waits; the first tool call opens the bridge's port and the tab connects", async () => {
     const started = Date.now();
     await page.getByRole("switch", { name: /control this tab/ }).click();
-    await page.locator(".agent .agent-status", { hasText: "Connected" }).waitFor({ timeout: 90_000 });
+    // The bridge takes its port on the first tool call, so an idle agent session does not hold it.
+    await page.locator(".agent .agent-status", { hasText: "Waiting for the bridge" }).waitFor({ timeout: 90_000 });
     expect(pythonWorkers(page) === 1, `${pythonWorkers(page)} Python workers`);
-    const badge = await page.locator(".topbar .agent-badge").innerText();
-    expect(badge === "Agent connected", `badge: ${badge}`);
     const tools = (await client.listTools()).tools.map((t) => t.name).sort();
     expect(tools.join() === "booth_cancel,booth_python,booth_wait", `tools: ${tools.join()}`);
-    return `connected ${Date.now() - started} ms after the click, badge "${badge}", tools ${tools.join(", ")}`;
+    const waited = Date.now();
+    const first = reportOf(await tool("booth_python", { code: "import bpy\nprint('hi')", wait_s: 30 }, 60));
+    expect(first.state === "done" && first.output === "hi\n", `first call: ${first.state} ${JSON.stringify(first.output)}`);
+    await page.locator(".agent .agent-status", { hasText: "Connected" }).waitFor({ timeout: 5_000 });
+    const badge = await page.locator(".topbar .agent-badge").innerText();
+    expect(badge === "Agent connected", `badge: ${badge}`);
+    return `waiting ${waited - started} ms after the click; the first call connected and ran in ${Date.now() - waited} ms, badge "${badge}", tools ${tools.join(", ")}`;
   });
 
   await check("booth_python imports the STL, relights, sets the output and renders; booth_wait follows it to done", async () => {

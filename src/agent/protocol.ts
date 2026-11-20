@@ -266,7 +266,7 @@ export const TOKEN_PATTERN = /^[A-Za-z0-9_-]{8,128}$/;
 
 /**
  * The one line a user pastes into a terminal to give their agent this tab:
- * it registers the bridge with Claude Code, carrying this page's token, and
+ * it registers the bridge with Claude Code for every folder, carrying this page's token, and
  * the port and origin only when they are not the defaults.
  */
 export function bridgeArgs({ port, token, origin }: { readonly port: number; readonly token: string; readonly origin: string }): string[] {
@@ -279,7 +279,8 @@ export function bridgeArgs({ port, token, origin }: { readonly port: number; rea
 }
 
 export function bridgeCommand(page: Parameters<typeof bridgeArgs>[0]): string {
-  return `claude mcp add booth -- npx ${bridgeArgs(page).join(" ")}`;
+  // User scope: an agent session in any folder has the booth, including the fresh folder a T3 Code thread starts in.
+  return `claude mcp add --scope user booth -- npx ${bridgeArgs(page).join(" ")}`;
 }
 
 /**

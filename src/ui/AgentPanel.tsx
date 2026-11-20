@@ -108,7 +108,7 @@ export function AgentPanel() {
       {!TOKEN_PATTERN.test(settings.token) ? null : (
         <>
           <Copyable kind="command" text={bridgeCommand({ port: settings.port, token: settings.token, origin: location.origin })} />
-          <Note>Run it in the folder you work in, then start a new Claude Code session there. A session that was already running does not see the new server. It needs Node.js. If booth was added before, run <code>claude mcp remove booth</code> first. When Chrome asks to let this site reach devices on your local network, allow it: the bridge runs on this computer. For another agent, add an MCP server that runs the part after <code>--</code>.</Note>
+          <Note>Run it once in a terminal, then start a new Claude Code session in any folder. A session that was already running does not see the new server. Scripts can read and write the folder the session runs in. It needs Node.js. If booth was added before, run <code>claude mcp remove booth</code> in the folder you added it in first. When Chrome asks to let this site reach devices on your local network, allow it: the bridge runs on this computer. For another agent, add an MCP server that runs the part after <code>--</code>.</Note>
           <Note>Then ask the agent with this prompt, with your request in place of the part in angle brackets:</Note>
           <Copyable kind="prompt" text={AGENT_PROMPT} />
         </>

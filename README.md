@@ -32,11 +32,11 @@ The tab connects to that bridge on `127.0.0.1` after you turn a switch on. Nothi
 computer.
 
 1. Open the booth at <https://booth.artems.net> in Chrome or Edge and go to **Setup → Agent**. The
-   page makes its own token and shows one command with it. Copy it and run it in the folder you
-   want the agent to work in. It needs Node.js.
+   page makes its own token and shows one command with it. Copy it and run it once in a terminal.
+   It needs Node.js.
 
    ```sh
-   claude mcp add booth -- npx -y filament-booth --token <token>
+   claude mcp add --scope user booth -- npx -y filament-booth --token <token>
    ```
 
    For Codex or Cursor, add an MCP server that runs the part after `--`:
@@ -51,20 +51,21 @@ computer.
    `claude mcp add` keeps an existing `booth` server as it was. If you added one before, with
    another token, port or the `bun` command, run `claude mcp remove booth` first.
 
-   Each agent session starts its own bridge, and one bridge holds the port at a time. Registering
-   the bridge for every project (`--scope user`) lets an unrelated session hold the port, and the
-   session you are working in then reports that the port is busy.
+   Each agent session starts its own bridge, and one bridge holds the port at a time. A bridge
+   takes the port on its first booth tool call, so a session that never uses the booth leaves it
+   free. A session that has used it keeps it until it ends, and another then reports the port busy.
 
-2. Start the agent in that folder.
+2. Start a new agent session in the folder you want scripts to read and write.
 
 3. Running the booth from this checkout instead (`bun install && bun run dev`, then
    <http://localhost:5173>)? The command the page shows works there too. To run the bridge from
-   source, register `bun /path/to/filament-booth/tools/agent/bridge.ts` instead. Without
+   source, register `bun /path/to/filament-booth/tools/agent/bridge.ts` instead, also with `--scope user`. Without
    `--token` it keeps its own token in `~/.config/filament-booth/bridge.json`, and
    `bun tools/agent/bridge.ts --pair` prints a link that gives that token to the page.
 
 4. Turn on **Allow a local agent to control this tab**. The status line reads "Starting Python…",
-   then "Waiting for the bridge on port 47615", then "Connected". While the switch is on, an
+   then "Waiting for the bridge on port 47615", then "Connected" once the agent first uses a booth
+   tool: the bridge takes the port then. While the switch is on, an
    **Agent** badge shows in the top bar. Its popover has **Stop script** and **Turn off agent
    control**.
 

@@ -470,7 +470,7 @@ try {
     const status = await text(page, ".agent .agent-status");
     expect(status.includes("Run the command below"), `status: ${status}`);
     const command = await text(page, ".agent-command code");
-    expect(/^claude mcp add booth -- npx -y filament-booth --token [0-9a-f]{32}/.test(command), `command: ${command}`);
+    expect(/^claude mcp add --scope user booth -- npx -y filament-booth --token [0-9a-f]{32}/.test(command), `command: ${command}`);
     const note = (await page.locator('[data-section="agent"] .note').allTextContents()).join(" ");
     expect(/change every setting/.test(note) && /open files/.test(note) && /save photos/.test(note) && /only to 127\.0\.0\.1/.test(note), `note: ${note}`);
     expect(await page.locator(".topbar .agent-badge").count() === 0, "the badge shows while the switch is off");

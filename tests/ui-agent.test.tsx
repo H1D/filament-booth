@@ -81,7 +81,7 @@ describe("the Agent section", () => {
     expect(switchInput(container).checked).toBe(false);
     expect(switchInput(container).disabled).toBe(false);
     expect(statusOf(container)).toBe("Off. Run the command below, then turn the switch on");
-    expect(commandOf(container)).toBe("claude mcp add booth -- npx -y filament-booth --token fresh-token-0001 --app " + location.origin);
+    expect(commandOf(container)).toBe("claude mcp add --scope user booth -- npx -y filament-booth --token fresh-token-0001 --app " + location.origin);
     expect(inputByLabel(container, "Port").value).toBe(String(DEFAULT_PORT));
     expect(runtime.starts).toBe(0);
   });
