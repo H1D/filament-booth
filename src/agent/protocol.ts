@@ -282,6 +282,15 @@ export function bridgeCommand(page: Parameters<typeof bridgeArgs>[0]): string {
   return `claude mcp add booth -- npx ${bridgeArgs(page).join(" ")}`;
 }
 
+/**
+ * What the user says to the agent once the bridge is added. It names the tool,
+ * because an agent with a browser tool otherwise drives the page by clicking,
+ * which goes around the switch. The part in angle brackets is theirs to replace.
+ */
+export const AGENT_PROMPT =
+  "Use the booth MCP server (booth_python tool) to work in my Filament booth tab. Don't open the page in a browser or use DevTools. " +
+  "Start your first script with import bpy and print(bpy.booth.reference()). Then: <what you want, e.g. open part.stl from this folder, take a hero shot and a top view, and save the PNGs here>";
+
 /** The pairing link's hash, `#agent=<port>.<token>`. One spelling, written by the bridge and read by the page. */
 export function pairingHash(port: number, token: string): string {
   return `#agent=${port}.${token}`;
