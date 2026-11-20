@@ -28,8 +28,10 @@ interface Built {
   key: string;
   sliced: SlicedPrint;
   centreline: Centreline;
-  /** Kept until hidden() has worked out the flags; none for a prebuilt centreline. */
+  /** Kept until hidden() has worked out the cover bits; none for a prebuilt centreline. */
   toolpath: Toolpath | null;
+  /** Per centreline point (cover.ts), until hidden() has swept them into the flags. */
+  cover?: Uint8Array;
   hidden?: Uint8Array | null;
 }
 
@@ -70,14 +72,18 @@ export class PrintSession {
    * (cover.ts, BeadMesh.hidden); null for a prebuilt centreline. Worked out once, after which the
    * toolpath it needed is let go.
    */
-  hidden(): Uint8Array | null {
+  async hidden(job: Job): Promise<Uint8Array | null> {
     const built = this.built;
     if (!built) return null;
-    if (built.hidden === undefined) {
-      const tp = built.toolpath;
-      built.hidden = tp ? sweep({ ...built.centreline, cover: coverOfToolpath(tp, built.sliced.layerHeightMm) }).hidden ?? null : null;
-      built.toolpath = null;
+    if (built.hidden !== undefined) return built.hidden;
+    await job.checkpoint();
+    if (built.toolpath) {
+      built.cover = coverOfToolpath(built.toolpath, built.sliced.layerHeightMm);
+      built.toolpath = null; // before the sweep, which allocates a whole mesh again
+      await job.checkpoint();
     }
+    built.hidden = built.cover ? sweep({ ...built.centreline, cover: built.cover }).hidden ?? null : null;
+    built.cover = undefined;
     return built.hidden;
   }
 
@@ -94,6 +100,8 @@ export class PrintSession {
     let built = this.built?.key === key ? this.built : null;
     if (!built) {
       built = await this.build(src, settings, key, job);
+      // A superseded open must not leave its print where the newer one's lite mesh and faces read.
+      job.signal.throwIfAborted();
       this.built = built;
     }
     job.stage("sweeping");

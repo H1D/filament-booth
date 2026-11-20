@@ -140,8 +140,11 @@ export class Superseded extends Error {
 
 interface LiveJob {
   id: number;
+  source: PrintSource;
+  /** The pipeline's generation when the job began. */
+  generation: number;
   onStage: (stage: string) => void;
-  resolve: (reply: OpenedReply) => void;
+  resolve: (loaded: LoadedPrint) => void;
   reject: (error: Error) => void;
 }
 
@@ -150,6 +153,19 @@ interface Following {
   mesh: BeadMesh;
   resolveLite: (mesh: BeadMesh) => void;
   rejectLite: (error: Error) => void;
+  /** Ends the wait of hiddenFacesSettled, whether the flags came or not. */
+  settle: () => void;
+}
+
+const settling = new WeakMap<BeadMesh, Promise<void>>();
+
+/**
+ * Settles once the print worker has sent the hidden faces of `mesh` (BeadMesh.hidden), or will
+ * not: they follow the mesh by about 2 s on a large part. At once for a mesh the pipeline did not
+ * open. A photo waits for them: they save it more than that.
+ */
+export function hiddenFacesSettled(mesh: BeadMesh): Promise<void> {
+  return settling.get(mesh) ?? Promise.resolve();
 }
 
 /**
@@ -182,7 +198,7 @@ export class PrintPipeline {
     this.stopFollowing(new Superseded("a newer print replaced this one"));
     this.source = src;
     this.warm = true;
-    return this.load(src, await this.start((id) => ({ id, op: "open", src, settings }), onStage));
+    return this.start(src, (id) => ({ id, op: "open", src, settings }), onStage);
   }
 
   /** Only reachable when source.kind === "stl" — Booth enforces; the type
@@ -194,7 +210,7 @@ export class PrintPipeline {
     this.stopFollowing(new Superseded("a newer print replaced this one"));
     const resend = !this.warm; // the worker was lost: it has to be told the file again
     this.warm = true;
-    return this.load(src, await this.start((id) => (resend ? { id, op: "open", src, settings } : { id, op: "reslice", settings }), onStage));
+    return this.start(src, (id) => (resend ? { id, op: "open", src, settings } : { id, op: "reslice", settings }), onStage);
   }
 
   dispose(): void {
@@ -205,15 +221,16 @@ export class PrintPipeline {
     this.discardWorker();
   }
 
-  /** Runs before the worker's next message, so the follow-ups of this open find their place. */
-  private load(source: PrintSource, reply: OpenedReply): LoadedPrint {
-    const generation = this.generation, { mesh } = reply;
-    let resolveLite: (m: BeadMesh) => void = () => {}, rejectLite: (e: Error) => void = () => {};
+  /** Called in the "opened" message's own handler, so the follow-ups of the open find their place. */
+  private load(job: LiveJob, reply: OpenedReply): LoadedPrint {
+    const { generation } = job, { mesh } = reply;
+    let resolveLite: (m: BeadMesh) => void = () => {}, rejectLite: (e: Error) => void = () => {}, settle = () => {};
     const lite = new Promise<BeadMesh>((resolve, reject) => { resolveLite = resolve; rejectLite = reject; });
     lite.catch(() => {}); // no viewport may ever ask
-    this.following.set(reply.id, { mesh, resolveLite, rejectLite });
+    settling.set(mesh, new Promise<void>((resolve) => { settle = resolve; }));
+    this.following.set(reply.id, { mesh, resolveLite, rejectLite, settle });
     return {
-      source, sliced: reply.sliced, mesh,
+      source: job.source, sliced: reply.sliced, mesh,
       liteMesh: () => generation === this.generation ? lite : Promise.reject(new Superseded("a newer print replaced this one")),
     };
   }
@@ -221,22 +238,33 @@ export class PrintPipeline {
   private follow(reply: PrintReply, after: Following): void {
     if (reply.kind === "lite") after.resolveLite(reply.mesh);
     if (reply.kind === "hidden" && reply.hidden?.length === after.mesh.tris) after.mesh.hidden = reply.hidden;
-    if (reply.kind === "error") after.rejectLite(new Error(reply.message));
-    if (reply.kind === "hidden" || reply.kind === "error") this.following.delete(reply.id);
+    if (reply.kind === "error") {
+      // After the mesh only the lite mesh or the hidden faces can fail: the part stays on show.
+      console.error(`the print worker, after the mesh: ${reply.message}`);
+      after.rejectLite(new Error(reply.message));
+    }
+    if (reply.kind === "hidden" || reply.kind === "error") {
+      after.settle();
+      this.following.delete(reply.id);
+    }
   }
 
   private stopFollowing(error: Error): void {
-    for (const after of this.following.values()) after.rejectLite(error);
+    for (const after of this.following.values()) {
+      after.rejectLite(error);
+      after.settle();
+    }
     this.following.clear();
   }
 
-  private start(request: (id: number) => PrintRequest, onStage: (s: string) => void): Promise<OpenedReply> {
+  private start(source: PrintSource, request: (id: number) => PrintRequest, onStage: (s: string) => void): Promise<LoadedPrint> {
     this.job?.reject(new Superseded("a newer print request began"));
     this.job = null;
     const worker = this.worker ?? this.spawnWorker();
-    return new Promise<OpenedReply>((resolve, reject) => {
+    const generation = this.generation;
+    return new Promise<LoadedPrint>((resolve, reject) => {
       const id = this.nextId++;
-      this.job = { id, onStage, resolve, reject };
+      this.job = { id, source, generation, onStage, resolve, reject };
       try {
         worker.postMessage(request(id));
       } catch (err) {
@@ -254,7 +282,7 @@ export class PrintPipeline {
       if (!job || reply.id !== job.id) return; // late reply of a superseded job
       if (reply.kind === "stage") { job.onStage(reply.stage); return; }
       this.job = null;
-      if (reply.kind === "opened") job.resolve(reply);
+      if (reply.kind === "opened") job.resolve(this.load(job, reply));
       else job.reject(new Error(reply.kind === "error" ? reply.message : `the print worker answered an open with "${reply.kind}"`));
     };
     worker.onerror = (ev: ErrorEvent) => {
@@ -317,8 +345,9 @@ export function servePrint(port: Port): void {
       const lite = await session.lite(job);
       ctl.signal.throwIfAborted();
       send({ id: req.id, kind: "lite", mesh: lite }, meshBuffers(lite));
-      await job.checkpoint();
-      send({ id: req.id, kind: "hidden", hidden: session.hidden() }); // copied: the session keeps them for a re-open
+      const hidden = await session.hidden(job);
+      ctl.signal.throwIfAborted();
+      send({ id: req.id, kind: "hidden", hidden }); // copied: the session keeps them for a re-open
     } catch (err) {
       if (ctl.signal.aborted) return;
       send({ id: req.id, kind: "error", message: err instanceof Error ? err.message : String(err) });

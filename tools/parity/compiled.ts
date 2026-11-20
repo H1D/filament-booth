@@ -24,7 +24,7 @@ async function openGcode(text: string): Promise<LoadedPrint> {
   const job = { signal: new AbortController().signal, stage: () => {}, checkpoint: async () => {} };
   const session = new PrintSession();
   const { sliced, mesh } = await session.open(source, DEFAULT_SLICE, job);
-  const hidden = session.hidden(); // the worker sends these after the mesh; the photo leaves those faces out
+  const hidden = await session.hidden(job); // the worker sends these after the mesh; the photo leaves those faces out
   return { source, sliced, mesh: hidden ? { ...mesh, hidden } : mesh, liteMesh: async () => mesh };
 }
 
