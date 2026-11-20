@@ -26,7 +26,7 @@ if (root === null) throw new Error("panels.html has no #root");
 const ui = new Ui();
 const canvas = document.createElement("canvas");
 const booth = new Booth({ storage: localStorage, print: new FakePrint(), takePhoto: fakeTakePhoto });
-const photos = new PhotoSession(() => booth.takePhoto());
+const photos = new PhotoSession((sceneId) => booth.takePhoto(sceneId), undefined, () => booth.activeSceneId);
 const agent = agentControl({ booth, photos, viewport: null, storage: localStorage });
 const standIn = new StandInViewport(canvas, viewportEvents(booth, ui));
 connectViewport(booth, ui, standIn);

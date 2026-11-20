@@ -1,5 +1,5 @@
 import { describe, expect, expectTypeOf, test, vi } from "vitest";
-import { Booth, STORAGE_KEY, type BoothDeps, type PrintPort } from "../src/booth";
+import { Booth, SCENES_KEY, STORAGE_KEY, type BoothDeps, type PrintPort } from "../src/booth";
 import type { Schedule } from "../src/schedule";
 import { DocumentError, defaultDocument, deg, m, mm, type BoothDocument, type SliceSettings } from "../src/document";
 import { applyFilamentPreset, applyLook, focusAt, patchLight } from "../src/edits";
@@ -641,6 +641,193 @@ describe("takePhoto", () => {
     const rig = setup();
     expect(() => rig.booth.takePhoto()).toThrow(/Open a part/);
     expect(rig.photos).toHaveLength(0);
+  });
+});
+
+// ---- scenes --------------------------------------------------------------------
+
+describe("scenes", () => {
+  test("a fresh booth has one scene, on show", () => {
+    const { booth } = setup();
+    expect(booth.scenes).toEqual([{ id: booth.activeSceneId, name: "Scene 1" }]);
+  });
+
+  test("addScene shows a copy of the scene on show, and each scene keeps its own edits", () => {
+    const { booth, notified } = setup();
+    booth.update((d) => { d.camera.fStop = 4; });
+    const first = booth.activeSceneId;
+    const second = booth.addScene();
+    expect(booth.activeSceneId).toBe(second);
+    expect(booth.scenes.map((s) => s.name)).toEqual(["Scene 1", "Scene 2"]);
+    expect(booth.doc.camera.fStop).toBe(4);
+    booth.update((d) => { d.camera.fStop = 8; d.camera.azimuth = deg(90); });
+    notified.mockClear();
+    booth.switchScene(first);
+    expect(notified).toHaveBeenCalledTimes(1);
+    expect(booth.doc.camera.fStop).toBe(4);
+    booth.switchScene(second);
+    expect(booth.doc.camera.fStop).toBe(8);
+    expect(booth.doc.camera.azimuth).toBe(90);
+  });
+
+  test("switching keeps the sections two scenes share by reference, so the preview redraws only what differs", () => {
+    const { booth } = setup();
+    const first = booth.activeSceneId;
+    const filament = booth.doc.filament;
+    booth.addScene();
+    booth.update((d) => { d.camera.fStop = 9; });
+    const lights = booth.scene.lights;
+    booth.switchScene(first);
+    expect(booth.doc.filament).toBe(filament);
+    expect(booth.scene.lights).toBe(lights);
+  });
+
+  test("slicing is shared: a scene that comes on show takes the slicing in use, and switching does not re-slice", async () => {
+    const rig = setup();
+    await openPart(rig, binaryStl());
+    const first = rig.booth.activeSceneId;
+    rig.booth.addScene();
+    rig.booth.update((d) => { d.slicing.wallCount = 4; });
+    rig.clock.advance(300);
+    await untilCalls(rig, 2);
+    const opened = rig.print.calls[0].src;
+    if (opened === null) throw new Error("expected the open call first");
+    lastCall(rig).resolve(printFrom(opened));
+    await rig.booth.whenIdle();
+    const calls = callCount(rig);
+    rig.booth.switchScene(first);
+    expect(rig.booth.doc.slicing.wallCount).toBe(4);
+    rig.clock.advance(1000);
+    expect(callCount(rig)).toBe(calls);
+  });
+
+  test("names: renamed, trimmed, unique, never empty", () => {
+    const { booth } = setup();
+    const id = booth.addScene();
+    booth.renameScene(id, "  Side view ");
+    expect(booth.scenes.find((s) => s.id === id)?.name).toBe("Side view");
+    expect(rejection(() => { booth.renameScene(id, "   "); }).path).toBe("scene.name");
+    expect(rejection(() => { booth.renameScene(id, "Scene 1"); }).message).toMatch(/another scene/);
+    expect(booth.addScene()).not.toBe(id);
+    expect(booth.scenes.map((s) => s.name)).toEqual(["Scene 1", "Side view", "Scene 3"]);
+  });
+
+  test("a new scene goes right after the one on show", () => {
+    const { booth } = setup();
+    const first = booth.activeSceneId;
+    booth.addScene();
+    booth.switchScene(first);
+    booth.addScene();
+    expect(booth.scenes.map((s) => s.name)).toEqual(["Scene 1", "Scene 3", "Scene 2"]);
+  });
+
+  test("removing the scene on show shows its neighbour, and the last scene stays", () => {
+    const { booth } = setup();
+    const first = booth.activeSceneId;
+    booth.update((d) => { d.camera.fStop = 4; });
+    const second = booth.addScene();
+    booth.update((d) => { d.camera.fStop = 11; });
+    booth.switchScene(first);
+    booth.removeScene(first);
+    expect(booth.scenes.map((s) => s.id)).toEqual([second]);
+    expect(booth.activeSceneId).toBe(second);
+    expect(booth.doc.camera.fStop).toBe(11);
+    expect(rejection(() => { booth.removeScene(second); }).message).toMatch(/last scene/);
+  });
+
+  test("removing a scene not on show leaves the document alone", () => {
+    const { booth, notified } = setup();
+    const first = booth.activeSceneId;
+    const second = booth.addScene();
+    booth.switchScene(first);
+    const doc = booth.doc;
+    notified.mockClear();
+    booth.removeScene(second);
+    expect(booth.doc).toBe(doc);
+    expect(booth.scenes).toHaveLength(1);
+    expect(notified).toHaveBeenCalledTimes(1);
+  });
+
+  test("an unknown scene id is refused", () => {
+    const { booth } = setup();
+    expect(() => { booth.switchScene("nope"); }).toThrow(/no scene/);
+  });
+
+  test("every scene is framed on a freshly opened part, each keeping its own angle", async () => {
+    const rig = setup();
+    const first = rig.booth.activeSceneId;
+    rig.booth.addScene();
+    rig.booth.update((d) => { d.camera.azimuth = deg(120); d.camera.focusPartPoint = [m(0), m(0), m(0.01)]; });
+    rig.booth.switchScene(first);
+    const part = await openPart(rig, binaryStl(), 0.3);
+    const second = rig.booth.scenes[1].id;
+    rig.booth.switchScene(second);
+    expect(rig.booth.doc.camera.azimuth).toBe(120);
+    expect(rig.booth.doc.camera.focusPartPoint).toBeNull();
+    expect(rig.booth.doc.camera.distance).toBeCloseTo(framePart(part.mesh, rig.booth.doc.camera, rig.booth.doc.output.aspect).distance ?? 0);
+  });
+
+  test("the scene list and every scene's document survive a reload", () => {
+    const { booth, storage } = setup();
+    booth.update((d) => { d.camera.fStop = 4; });
+    const second = booth.addScene();
+    booth.renameScene(second, "Top");
+    booth.update((d) => { d.camera.fStop = 16; });
+    booth.flush();
+    const next = new Booth({ storage, print: new FakePrint(), takePhoto: () => stubRun });
+    expect(next.scenes).toEqual(booth.scenes);
+    expect(next.activeSceneId).toBe(second);
+    expect(next.doc.camera.fStop).toBe(16);
+    next.switchScene(next.scenes[0].id);
+    expect(next.doc.camera.fStop).toBe(4);
+  });
+
+  test("an edit to the scene on show writes only the document, not the scene list", () => {
+    const { booth, storage } = setup();
+    booth.addScene();
+    booth.flush();
+    storage.writes.length = 0;
+    booth.update((d) => { d.camera.fStop = 4; });
+    booth.flush();
+    expect(storage.writes).toHaveLength(1);
+  });
+
+  test("a saved scene that no longer parses is dropped, and a list without its active scene is ignored", () => {
+    const doc = defaultDocument();
+    const good = { id: "b", name: "B", doc };
+    const bad = { id: "c", name: "C", doc: { ...doc, camera: { ...doc.camera, focalMm: 2 } } };
+    const kept = new Booth({
+      storage: memoryStorage({ [SCENES_KEY]: JSON.stringify({ active: "a", scenes: [{ id: "a", name: "A", doc: null }, good, bad] }) }),
+      print: new FakePrint(), takePhoto: () => stubRun,
+    });
+    expect(kept.scenes.map((s) => s.name)).toEqual(["A", "B"]);
+    const orphan = new Booth({
+      storage: memoryStorage({ [SCENES_KEY]: JSON.stringify({ active: "z", scenes: [good] }) }),
+      print: new FakePrint(), takePhoto: () => stubRun,
+    });
+    expect(orphan.scenes.map((s) => s.name)).toEqual(["Scene 1"]);
+  });
+
+  test("takePhoto of another scene compiles that scene without showing it, and names the photo after it", async () => {
+    const rig = setup();
+    await openPart(rig, binaryStl("clip.stl"));
+    const first = rig.booth.activeSceneId;
+    const second = rig.booth.addScene();
+    rig.booth.renameScene(second, "Top");
+    rig.booth.update((d) => { d.camera.elevation = deg(80); d.output.samples = 7; });
+    rig.booth.switchScene(first);
+    const shown = rig.booth.scene;
+    rig.booth.takePhoto(second);
+    expect(rig.booth.scene).toBe(shown);
+    const taken = rig.photos[0];
+    expect(taken.name).toBe("clip Top");
+    expect(taken.scene.film.samples).toBe(7);
+    expect(taken.scene.camera).not.toBe(shown.camera);
+    expect(taken.scene.part).toBe(shown.part);
+    expect(taken.scene.lights).toBe(shown.lights);
+    rig.booth.takePhoto();
+    expect(rig.photos[1].scene).toBe(shown);
+    expect(rig.photos[1].name).toBe("clip Scene 1");
   });
 });
 

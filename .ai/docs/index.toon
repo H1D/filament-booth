@@ -1,7 +1,7 @@
 project: filament-booth
 type: typescript/browser-app
 framework: react+three.js+vite
-updated: 2026-11-20
+updated: 2026-11-21
 
 features[9]{name,path,status,layer}:
   booth,.ai/docs/features/booth.md,stable,frontend

@@ -146,4 +146,57 @@ describe("PhotoSession", () => {
     expect(revoked.sort()).toEqual(["u1", "u2"]);
     expect(session.state.get().shots).toHaveLength(0);
   });
+
+  test("a photo is filed under its scene, and byScene keeps the newest of each", () => {
+    const runs: ScriptedRun[] = [];
+    let active = "a";
+    const started: (string | undefined)[] = [];
+    const session = new PhotoSession((id) => { started.push(id); const r = new ScriptedRun(); runs.push(r); return r; },
+      { create: () => "u", revoke: () => {} }, () => active);
+    session.take();
+    runs[0].emit({ state: "done", photo: photo(1) });
+    active = "b";
+    session.take("a");
+    runs[1].emit({ state: "done", photo: photo(2) });
+    session.take();
+    runs[2].emit({ state: "done", photo: photo(3) });
+    expect(started).toEqual([undefined, "a", undefined]);
+    const s = session.state.get();
+    expect(s.shots.map((x) => x.sceneId)).toEqual(["a", "a", "b"]);
+    expect([...s.byScene].map(([id, p]) => [id, p.fileName])).toEqual([["a", "part_2.png"], ["b", "part_3.png"]]);
+  });
+
+  test("takeAll photographs each scene in turn, and a failure moves on", () => {
+    const runs: ScriptedRun[] = [];
+    const started: (string | undefined)[] = [];
+    const session = new PhotoSession((id) => {
+      started.push(id);
+      if (id === "gone") throw new Error("there is no scene gone");
+      const r = new ScriptedRun(); runs.push(r); return r;
+    }, { create: () => "u", revoke: () => {} });
+    session.takeAll(["a", "gone", "b", "c"]);
+    expect(session.state.get()).toMatchObject({ sceneId: "a", queued: ["gone", "b", "c"], batchSize: 4 });
+    expect(session.take()).toBeNull();
+    runs[0].emit({ state: "done", photo: photo(1) });
+    expect(started).toEqual(["a", "gone", "b"]);
+    expect(session.state.get()).toMatchObject({ sceneId: "b", queued: ["c"], run: { phase: "running" } });
+    runs[1].emit({ state: "failed", message: "out of memory" });
+    expect(session.state.get()).toMatchObject({ sceneId: "c", queued: [] });
+    runs[2].emit({ state: "done", photo: photo(3) });
+    const s = session.state.get();
+    expect(s).toMatchObject({ run: { phase: "idle" }, queued: [], batchSize: 0, sceneId: null });
+    expect([...s.byScene.keys()]).toEqual(["a", "c"]);
+  });
+
+  test("cancel ends the whole queue", () => {
+    const runs: ScriptedRun[] = [];
+    const session = new PhotoSession(() => { const r = new ScriptedRun(); runs.push(r); return r; }, { create: () => "u", revoke: () => {} });
+    session.takeAll(["a", "b", "c"]);
+    session.cancel();
+    expect(runs[0].cancelled).toBe(1);
+    expect(session.state.get().queued).toEqual([]);
+    runs[0].emit({ state: "cancelled" });
+    expect(runs).toHaveLength(1);
+    expect(session.state.get()).toMatchObject({ run: { phase: "cancelled" }, batchSize: 0 });
+  });
 });

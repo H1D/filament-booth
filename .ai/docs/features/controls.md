@@ -1,6 +1,6 @@
 # Controls
 
-The React rail on the right. Collapsible sections for part, filament, lights, backdrop and world, camera, output, setup and agent. Every control reads `Booth` through `useSyncExternalStore` and writes through `booth.update`.
+The React rail on the right. Collapsible sections for scenes, part, filament, lights, backdrop and world, camera, output, setup and agent. Every control reads `Booth` through `useSyncExternalStore` and writes through `booth.update`.
 
 ```toon
 status: stable
@@ -8,7 +8,7 @@ depends_on[3]: booth,preview,photo
 entry_point: src/App.tsx
 test_cmd: bunx vitest run tests/ui-controls.test.tsx tests/ui-agent.test.tsx tests/ui-panels.test.tsx tests/ui-model.test.ts tests/ui-wire.test.ts tests/ui-bounds.test.ts tests/ui-color.test.ts tests/ui-photo-session.test.ts
 
-files[24]{path,purpose}:
+files[26]{path,purpose}:
   src/App.tsx,app shell
   src/main.tsx,builds the real parts and mounts the app
   src/index.css,all styles in plain CSS
@@ -22,6 +22,8 @@ files[24]{path,purpose}:
   src/ui/controls.tsx,labelled slider and numeric field and select and toggle
   src/ui/Rail.tsx,the rail
   src/ui/Section.tsx,collapsible section with reset-when-modified
+  src/ui/ScenesPanel.tsx,the scene list: switch and add (a copy of the one on show) and rename and remove and Render all and Download all
+  src/ui/zip.ts,stored (uncompressed) ZIP writer with CRC-32 for Download all
   src/ui/PartPanel.tsx,slicing settings or read-only G-code facts and pose
   src/ui/FilamentPanel.tsx,filament preset and colour and finish and imperfections
   src/ui/LightsPanel.tsx,looks and per-light controls
@@ -41,6 +43,7 @@ files[24]{path,purpose}:
 - Limits come from `BOUNDS` in `src/document.ts`. Do not hard-code a min or max in a panel.
 - Focal presets keep the framing by moving the camera (`setFocal` in `src/edits.ts`).
 - Plain CSS and native inputs. Popovers and menus use the native Popover API, never hand-rolled z-index.
+- `PhotoSession` files each photo under its scene (`byScene` keeps the newest per scene) and `takeAll(ids)` is the render queue: one scene after another through the same photo card, a failed photo moves on, Cancel ends the queue. Download all zips `byScene` uncompressed, since PNG is already compressed.
 - UI-only state (open sections, focus tool, photo card) lives in `src/ui/store.ts`, not in the document.
 
 ## Gotchas

@@ -22,6 +22,8 @@ files[5]{path,purpose}:
 - The document has no revision counter. `Booth` keeps a private one and stamps it on the `Scene` as `docRev`.
 - A preset is copied into the document, never referenced. `presetId` stays after edits so the UI can show "modified" (`lookModified`, `filamentModified`).
 - `BoothDeps` injects `storage`, `print` (`PrintPort`), `takePhoto` and an optional `schedule` (type in `src/schedule.ts`). Tests pass fakes.
+- **Scenes.** `Booth` holds several scenes (`scenes`, `activeSceneId`, `addScene`, `switchScene`, `renameScene`, `removeScene`). A scene is a whole `BoothDocument` for the one part: `doc`, the preview, every edit, export and import belong to the scene on show. Slicing is shared, so a scene that comes on show takes the slicing in use and switching never re-slices. Opening a part frames every scene, each keeping its own angle and lens. `takePhoto(sceneId)` compiles another scene for a photo without showing it, with the scene on show as `previous` so shared sections keep their objects. With more than one scene the photo's name carries the scene's name.
+- Storage: the scene on show stays under `booth.document` (as before scenes existed). `booth.scenes` holds the order, names, the active id and the other scenes' documents, and is written only when the list or another scene changes. A stored scene that no longer parses is dropped; a list without its active scene is ignored.
 - `parseDocument` is strict, with one tolerance. A saved setup without `output.timeLimitS` loads with 300 s.
 - `BOUNDS` is the one table of numeric limits. The UI sliders and `parseDocument` both read it.
 

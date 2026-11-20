@@ -6,7 +6,7 @@
  */
 import { createContext, use, useCallback, useSyncExternalStore } from "react";
 import type { AgentControl, AgentState } from "../agent/agent";
-import type { Booth } from "../booth";
+import type { Booth, SceneEntry } from "../booth";
 import { DocumentError, type BoothDocument } from "../document";
 import type { Edit } from "../edits";
 import type { PrintState } from "../print";
@@ -46,6 +46,14 @@ export function usePrint(): PrintState {
 export function useScene(): Scene {
   const { booth } = useHost();
   return useSyncExternalStore(booth.subscribe, () => booth.scene);
+}
+
+/** Every scene, and the one on show. */
+export function useScenes(): { scenes: readonly SceneEntry[]; activeId: string } {
+  const { booth } = useHost();
+  const scenes = useSyncExternalStore(booth.subscribe, () => booth.scenes);
+  const activeId = useSyncExternalStore(booth.subscribe, () => booth.activeSceneId);
+  return { scenes, activeId };
 }
 
 export function useLookModified(): boolean {

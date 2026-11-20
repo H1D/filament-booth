@@ -64,6 +64,8 @@ The tab dials the bridge, never the other way. The bridge listens on `127.0.0.1`
 
 ## Gotchas
 
+- The agent works on the scene on show. `bpy.data.scenes` lists that one scene; switching scenes is the user's, in the Scenes section.
+
 - The page must be cross-origin isolated, because the worker channel needs `SharedArrayBuffer`. Otherwise `AgentStatus` is `unavailable`, the panel says why and the switch is disabled.
 - Every 2D canvas the page reads back stays on the CPU (`willReadFrequently`). `jpegThumbnail` drew on an accelerated canvas first and the agent got a black JPEG in the hardware-GPU Chromium of `tools/e2e/session.ts`. `tests/agent-thumbnail.test.ts` and the thumbnail check in `tools/agent/e2e.ts` cover it.
 - Headless Chromium draws the preview with software GL, which stalls the main thread for seconds. After a photo it stalled for 13 s in one run, so `booth_cancel` can wait out its 10 s grace and return `running` with "cancel requested, waiting for the tab to confirm". `booth_wait` then follows it to `cancelled`. In the hardware-GPU session the same script took 5 s, 3 of them a pause written into the script, and a cancel confirmed within 50 ms.

@@ -474,3 +474,10 @@ progress:indeterminate::-webkit-progress-bar {
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
 }
+
+/* ---- scenes ---- */
+.scenes { display: grid; gap: 0.25rem; }
+.scenes .scene { width: 100%; justify-content: flex-start; gap: 0.5rem; }
+.scene-index { min-width: 1.2rem; color: var(--text-faint); font-variant-numeric: tabular-nums; }
+.scene[aria-pressed="true"] .scene-index { color: inherit; }
+.scene-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
