@@ -6,8 +6,9 @@
  * Call order: cb_session_create, then any of the scene calls (cb_film, cb_camera, cb_mesh,
  * cb_mesh_shader_index, cb_object, cb_shader_*, cb_area_light, cb_scrim, cb_floor_ring, cb_world_*), then
  * cb_render_start. Poll cb_render_state and cb_passes_version, read passes between
- * cb_passes_lock and cb_passes_unlock. End with cb_session_free, after which a new session may
- * be created in the same module.
+ * cb_passes_lock and cb_passes_unlock. After a finished render, cb_session_again readies the same
+ * scene for another with a new cb_film and cb_camera. End with cb_session_free, after which a new
+ * session may be created in the same module.
  */
 #pragma once
 

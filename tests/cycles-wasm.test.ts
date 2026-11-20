@@ -4,7 +4,7 @@
  */
 import { readFileSync } from "node:fs";
 import { beforeAll, expect, test } from "vitest";
-import { decodeRgbe, loadCycles, readPasses, RenderState, uploadScene, type CyclesModule, type Passes, type WorldImage } from "../src/photo/cycles-upload";
+import { decodeRgbe, loadCycles, readPasses, RenderState, uploadAgain, uploadScene, type CyclesModule, type Passes, type WorldImage } from "../src/photo/cycles-upload";
 import type { Scene } from "../src/scene";
 import { beadMesh, fixture } from "../tools/parity/fixtures";
 
@@ -18,7 +18,15 @@ beforeAll(async () => {
 }, 60_000);
 
 async function render(scene: Scene, during?: () => void): Promise<{ passes: Passes; state: number; snapshots: number }> {
-  uploadScene(M, scene, world);
+  const result = await renderIn(scene, false, during);
+  M._cb_session_free();
+  return result;
+}
+
+/** Renders in a new session, or `again` in the last one, and leaves the session open. */
+async function renderIn(scene: Scene, again: boolean, during?: () => void): Promise<{ passes: Passes; state: number; snapshots: number }> {
+  if (again) uploadAgain(M, scene);
+  else uploadScene(M, scene, world);
   expect(M._cb_render_start()).toBe(0);
   let snapshots = 0;
   let version = 0;
@@ -32,7 +40,6 @@ async function render(scene: Scene, during?: () => void): Promise<{ passes: Pass
   }
   const state = M._cb_render_state();
   const passes = readPasses(M, scene.film.width, scene.film.height);
-  M._cb_session_free();
   if (!passes) throw new Error("no passes");
   return { passes, state, snapshots };
 }
@@ -157,4 +164,80 @@ test("repeated sessions in one module reuse the heap", async () => {
     heaps.push(M._cb_heap_bytes());
   }
   expect(heaps[2]).toBe(heaps[1]);
+}, 120_000);
+
+/** Fixture a with another camera, film or depth of field: what a render again may change. */
+function frames(): Scene[] {
+  const a = fixture("a", small), { camera, film } = a;
+  const moved = { ...camera, position: [camera.position[0] * 0.9, camera.position[1] * 1.1, camera.position[2]] as typeof camera.position, fovYRad: camera.fovYRad * 0.8 };
+  return [
+    a,
+    { ...a, camera: moved },
+    { ...a, film: { ...film, width: 80, height: 50, samples: 8 } },
+    { ...a, film: { ...film, transparent: true } },
+    { ...a, camera: { ...camera, apertureRadiusM: 0.004 } },
+    a,
+  ];
+}
+
+test("rendering again with a new camera or film matches a fresh session, pixel for pixel", async () => {
+  const scenes = frames();
+  const fresh = [];
+  for (const scene of scenes) fresh.push((await render(scene)).passes);
+  try {
+    for (const [i, scene] of scenes.entries()) {
+      const run = await renderIn(scene, i > 0);
+      expect(run.state).toBe(RenderState.done);
+      expect(run.passes.samples).toBe(scene.film.samples);
+      expect(run.passes.rgba, `render ${i}`).toEqual(fresh[i].rgba);
+      expect(run.passes.albedo, `render ${i}`).toEqual(fresh[i].albedo);
+    }
+  } finally {
+    M._cb_session_free();
+  }
+}, 240_000);
+
+test("a render again after Finish renders its full sample count", async () => {
+  const a = fixture("a", small);
+  const fresh = (await render(a)).passes;
+  try {
+    const stopped = await renderIn({ ...a, film: { ...a.film, samples: 100_000 } }, false, () => M._cb_finish());
+    expect(stopped.passes.samples).toBeLessThan(100_000);
+    const again = await renderIn(a, true);
+    expect(again.passes.samples).toBe(small.samples);
+    expect(again.passes.rgba).toEqual(fresh.rgba);
+  } finally {
+    M._cb_session_free();
+  }
+}, 120_000);
+
+test("only a finished render can render again", async () => {
+  const a = fixture("a", { ...small, samples: 100_000 });
+  uploadScene(M, a, world);
+  expect(M._cb_session_again(small.width, small.height)).toBe(-1);
+  M._cb_render_start();
+  while (M._cb_render_sample() < 1) await wait(5);
+  M._cb_cancel();
+  while (M._cb_render_state() === RenderState.running) await wait(1);
+  expect(M._cb_session_again(small.width, small.height)).toBe(-1);
+  expect(M.UTF8ToString(M._cb_error())).toMatch(/finished render/);
+  M._cb_session_free();
+}, 60_000);
+
+test("a render again builds no BVH and reuses the heap", async () => {
+  const big = beadMesh({ layers: 120, perimeters: 2, segments: 600, ringVerts: 12, halfSizeM: [0.016, 0.011], layerHeightM: 0.0002, beadWidthM: 0.00045 });
+  const scenes = frames().map((s) => ({ ...s, film: { ...s.film, samples: 1 }, part: s.part && { ...s.part, mesh: big } }));
+  const bvh: number[] = [], heaps: number[] = [];
+  try {
+    for (const [i, scene] of scenes.entries()) {
+      await renderIn(scene, i > 0);
+      bvh.push(M._cb_time_ms(2));
+      heaps.push(M._cb_heap_bytes());
+    }
+  } finally {
+    M._cb_session_free();
+  }
+  expect(bvh[0]).toBeGreaterThan(0);
+  expect(bvh.slice(1)).toEqual(bvh.slice(1).map(() => 0));
+  expect(heaps.at(-1)).toBe(heaps[2]);
 }, 120_000);

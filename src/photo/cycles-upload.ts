@@ -19,6 +19,7 @@ export interface CyclesModule {
   stringToUTF8(text: string, ptr: number, maxBytes: number): void;
   lengthBytesUTF8(text: string): number;
   _cb_session_create(width: number, height: number, threads: number): number;
+  _cb_session_again(width: number, height: number): number;
   _cb_film(samples: number, adaptiveThreshold: number, maxBounces: number, diffuseBounces: number,
     glossyBounces: number, transmissionBounces: number, clampDirect: number, clampIndirect: number,
     filterWidthPx: number, transparent: number, auxPasses: number): void;
@@ -250,18 +251,31 @@ function attribute(M: CyclesModule, mesh: number, name: string, components: 1 | 
 
 /** Builds the whole scene in a fresh session. `threads` 0 uses every hardware thread. */
 export function uploadScene(M: CyclesModule, scene: Scene, world: WorldImage, threads = 0): void {
-  const { film, camera } = scene;
+  const { film } = scene;
   check(M, M._cb_session_create(film.width, film.height, threads), "session");
-  M._cb_film(film.samples, film.adaptiveThreshold, film.maxBounces, film.diffuseBounces, film.glossyBounces,
-    film.transmissionBounces, film.clampDirect, film.clampIndirect, film.filterWidthPx, film.transparent ? 1 : 0, 1);
-  M._cb_camera(...camera.position, ...camera.target, ...camera.up, camera.fovYRad, camera.apertureRadiusM,
-    camera.focusDistanceM, camera.clipStartM);
+  uploadFrame(M, scene);
   copyToHeap(M, world.rgb, (rgb) =>
     check(M, M._cb_world_image(rgb, world.width, world.height, scene.world.strength, scene.world.rotationRad), "world"));
   if (scene.part) uploadPart(M, scene.part);
   uploadBackdrop(M, scene.backdrop);
   for (const emitter of scene.lights.emitters) uploadEmitter(M, emitter);
   if (scene.lights.floorCards) uploadFloorCards(M, scene.lights.floorCards);
+}
+
+/**
+ * Readies the session of a finished render for `scene`, which differs from that render's scene in
+ * its camera and film only: Cycles keeps the rest, and its BVH (cb_session_again).
+ */
+export function uploadAgain(M: CyclesModule, scene: Scene): void {
+  check(M, M._cb_session_again(scene.film.width, scene.film.height), "session again");
+  uploadFrame(M, scene);
+}
+
+function uploadFrame(M: CyclesModule, { film, camera }: Scene): void {
+  M._cb_film(film.samples, film.adaptiveThreshold, film.maxBounces, film.diffuseBounces, film.glossyBounces,
+    film.transmissionBounces, film.clampDirect, film.clampIndirect, film.filterWidthPx, film.transparent ? 1 : 0, 1);
+  M._cb_camera(...camera.position, ...camera.target, ...camera.up, camera.fovYRad, camera.apertureRadiusM,
+    camera.focusDistanceM, camera.clipStartM);
 }
 
 function uploadPart(M: CyclesModule, part: PartSection): void {

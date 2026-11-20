@@ -3,8 +3,12 @@
  * WebAssembly from cycles/) renders in a worker; this side only posts the scene, forwards
  * passes and turns aborts into finish or cancel.
  *
- * Each render gets a fresh worker, terminated when the render settles, so the browser reclaims
- * the whole heap. Cancel rejects at once; the worker stops Cycles and is then terminated.
+ * A finished render's worker stays for IDLE_MS with its Cycles session. When the next photo
+ * changes only the camera or the film (the other sections of the scene are the same objects, see
+ * scene.ts), it renders again there, without uploading the scene or building the BVH again;
+ * otherwise it is terminated, so the browser reclaims its whole heap, and a fresh worker renders.
+ * A failed or cancelled render's worker is always terminated. Cancel rejects at once; the worker
+ * stops Cycles and is then terminated.
  */
 import type { RadianceFrame } from "../film";
 import { hiddenFacesSettled } from "../print";
@@ -17,6 +21,25 @@ import type { RenderRequest, RenderStats, WorkerReply } from "./cycles-worker";
 const BASE = import.meta.env.BASE_URL;
 /** A worker that has not confirmed a cancel by then is terminated anyway. */
 const CANCEL_GRACE_MS = 3000;
+/** How long a finished render's worker waits for the next photo of its part, holding its heap. */
+export const IDLE_MS = 120_000;
+
+/** The worker of the last finished render, waiting for another photo of its scene. */
+interface Parked {
+  readonly worker: Worker;
+  readonly scene: Scene;
+  /** Whether the part's hidden faces had come when it rendered (BeadMesh.hidden arrives late). */
+  readonly culled: boolean;
+  readonly timer: ReturnType<typeof setTimeout>;
+}
+
+const culled = (scene: Scene): boolean => scene.part?.mesh.hidden !== undefined;
+
+/** Whether `next` is `last` but for its camera and film, so Cycles can render it again. */
+export function sameButFrame(last: Scene, lastCulled: boolean, next: Scene): boolean {
+  return next.part === last.part && culled(next) === lastCulled && next.lights === last.lights &&
+    next.backdrop === last.backdrop && next.world === last.world;
+}
 
 export interface CyclesEngineOptions {
   /** Called once per finished render, for tooling. */
@@ -24,6 +47,23 @@ export interface CyclesEngineOptions {
 }
 
 export function cyclesEngine(options: CyclesEngineOptions = {}): PhotoEngine {
+  let parked: Parked | null = null;
+  const unpark = (): Parked | null => {
+    const p = parked;
+    parked = null;
+    if (p) clearTimeout(p.timer);
+    return p;
+  };
+  const take = (scene: Scene): { worker: Worker; again: boolean } => {
+    const p = unpark();
+    if (p && sameButFrame(p.scene, p.culled, scene)) return { worker: p.worker, again: true };
+    p?.worker.terminate();
+    return { worker: new Worker(new URL("./cycles-worker.ts", import.meta.url), { type: "module", name: "cycles" }), again: false };
+  };
+  const park = (worker: Worker, scene: Scene, wasCulled: boolean): void => {
+    unpark()?.worker.terminate();
+    parked = { worker, scene, culled: wasCulled, timer: setTimeout(() => { parked = null; worker.terminate(); }, IDLE_MS) };
+  };
   return {
     id: "cycles",
     fits: async (scene) => {
@@ -40,26 +80,28 @@ export function cyclesEngine(options: CyclesEngineOptions = {}): PhotoEngine {
         ? true
         : { reason: `needs about ${(need / 1e9).toFixed(1)} GB, over the 4 GB WebAssembly limit` };
     },
-    render: (scene, onPass, signal) => render(scene, onPass, signal, options),
+    render: (scene, onPass, signal) => {
+      if (signal.aborted && signal.reason !== "finish") return Promise.reject(signal.reason);
+      const { worker, again } = take(scene), wasCulled = culled(scene);
+      return render(scene, again, worker, () => park(worker, scene, wasCulled), onPass, signal, options);
+    },
   };
 }
 
 function render(
   scene: Scene,
+  again: boolean,
+  worker: Worker,
+  park: () => void,
   onPass: (frame: RadianceFrame, fraction: number) => void,
   signal: AbortSignal,
   options: CyclesEngineOptions,
 ): Promise<RadianceFrame> {
   return new Promise((resolve, reject) => {
-    if (signal.aborted && signal.reason !== "finish") {
-      reject(signal.reason);
-      return;
-    }
     const { width, height, samples } = scene.film;
     const toFrame = (p: Passes): RadianceFrame => ({
       width, height, samples: p.samples, rgba: p.rgba, albedo: p.albedo ?? undefined, normal: p.normal ?? undefined,
     });
-    const worker = new Worker(new URL("./cycles-worker.ts", import.meta.url), { type: "module", name: "cycles" });
     let settled = false;
     const settle = () => {
       settled = true;
@@ -78,7 +120,8 @@ function render(
     signal.addEventListener("abort", onAbort);
     worker.onmessage = (event: MessageEvent<WorkerReply>) => {
       const reply = event.data;
-      if (reply.type !== "pass") worker.terminate();
+      if (reply.type === "done" && !settled) park();
+      else if (reply.type !== "pass") worker.terminate();
       if (settled) return;
       switch (reply.type) {
         case "pass":
@@ -105,6 +148,7 @@ function render(
     const request: RenderRequest = {
       type: "render",
       scene,
+      again,
       moduleUrl: new URL(`${BASE}cycles/cycles_booth.mjs`, location.href).href,
       hdrUrl: new URL(`${BASE}hdr/${scene.world.hdrId}.hdr`, location.href).href,
       poolSize: navigator.hardwareConcurrency + 4,

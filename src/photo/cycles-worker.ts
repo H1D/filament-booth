@@ -1,21 +1,27 @@
 /**
- * cycles-worker.ts: hosts the Cycles module for one render, then the engine terminates it.
- * A fresh worker per render returns the whole wasm heap to the browser afterwards (a wasm heap
- * never shrinks).
+ * cycles-worker.ts: hosts the Cycles module for one scene setup, and the engine terminates it
+ * when the setup changes, after a failure or cancel, or when it has been idle a while. A wasm
+ * heap never shrinks, so only a new worker returns the memory.
  *
- * Protocol: the engine posts one RenderRequest, may post "finish" or "cancel", and receives
- * passes as they arrive and then exactly one "done", "failed" or "cancelled".
+ * After a finished render the worker keeps its Cycles session. A request marked `again` renders
+ * the same scene with a new camera or film in it, so the scene upload and the BVH build, seconds
+ * on a large print, happen once.
+ *
+ * Protocol, per render: the engine posts a RenderRequest, may post "finish" or "cancel", and
+ * receives passes as they arrive and then exactly one "done", "failed" or "cancelled".
  *
  * Cancel stops Cycles here before the worker is terminated. Terminating alone leaves the render
  * threads running: they are nested workers busy in wasm, and Chromium only stops those by force
  * two seconds after their parent goes (measured: 16 cores busy for 2.2 to 2.5 s).
  */
 import type { Scene } from "../scene";
-import { decodeRgbe, loadCycles, readPasses, RenderState, uploadScene, type CyclesModule, type Passes } from "./cycles-upload";
+import { decodeRgbe, loadCycles, readPasses, RenderState, uploadAgain, uploadScene, type CyclesModule, type Passes } from "./cycles-upload";
 
 export interface RenderRequest {
   readonly type: "render";
   readonly scene: Scene;
+  /** The scene is the last render's, which finished, but for its camera and film. False on a worker's first render. */
+  readonly again: boolean;
   readonly moduleUrl: string;
   readonly hdrUrl: string;
   readonly poolSize: number;
@@ -42,6 +48,7 @@ const POLL_MS = 50;
 
 let finishRequested = false;
 let cancelRequested = false;
+let module: Promise<CyclesModule> | null = null;
 
 function post(reply: WorkerReply): void {
   const { passes } = "passes" in reply ? reply : { passes: null };
@@ -61,14 +68,18 @@ function emptyPasses(scene: Scene): Passes {
 
 async function render(request: RenderRequest): Promise<void> {
   const { scene } = request;
-  const [M, world] = await Promise.all([loadCycles(request.moduleUrl, request.poolSize), fetchWorld(request.hdrUrl)]);
+  finishRequested = false;
+  cancelRequested = false;
+  module ??= loadCycles(request.moduleUrl, request.poolSize);
+  const [M, world] = await Promise.all([module, request.again ? null : fetchWorld(request.hdrUrl)]);
   if (cancelRequested) {
     post({ type: "cancelled" });
     return;
   }
-  uploadScene(M, scene, world);
+  if (world) uploadScene(M, scene, world);
+  else uploadAgain(M, scene);
   if (M._cb_render_start() < 0) throw new Error(M.UTF8ToString(M._cb_error()));
-  let version = 0;
+  let version = M._cb_passes_version(); // counts on across the session's renders
   for (;;) {
     await new Promise((resolve) => setTimeout(resolve, POLL_MS));
     if (cancelRequested) {
@@ -91,7 +102,6 @@ async function render(request: RenderRequest): Promise<void> {
     }
     const passes = readPasses(M, scene.film.width, scene.film.height) ?? emptyPasses(scene);
     post({ type: "done", passes, stats: stats(M) });
-    M._cb_session_free();
     return;
   }
 }

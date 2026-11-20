@@ -660,7 +660,7 @@ try {
     expect(p28.ratio < 0.75 * p11.ratio, `preview far/near sharpness ${f3(p11.ratio)} at f/11, ${f3(p28.ratio)} at f/2.8`);
     expect(c28.ratio < 0.75 * c11.ratio, `Cycles far/near sharpness ${f3(c11.ratio)} at f/11, ${f3(c28.ratio)} at f/2.8`);
     await setField("camera", "Aperture", "11");
-    return `focus at ${f3(focus)} m (front edge ${f3(e.nearDepthM)} m, back edge ${f3(e.farDepthM)} m); gradient energy f/11 -> f/2.8, ${row("preview", p11, p28)}; ${row("Cycles", c11, c28)}`;
+    return `focus at ${f3(focus)} m (front edge ${f3(e.nearDepthM)} m, back edge ${f3(e.farDepthM)} m); gradient energy f/11 -> f/2.8, ${row("preview", p11, p28)}; ${row("Cycles", c11, c28)}; photos ${(cSharp.ms / 1000).toFixed(1)} s at f/11, ${(cSoft.ms / 1000).toFixed(1)} s at f/2.8`;
   });
 
   await flow("12", "LEKV2 at 1600x2000, 256 samples through Cycles", async () => {

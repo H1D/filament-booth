@@ -23,6 +23,7 @@
 #include "session/output_driver.h"
 #include "util/log.h"
 #include "util/path.h"
+#include "util/set.h"
 #include "util/task.h"
 
 #ifdef __EMSCRIPTEN__
@@ -271,6 +272,9 @@ CB_EXPORT void cb_film(int samples,
   Booth &b = booth();
   b.session_params.samples = samples;
   Integrator *integrator = b.scene->integrator;
+  /* Cycles itself only ever raises it on a session's later renders, and the blue noise sequence
+   * follows it: fewer samples than the last render would sample another pattern. */
+  integrator->set_aa_samples(samples);
   integrator->set_max_bounce(max_bounces);
   integrator->set_max_diffuse_bounce(diffuse_bounces);
   integrator->set_max_glossy_bounce(glossy_bounces);
@@ -346,11 +350,49 @@ CB_EXPORT void cb_camera(float px,
   cam->need_device_update = true;
 }
 
+/* After a finished render: readies the same scene for another, at width x height, keeping every
+ * object, mesh and shader, and so the BVH. cb_film and cb_camera may then change the frame. A
+ * change to anything else needs a new session. Returns 0, or -1 with cb_error set. */
+CB_EXPORT int cb_session_again(int width, int height)
+{
+  Booth &b = booth();
+  if (b.state.load() != RENDER_DONE) {
+    set_error("cb_session_again needs a finished render");
+    return -1;
+  }
+  if (b.waiter.joinable()) {
+    b.waiter.join();
+  }
+  Scene *scene = b.scene;
+  scene->delete_nodes(set<Pass *>(scene->passes.begin(), scene->passes.end()));
+  /* Clears the "finish" cancel too, which would otherwise end the next render at once. */
+  b.session->progress.reset();
+  b.width = width;
+  b.height = height;
+  scene->camera->set_full_width(width);
+  scene->camera->set_full_height(height);
+  {
+    const std::lock_guard<std::mutex> lock(b.snapshot.mutex);
+    for (vector<float> &pixels : b.snapshot.pixels) {
+      pixels.clear();
+    }
+    b.snapshot.samples = 0;
+    b.snapshot.max_sample = 0;
+    b.snapshot.pending = false;
+    b.snapshot.copy_ms = 0.0;
+  }
+  b.t_start = 0.0;
+  b.t_first_sample = 0.0;
+  b.t_end = 0.0;
+  b.state = RENDER_IDLE;
+  return 0;
+}
+
 CB_EXPORT int cb_render_start()
 {
   Booth &b = booth();
   if (b.state.load() != RENDER_IDLE) {
-    set_error("a render already ran in this session");
+    set_error("a render already ran in this session: cb_session_again first");
     return -1;
   }
   Scene *scene = b.scene;
