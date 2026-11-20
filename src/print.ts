@@ -52,7 +52,7 @@ export interface Centreline {
   fl: Uint8Array;     // bit0 run-start, bits1–2 FeatureCode
   vq: Uint8Array;     // speed in 2 mm/s
   h: Mm;              // layer height — .bin gains this field (was pinned 0.2)
-  /** Per point, for the segment to the next: COVER_TOP / COVER_BOTTOM (print/cover.ts). */
+  /** Per point: which faces neighbouring material hides (print/cover.ts COVER_*). */
   cover?: Uint8Array;
 }
 

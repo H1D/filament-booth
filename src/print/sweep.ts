@@ -119,23 +119,20 @@ export function planRings(cl: Centreline, lite = false): RingPlan {
 }
 
 /**
- * Is quad k of a ring (k to k + 1) pressed against neighbouring material? Quads RN/2 - 1 and
- * RN - 1 are the top and bottom flats, the rest the right and left sides. A side goes only when
- * both flats go too: in a layer with open air above or below, the sides show in the grooves
- * between beads and, at grazing angles, past the edge of the layer.
+ * Is quad k of a ring (k to k + 1) pressed against neighbouring material (cover.ts)? Quads
+ * RN/2 - 1 and RN - 1 are the top and bottom flats, the rest the right and left sides.
  */
 function hiddenQuad(k: number, RN: number, c: number): boolean {
-  const half = RN / 2;
-  if (k === half - 1) return (c & COVER_TOP) !== 0;
+  if (k === RN / 2 - 1) return (c & COVER_TOP) !== 0;
   if (k === RN - 1) return (c & COVER_BOTTOM) !== 0;
-  const side = k < half - 1 ? COVER_RIGHT : COVER_LEFT;
-  return (c & (side | COVER_TOP | COVER_BOTTOM)) === (side | COVER_TOP | COVER_BOTTOM);
+  return (c & (k < RN / 2 - 1 ? COVER_RIGHT : COVER_LEFT)) !== 0;
 }
 
 export function sweep(cl: Centreline, lite = false): BeadMesh {
   const { n: N, p: P, zq: Zq, wq: Wq, fl: FL, vq: Vq, h: H } = cl;
   const { n: RN, SIDE, VV, SGN, PN, PN1, VT, NT, cap: CAP } = tables(lite, H), Hm = H * 1e-3, LQ = H * 100;
   const { din, dout, len, nring, rings, quadsMax } = planRings(cl, lite);
+  const { cover } = cl;
   const st = (i: number): boolean => startOf(cl, i), en = (i: number): boolean => endOf(cl, i);
   const pos = new Float32Array(rings * RN * 3), nrm = new Int16Array(rings * RN * 3), tan = new Int16Array(rings * RN * 3);
   const word = new Float32Array(rings * RN);
@@ -175,16 +172,11 @@ export function sweep(cl: Centreline, lite = false): BeadMesh {
         word[r * RN + k] = wordHere;
       }
       if (r > 0 && !(s && first)) { // quads to the previous ring of this run, minus collapsed / zero-length ones
-        // The first ring of a point joins the segment from the previous point. Its flats are left
-        // out where the next layer up or down presses on them (cover.ts); caps and fans keep theirs.
-        const covered = first && cl.cover ? cl.cover[i - 1] : 0;
-        // Rings after the first at a run's end point sweep its round end.
-        // Like a side, only on a bead with material above and below: in an open layer the end shows in its groove.
-        const joined = cl.cover ? cl.cover[s ? i : i - 1] : 0;
-        const endHidden = !first && (s || e) && cl.cover !== undefined && (cl.cover[i] & COVER_END) !== 0
-          && (joined & (COVER_TOP | COVER_BOTTOM)) === (COVER_TOP | COVER_BOTTOM);
-        if (endHidden) { first = false; r++; return; }
-        for (let k = 0; k < RN; k++) {
+        // The first ring of a point joins the segment from the previous point, whose covered faces are
+        // left out (cover.ts). Rings after the first at a run's end sweep its round end.
+        const covered = first && cover ? cover[i - 1] : 0;
+        const endHidden = !first && (s || e) && ((cover?.[i] ?? 0) & COVER_END) !== 0;
+        for (let k = 0; k < RN && !endHidden; k++) {
           if (covered && hiddenQuad(k, RN, covered)) continue;
           const kn = (k + 1) % RN, q = [(r - 1) * RN + k, r * RN + k, r * RN + kn, (r - 1) * RN + kn];
           const tris: (readonly [number, number, number])[] = [[q[0], q[1], q[2]], [q[0], q[2], q[3]]];
@@ -222,11 +214,33 @@ export function sweep(cl: Centreline, lite = false): BeadMesh {
   }
   const cx = (lx + hx) / 2, cy = (ly + hy) / 2;
   for (let o = 0; o < pos.length; o += 3) { pos[o] -= cx; pos[o + 1] -= cy; }
+  // Vertices only left-out faces used (cover.ts) go too, renumbered in order.
+  let vcount = rings * RN, tris = index.slice(0, ti);
+  let position = pos, normal = nrm, tangent = tan, words = word;
+  if (cl.cover) {
+    const remap = new Int32Array(vcount).fill(-1);
+    for (const v of tris) remap[v] = 0;
+    let next = 0;
+    for (let v = 0; v < vcount; v++) if (remap[v] === 0) remap[v] = next++;
+    if (next < vcount) {
+      position = new Float32Array(next * 3); normal = new Int16Array(next * 3); tangent = new Int16Array(next * 3); words = new Float32Array(next);
+      for (let v = 0; v < vcount; v++) {
+        const m = remap[v];
+        if (m < 0) continue;
+        position.set(pos.subarray(3 * v, 3 * v + 3), 3 * m);
+        normal.set(nrm.subarray(3 * v, 3 * v + 3), 3 * m);
+        tangent.set(tan.subarray(3 * v, 3 * v + 3), 3 * m);
+        words[m] = word[v];
+      }
+      tris = tris.map((v) => remap[v]);
+      vcount = next;
+    }
+  }
   const walls: number[] = []; // typical bead speed of the walls: the speed gloss is relative to it
   for (let i = 0; i < N; i++) if ((FL[i] >> 1) === 0) walls.push(Vq[i]);
   walls.sort((a, b) => a - b);
   return {
-    position: pos, normal: nrm, tangent: tan, word, index: index.slice(0, ti), tris: ti / 3,
+    position, normal, tangent, word: words, index: tris, tris: ti / 3,
     layerCount, layerHeightM: Hm, vRefMmS: 2 * (walls[walls.length >> 1] || 50),
     bboxM: { min: [lx - cx, ly - cy, lz], max: [hx - cx, hy - cy, hz] },
   };

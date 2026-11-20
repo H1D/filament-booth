@@ -35,8 +35,10 @@ files[16]{path,purpose}:
 - Per-vertex data is one packed Float32 `word` (`BEAD_WORD`: feature, layer, speed) plus an Int16 `tangent`. Use `packBeadWord` and `unpackBeadWord`, never hand-rolled math.
 - Mesh is Z-up metres. `PLATE_EPS` decides which vertices sit on the plate face.
 - A G-code keeps the slicing it was made with. `doc.slicing` applies only to STL sources.
-- The sweep leaves out bead faces no ray can reach (`cover.ts`, against every extrusion of the G-code, infill included): flats with a layer pressing on them, and the sides and round ends of beads with material above and below. In a layer open to the air the sides and ends stay, because they show in the grooves and past the layer's edge. Vertices are kept, so vertex parity with the Python reference holds. On BSCH-04: 8.66M to 5.43M triangles, BVH 7.0 to 4.4 s, heap 480 MiB smaller, sampling 10 to 22 % faster (fixtures e, f, g), images within 59 to 65 dB of the full mesh.
-- The lite mesh (`thin`) is not culled: its points no longer line up with the cover flags.
+- The sweep leaves out bead faces no ray can reach (`cover.ts`), and the vertices only those faces used. A face goes only where the part's own material presses on it: every extrusion of the G-code counts, the infill and inner walls the mesh leaves out included, support, brim, skirt and purge lines not (`PART` in `calibration.ts`). Coverage is exact along each test line (the union of the neighbours' capsules). A flat goes when the flat above or below it covers it to within 5 um; a side or a round end only on a bead whose flats both go, and only inside its neighbour by 0.01 mm.
+- The test runs on the G-code's own positions, without the per-layer wobble the centreline adds. The wobble's few-micrometre slits sit inside dark grooves; a real lean of more than 5 um keeps the flat.
+- The lite mesh keeps the cover bits of the segments `thin` keeps whole.
+- The mesher parity test sweeps without cover: `gcode_mesh.py` sweeps every face.
 
 ## Gotchas
 

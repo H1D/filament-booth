@@ -6,6 +6,7 @@ import { mm } from "../document";
 import type { FeatureCode } from "../document";
 import type { Centreline } from "../print";
 import { FEAT_CODE, H0, JITTER, MIN_STEP, WIDTH_RANGE } from "./calibration";
+import { COVER_END } from "./cover";
 import { rint } from "./exposed";
 import type { Run } from "./gcode";
 
@@ -27,18 +28,26 @@ function gauss(rand: () => number): number { // Box-Muller
 }
 
 /**
+ * The wobble of each layer counter, drawn in the order the layers first appear in `runs`.
+ * The centreline and the cover test (cover.ts) must use the same one.
+ */
+export function layerJitter(runs: readonly Run[], jitter: number = JITTER): Map<number, [number, number]> {
+  const rand = seeded(1);
+  const jit = new Map<number, [number, number]>();
+  for (const r of runs) if (!jit.has(r.layer)) jit.set(r.layer, [gauss(rand) * jitter, gauss(rand) * jitter]);
+  return jit;
+}
+
+/**
  * Per-layer jitter, first-layer line ends extended W/4 (they squash into the
  * wall they end at), W clipped to the calibrated range. `jitter` is the wobble
  * sigma in mm; 0 gives a perfect printer, which the parity test relies on.
  */
 export function centreline(runs: Run[], H: number = H0, jitter: number = JITTER): Centreline {
-  const rand = seeded(1);
-  const jit = new Map<number, [number, number]>();
+  const jit = layerJitter(runs, jitter);
   const P: number[] = [], Z: number[] = [], W: number[] = [], FL: number[] = [], V: number[] = [];
   for (const r of runs) {
-    let wobble = jit.get(r.layer);
-    if (!wobble) { wobble = [gauss(rand) * jitter, gauss(rand) * jitter]; jit.set(r.layer, wobble); }
-    const [jx, jy] = wobble;
+    const [jx, jy] = jit.get(r.layer) ?? [0, 0];
     const px: number[] = [], py: number[] = [], pw: number[] = [], pv: number[] = [];
     for (let k = 0; k < r.pts.length / 2; k++) { // drop duplicate / sub-2-um steps, as gcode_mesh.py
       if (k && Math.hypot(r.pts[2 * k] - r.pts[2 * k - 2], r.pts[2 * k + 1] - r.pts[2 * k - 1]) <= MIN_STEP) continue;
@@ -104,10 +113,13 @@ export function thin(cl: Centreline): Centreline {
     }
     idx.push(i); turn = len = 0; last = i;
   }
+  // A segment kept whole keeps its cover bits; a merged one keeps none. Run ends are always kept.
+  const { cover } = cl;
   return {
     n: idx.length,
     p: Float32Array.from({ length: 2 * idx.length }, (_, k) => p[2 * idx[k >> 1] + (k & 1)]),
     zq: Uint16Array.from(idx, (i) => cl.zq[i]), wq: Uint8Array.from(idx, (i) => wq[i]),
     fl: Uint8Array.from(idx, (i) => fl[i]), vq: Uint8Array.from(idx, (i) => cl.vq[i]), h: cl.h,
+    ...(cover ? { cover: Uint8Array.from(idx, (i, m) => (idx[m + 1] === i + 1 ? cover[i] : cover[i] & COVER_END)) } : {}),
   };
 }
