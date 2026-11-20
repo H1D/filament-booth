@@ -89,12 +89,14 @@ One saved `BoothDocument` (plain JSON) is compiled by the pure function `compile
 - The page must be cross-origin isolated. `vite.config.ts` sends the headers. Any other host must too.
 - `/tmp` may be a small tmpfs. Set `BOOTH_TMP` or `TMPDIR` for the clean-checkout check and browser drivers.
 - The photo time limit (`film.timeLimitS`, 0 means none) is enforced only in `PhotoDesk`. Parity fixtures and `render_scene.py` use 0.
-- No denoiser exists. Do not add a Denoise control until one does.
+- The denoiser is OIDN 2.5's RT network (rt_hdr_alb_nrm, Blender's "Fast" prefilter) on WebGPU in `src/photo/denoise.ts`. It must keep matching `oidnDenoise`: rerun `bun tools/denoise/run.ts` after touching it.
+- A denoiser failure never costs the photo. The desk develops the noisy frame and the card says why.
 
 ## Known gaps
 
 - Preview is brighter than Cycles in the dark, rim and raking looks (1.3 to 1.7 times). Its key shadow is hard where Cycles is soft.
-- A full-size photo (1600x2000, 256 samples) of an 11M triangle part takes 30 to 38 minutes with no limit. The default 5 minute limit cuts it to fewer samples, and there is no denoiser.
+- A full-size photo (1600x2000, 256 samples) of an 11M triangle part takes 30 to 38 minutes with no limit. The default 5 minute limit cuts it to fewer samples, and the denoiser cleans what is left.
+- Without WebGPU there is no denoising. There is no CPU fallback.
 - Untested: Firefox, Safari, mobile, low-core machines. PLA Basic and Silk presets are uncalibrated.
 
 ## Features

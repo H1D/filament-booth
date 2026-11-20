@@ -4,7 +4,7 @@
  * Coordinates are Blender's: right handed, Z up, metres. Colours are linear Rec.709.
  *
  * Call order: cb_session_create, then any of the scene calls (cb_film, cb_camera, cb_mesh,
- * cb_object, cb_shader_*, cb_area_light, cb_scrim, cb_floor_ring, cb_world_*), then
+ * cb_mesh_shader_index, cb_object, cb_shader_*, cb_area_light, cb_scrim, cb_floor_ring, cb_world_*), then
  * cb_render_start. Poll cb_render_state and cb_passes_version, read passes between
  * cb_passes_lock and cb_passes_unlock. End with cb_session_free, after which a new session may
  * be created in the same module.
@@ -54,11 +54,13 @@ constexpr uint PART_LIGHT_SET = 1;
 /* The newest copy of the passes, written by the session thread, read by JavaScript. */
 struct Snapshot {
   std::mutex mutex;
-  vector<float> pixels[SNAP_COUNT]; /* RGBA float, top row first. */
+  vector<float> pixels[SNAP_COUNT]; /* RGBA float, bottom row first. */
   int samples = 0;
   int version = 0;
   bool pending = false;
   int max_sample = 0;
+  /* Time the session thread spent copying passes here, during which no path is traced. */
+  double copy_ms = 0.0;
 };
 
 struct Booth {

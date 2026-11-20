@@ -18,6 +18,7 @@ const manifest = parseManifest(JSON.parse(readFileSync(new URL("../public/lut/ma
 const tools: PhotoTools = {
   loadAgx: async (look) => ({ look, manifest, base: new Float32Array(0), pre: null }),
   quickLook: () => ({ width: 1, height: 1, close() {} }),
+  denoise: async (frame) => frame,
   develop: async () => new Blob(["png"]),
   now: () => 0,
   schedule: () => () => {},

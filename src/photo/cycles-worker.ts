@@ -26,6 +26,8 @@ export interface RenderStats {
   readonly syncMs: number; // start to first sample: scene upload to device, BVH build
   readonly bvhMs: number;
   readonly samplingMs: number;
+  /** Time Cycles' session thread spent copying passes out, tracing no path meanwhile. */
+  readonly snapshotMs: number;
   readonly heapBytes: number;
   readonly cyclesPeakBytes: number;
   readonly threads: number;
@@ -99,6 +101,7 @@ function stats(M: CyclesModule): RenderStats {
     syncMs: M._cb_time_ms(0),
     samplingMs: M._cb_time_ms(1),
     bvhMs: M._cb_time_ms(2),
+    snapshotMs: M._cb_time_ms(3),
     heapBytes: M._cb_heap_bytes(),
     cyclesPeakBytes: M._cb_cycles_peak_bytes(),
     threads: M._cb_threads(),

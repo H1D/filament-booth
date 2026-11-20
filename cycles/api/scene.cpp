@@ -290,14 +290,30 @@ CB_EXPORT int cb_mesh_attribute(int mesh, const char *name, int components, cons
   }
 }
 
-/* An instance of a mesh with one shader. tfm: 16 floats, column-major, object to world.
- * flags: ObjectFlags. */
-CB_EXPORT int cb_object(int mesh, int shader, const float *tfm, int flags)
+/* Which of its object's shaders each triangle of a mesh uses (0 the first, 1 the second).
+ * Every triangle uses the first unless this says otherwise. Returns 0. */
+CB_EXPORT int cb_mesh_shader_index(int mesh, const unsigned char *index)
+{
+  Mesh *m = static_cast<Mesh *>(booth().meshes[mesh]);
+  array<int> &shader = m->get_shader();
+  for (size_t i = 0; i < shader.size(); i++) {
+    shader[i] = index[i];
+  }
+  m->tag_shader_modified();
+  return 0;
+}
+
+/* An instance of a mesh with one shader, or two when second_shader is not -1 (see
+ * cb_mesh_shader_index). tfm: 16 floats, column-major, object to world. flags: ObjectFlags. */
+CB_EXPORT int cb_object(int mesh, int shader, int second_shader, const float *tfm, int flags)
 {
   Booth &b = booth();
   Geometry *geom = b.meshes[mesh];
   array<Node *> used_shaders;
   used_shaders.push_back_slow(b.shaders[shader]);
+  if (second_shader >= 0) {
+    used_shaders.push_back_slow(b.shaders[second_shader]);
+  }
   geom->set_used_shaders(used_shaders);
   Object *object = b.scene->create_node<Object>();
   object->set_geometry(geom);
@@ -318,7 +334,11 @@ CB_EXPORT int cb_object(int mesh, int shader, const float *tfm, int flags)
  *                   plate_rough, plate)
  *   anisotropy = anisotropy * (1 - plate), tangent = cross(N, path_tangent)
  *   textured plate: bump of Voronoi(P * grain).distance + 0.35 * noise(P * grain * 25 / 6)
- * P is the part-local position. Returns a shader handle. */
+ * P is the part-local position. Returns a shader handle.
+ *
+ * The bump's strength is the plate mask, so on a triangle with no plate vertex it is 0 and the
+ * normal comes out as it went in. Such triangles get this shader built with plate_textured 0,
+ * which leaves the Voronoi, the noise and their three evaluations for the bump out. */
 CB_EXPORT int cb_shader_bead(float r, float g, float b, float ior, float anisotropy,
                              float mottle_scale, float mottle_amp, float rough_min,
                              float plate_rough, int plate_textured, float grain_per_m,

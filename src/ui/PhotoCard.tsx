@@ -112,9 +112,10 @@ function Result({ shot }: { shot: Shot }) {
     <div className="photo-body">
       <img className="photo-frame" src={shot.url} alt={`Finished photo, ${photo.fileName}`} width={photo.width} height={photo.height} />
       <p className="readout">
-        {photo.width} by {photo.height} px, {samplesText(photo)}, {ENGINE_NAMES[photo.engine]}
+        {photo.width} by {photo.height} px, {samplesText(photo)}, {ENGINE_NAMES[photo.engine]}{photo.denoising.kind === "denoised" ? ", denoised" : ""}
       </p>
       {photo.stoppedBy.kind === "samples" ? null : <p className="readout" data-stopped-by={photo.stoppedBy.kind}>{stopText(photo.stoppedBy)}</p>}
+      {photo.denoising.kind === "failed" ? <p className="readout" data-denoising="failed">Not denoised: {photo.denoising.reason}.</p> : null}
       <div className="actions">
         <button type="button" className="btn primary" onClick={() => { downloadAs(photo.fileName, photo.png); }}>
           <Icon name="save" />Save

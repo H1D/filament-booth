@@ -407,7 +407,14 @@ def setup_render(f, a, out):
     cy.light_sampling_threshold = 0.01
     cy.use_guiding = False
     cy.use_fast_gi = False
-    cy.use_denoising = False
+    # The booth denoises as Blender does with Open Image Denoise and the "Fast" prefilter: colour
+    # with the noisy albedo and normal (src/photo/denoise.ts). Parity scenes have it off.
+    cy.use_denoising = bool(f.get('denoise', False))
+    cy.denoiser = 'OPENIMAGEDENOISE'
+    cy.denoising_input_passes = 'RGB_ALBEDO_NORMAL'
+    cy.denoising_prefilter = 'FAST'
+    cy.denoising_quality = 'HIGH'
+    cy.denoising_use_gpu = False
     cy.pixel_filter_type = 'BLACKMAN_HARRIS'
     cy.filter_width = f['filterWidthPx']
     cy.film_exposure = 1.0

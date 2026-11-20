@@ -4,7 +4,7 @@ import { MAX_SHOTS, PhotoSession, type UrlApi } from "../src/ui/photo-session";
 import { ScriptedRun } from "./ui-fixtures";
 
 const photo = (n: number): Photo => ({
-  png: new Blob([String(n)]), fileName: `part_${n}.png`, width: 100, height: 125, samples: 64, targetSamples: 64, stoppedBy: { kind: "samples" }, engine: "cycles", docRev: 1,
+  png: new Blob([String(n)]), fileName: `part_${n}.png`, width: 100, height: 125, samples: 64, targetSamples: 64, stoppedBy: { kind: "samples" }, denoising: { kind: "denoised" }, engine: "cycles", docRev: 1,
 });
 
 function setup(starts: () => ScriptedRun) {

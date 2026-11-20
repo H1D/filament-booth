@@ -240,7 +240,7 @@ class FakeRun implements PhotoRun {
     const photo: Photo = {
       png, fileName: `${this.#partName}_${stamp()}.png`, width: this.#scene.film.width, height: this.#scene.film.height,
       samples, targetSamples: target, stoppedBy: this.#early ? { kind: "user" } : { kind: "samples" },
-      engine: "cycles", docRev: this.docRev,
+      denoising: this.#scene.film.denoise ? { kind: "denoised" } : { kind: "off" }, engine: "cycles", docRev: this.docRev,
     };
     this.#emit({ state: "done", photo });
     this.#resolve(photo);

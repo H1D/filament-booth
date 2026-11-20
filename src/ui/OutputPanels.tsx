@@ -64,6 +64,9 @@ export function OutputPanel() {
       <Switch label="Transparent background" checked={output.transparentBackground}
         hint="Keeps the part and its shadow and drops the backdrop."
         onChange={(on) => { edit((d) => { d.output.transparentBackground = on; }); }} />
+      <Switch label="Denoise" checked={output.denoise}
+        hint="Cleans the leftover noise out of the finished photo with Intel Open Image Denoise, as Blender does, so fewer samples look clean. Runs on the graphics card once sampling ends."
+        onChange={(on) => { edit((d) => { d.output.denoise = on; }); }} />
     </>
   );
 }

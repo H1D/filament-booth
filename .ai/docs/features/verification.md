@@ -7,7 +7,7 @@ status: stable
 depends_on[5]: scene,print,preview,photo,controls
 entry_point: tools/e2e/drive.ts
 
-commands[10]{cmd,checks}:
+commands[11]{cmd,checks}:
   bun run test,unit tests (Vitest and Node)
   bun run typecheck,app types
   bun run typecheck:dev,tooling and dev page types
@@ -17,9 +17,10 @@ commands[10]{cmd,checks}:
   bun run agent:drive,agent Python on dev/agent.html with the real worker (8 checks)
   bun run agent:e2e,real MCP client and bridge and app with a Cycles photo (8 checks and --gpu for gamescope)
   bun tools/parity/run.ts,browser Cycles against native Blender 5.2.3 (PSNR per fixture)
+  bun tools/denoise/run.ts,the WebGPU denoiser against Intel's oidnDenoise 2.5 on a Cycles render (PSNR; tiled against whole)
   tools/check-clean-checkout.sh,fresh worktree of HEAD then install and test and typecheck
 
-files[21]{path,purpose}:
+files[23]{path,purpose}:
   tools/e2e/drive.ts,the thirteen flows and the table and hero studies
   tools/e2e/session.ts,re-runs itself inside headless gamescope and starts headful Chromium
   tools/e2e/pixels.ts,PNG read and masks and IoU and luma and sharpness
@@ -29,6 +30,8 @@ files[21]{path,purpose}:
   tools/parity/compiled.ts,fixtures that go through compileScene on a real part
   tools/parity/browser.ts,drives dev/photo.html
   tools/parity/image.ts,PSNR and difference images
+  tools/denoise/run.ts,denoiser check in a hardware-GPU Chromium (reuses tools/e2e/session.ts)
+  dev/denoise.ts,renders a parity fixture and denoises it for tools/denoise/run.ts
   tools/agent/drive.ts,agent checks on dev/agent.html
   tools/agent/e2e.ts,the agent end to end through a real MCP client
   tools/ui/drive.ts,panel checks
@@ -56,5 +59,6 @@ files[21]{path,purpose}:
 - `bun run e2e` needs a GPU, `gamescope` and `/usr/bin/chromium`. Pass flow numbers to run a subset. Flow 12 alone takes about 40 minutes. Flow 13 checks the photo time limit.
 - In the gamescope session 2D canvases do not display, so the refining image is checked from its bitmap, not from screenshots.
 - `bun run agent:e2e` needs no GPU. It runs in headless Chromium with software GL, where the main thread stalls for seconds, and takes about 1.5 minutes. `--gpu` runs it in the gamescope session. It waits the bridge's full 15 s once, to see that a switched-off tab leaves the bridge with no tab.
-- Driver output goes to `tools/e2e/out/`, `tools/ui/out/`, `tools/parity/out/` and `tools/viewport/out/`, all git-ignored.
+- Driver output goes to `tools/e2e/out/`, `tools/ui/out/`, `tools/parity/out/`, `tools/denoise/out/` and `tools/viewport/out/`, all git-ignored.
+- `tools/denoise/run.ts` needs the `oidnDenoise` binary from the OIDN 2.5.0 release (`OIDN_DENOISE`, default `~/.t3/scratch/oidn/bin-dl/oidn-2.5.0.x86_64.linux/bin/oidnDenoise`) and, like `bun run e2e`, a GPU and gamescope.
 - `/tmp` may be a small tmpfs. Set `BOOTH_TMP` or `TMPDIR` to a real disk for the clean-checkout check and the browser drivers.

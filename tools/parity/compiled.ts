@@ -43,6 +43,8 @@ function documentFor(name: CompiledName, print: LoadedPrint, o: Required<Fixture
   doc.output.samples = o.samples;
   // Parity compares equal sample counts, so no time limit may cut a render short.
   doc.output.timeLimitS = 0;
+  // Parity compares the engines' renders. tools/denoise/run.ts checks the denoiser.
+  doc.output.denoise = false;
   // What Booth does when a part opens.
   Object.assign(doc.camera, framePart(print.mesh, doc.camera, doc.output.aspect));
   return doc;

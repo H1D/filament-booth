@@ -106,12 +106,28 @@ test("the floor card is a disc that fades from its inner to its outer radius, no
   expect(vanishing - none).toBeLessThan(0.05 * (nearlyFlat - none));
 }, 120_000);
 
-test("finish keeps the samples rendered so far", async () => {
+test("finish keeps the samples rendered so far, with the denoiser's guides", async () => {
   const scene = fixture("a", { ...small, samples: 100_000 });
   const { passes, state } = await render(scene, () => M._cb_finish());
   expect(state).toBe(RenderState.done);
   expect(passes.samples).toBeGreaterThan(0);
   expect(passes.samples).toBeLessThan(100_000);
+  expect(passes.albedo).not.toBeNull();
+  expect(passes.normal).not.toBeNull();
+}, 60_000);
+
+test("progress carries the colour only, and the final frame the guides too", async () => {
+  const scene = fixture("a", { ...small, samples: 64 });
+  const progress: Passes[] = [];
+  const { passes } = await render(scene, () => {
+    if (M._cb_render_state() !== RenderState.running) return;
+    const p = readPasses(M, small.width, small.height);
+    if (p && p.samples < 64) progress.push(p);
+  });
+  expect(progress.length).toBeGreaterThan(0);
+  for (const p of progress) expect([p.albedo, p.normal]).toEqual([null, null]);
+  expect(passes.albedo).not.toBeNull();
+  expect(passes.normal).not.toBeNull();
 }, 60_000);
 
 test("cancel returns within a second while sampling and while building the BVH", async () => {

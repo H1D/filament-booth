@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Denoiser</title>
+    <style>
+      body { margin: 16px; font: 13px/1.4 system-ui, sans-serif; background: #1d1d1f; color: #eee; }
+      pre { white-space: pre-wrap; }
+    </style>
+  </head>
+  <body>
+    <div>Renders a parity fixture with Cycles, then denoises it on WebGPU. Query: <code>fixture=a|b|c|d|e|f|g</code>, <code>width</code>, <code>height</code>, <code>samples</code>, <code>gcode</code>, <code>denoise=0</code>, <code>maxTile=&lt;pixels&gt;</code>. Results are on <code>window.__denoise</code> for tools/denoise/run.ts.</div>
+    <pre id="status">starting</pre>
+    <script type="module" src="./denoise.ts"></script>
+  </body>
+</html>
