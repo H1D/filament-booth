@@ -90,7 +90,7 @@ export function AgentPanel() {
   const top = useRef<HTMLDivElement>(null);
   const { settings, status } = state;
   const cannotRun = status.kind === "unavailable" && !settings.enabled;
-  const needsToken = !settings.enabled && settings.token === "";
+  const needsToken = !settings.enabled && !TOKEN_PATTERN.test(settings.token);
 
   useEffect(() => {
     if (showAgent) top.current?.scrollIntoView({ block: "nearest" });
