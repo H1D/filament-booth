@@ -73,13 +73,16 @@ async function render(request: RenderRequest): Promise<void> {
   finishRequested = false;
   cancelRequested = false;
   module ??= loadCycles(request.moduleUrl, request.poolSize);
-  const [M, world] = await Promise.all([module, request.again ? null : fetchWorld(request.hdrUrl)]);
+  // The world image loads alongside the module, and only for a new session.
+  const describe: Promise<(M: CyclesModule) => void> = request.again
+    ? Promise.resolve((M) => uploadAgain(M, request.scene))
+    : fetchWorld(request.hdrUrl).then((world) => (M) => uploadScene(M, request.scene, world));
+  const [M, upload] = await Promise.all([module, describe]);
   if (cancelRequested) {
     post({ type: "cancelled" });
     return;
   }
-  if (request.again) uploadAgain(M, request.scene);
-  else if (world) uploadScene(M, request.scene, world);
+  upload(M);
   // Before the start: a render again can publish its first pass at once. It counts on across renders.
   let version = M._cb_passes_version();
   if (M._cb_render_start() < 0) throw new Error(M.UTF8ToString(M._cb_error()));

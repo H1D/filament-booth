@@ -202,12 +202,16 @@ test("a worker rendering again is not ended by the earlier render's idle timer",
   expect(worker.terminated).toBe(true);
 });
 
-test("hiding the tab ends a parked worker", async () => {
+test("hiding the tab ends a parked worker, and a render that ends in a hidden tab keeps none", async () => {
   const page = Object.assign(new EventTarget(), { visibilityState: "visible" });
   vi.stubGlobal("document", page);
-  const engine = cyclesEngine();
-  const worker = await shoot(engine, fixture("a", small));
+  const engine = cyclesEngine(), scene = fixture("a", small);
+  const parked = await shoot(engine, scene);
   page.visibilityState = "hidden";
   page.dispatchEvent(new Event("visibilitychange"));
-  expect(worker.terminated).toBe(true);
+  expect(parked.terminated).toBe(true);
+  const finishedHidden = await shoot(engine, scene);
+  expect(finishedHidden.terminated).toBe(true);
+  page.visibilityState = "visible";
+  expect(await shoot(engine, moved(scene))).not.toBe(finishedHidden);
 });

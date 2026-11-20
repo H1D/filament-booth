@@ -48,10 +48,16 @@ export interface CyclesEngineOptions {
 
 export function cyclesEngine(options: CyclesEngineOptions = {}): PhotoEngine {
   let parked: Parked | null = null;
+  const pageHidden = (): boolean => typeof document !== "undefined" && document.visibilityState === "hidden";
+  // A hidden tab's timers may wait for minutes: give the heap back now.
+  const onVisibility = (): void => { if (pageHidden()) release(); };
   const unpark = (): Parked | null => {
     const p = parked;
     parked = null;
-    if (p) clearTimeout(p.timer);
+    if (p) {
+      clearTimeout(p.timer);
+      if (typeof document !== "undefined") document.removeEventListener("visibilitychange", onVisibility);
+    }
     return p;
   };
   const release = (): void => unpark()?.worker.terminate();
@@ -63,19 +69,17 @@ export function cyclesEngine(options: CyclesEngineOptions = {}): PhotoEngine {
   };
   const park = (worker: Worker, scene: Scene, hidden: Uint8Array | undefined): void => {
     release();
-    const drop = (): void => {
-      if (parked?.worker === worker) unpark();
+    if (pageHidden()) {
       worker.terminate();
-    };
+      return;
+    }
+    const drop = (): void => { if (parked?.worker === worker) release(); };
     // A parked worker has nothing to say: an error or a message means it cannot be trusted again.
     worker.onmessage = drop;
     worker.onerror = drop;
     parked = { worker, scene, hidden, timer: setTimeout(drop, IDLE_MS) };
+    if (typeof document !== "undefined") document.addEventListener("visibilitychange", onVisibility);
   };
-  if (typeof document !== "undefined") {
-    // A hidden tab's timers may wait for minutes: give the heap back now.
-    document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") release(); });
-  }
   return {
     id: "cycles",
     fits: async (scene) => {

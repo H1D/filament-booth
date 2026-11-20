@@ -48,7 +48,7 @@ Build switches that matter, all in `build_cycles.sh`:
 | `api/session.cpp` | Session, film, camera, render control, progressive pass snapshots |
 | `api/scene.cpp` | Meshes and attributes, the bead and backdrop materials, area lights, scrims, floor cards, world |
 | `src/photo/cycles-upload.ts` | Scene into the C API: per-vertex expansion, heap traffic, HDR decode, memory estimate |
-| `src/photo/cycles-worker.ts` | Hosts the module for one render |
+| `src/photo/cycles-worker.ts` | Hosts the module for one scene setup: a render, and renders again with a new camera or film |
 | `src/photo/cycles.ts` | `cyclesEngine(): PhotoEngine` |
 | `tools/blender/render_scene.py` | The same scene in native Blender 5.2.3 |
 | `tools/parity/` | Fixtures, the browser and Blender parity run |

@@ -51,7 +51,7 @@ When the user turns on Agent control, the tab loads Python and dials the bridge.
 - **Section identity**: change detection is `===` on `scene.part`, `lights`, `backdrop`, `world`, `camera`, `film`.
 - **One write path**: `booth.update` with mutators. No reducer, no intent union.
 - **One table per fact**: `BOUNDS` for limits, `BEAD_WORD` for vertex packing, `LayerTable` for shading numbers, `FILM_DEFAULTS` for render settings, `calibration.ts` for bead shape.
-- **Fresh worker per job**: one per slice, one per Cycles render, and a fresh Python interpreter after each cancel. Cancel is terminate.
+- **Fresh worker per job**: one per slice, one per Cycles scene setup (a photo that changes only the camera or film renders again in it), and a fresh Python interpreter after each cancel. Cancel is terminate.
 - **Ports and fakes**: `BoothDeps`, `PhotoEngine` and `PhotoTools` are injected, so tests and dev pages run without a GPU or wasm.
 - **Ground truth by script**: numbers that must match Blender are dumped from Blender by `tools/blender/` and tested against.
 
