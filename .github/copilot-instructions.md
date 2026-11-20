@@ -95,7 +95,7 @@ One saved `BoothDocument` (plain JSON) is compiled by the pure function `compile
 ## Known gaps
 
 - Preview is brighter than Cycles in the dark, rim and raking looks (1.3 to 1.7 times). Its key shadow is hard where Cycles is soft.
-- A full-size photo (1600x2000, 256 samples) of an 11M triangle part takes 30 to 38 minutes with no limit. The default 5 minute limit cuts it to fewer samples, and the denoiser cleans what is left.
+- A full-size photo (1600x2000) of an 11M triangle part at 256 samples takes 30 to 38 minutes with no limit. The default is 64 samples: denoised, it looks like 256 (BSCH-04 at 1024x1280: 50.7 dB against 52.7 dB, 77 s against 278 s).
 - Without WebGPU there is no denoising. There is no CPU fallback.
 - Untested: Firefox, Safari, mobile, low-core machines. PLA Basic and Silk presets are uncalibrated.
 

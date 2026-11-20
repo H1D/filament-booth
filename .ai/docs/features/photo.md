@@ -47,6 +47,7 @@ files[11]{path,purpose}:
 - The bitmap in a `rendering` progress belongs to the run and is closed when replaced. Draw or copy it inside the callback.
 - WGSL may assume no NaN or infinity, so the denoiser sanitises its inputs on the CPU while cropping tiles.
 - WebGPU reports failed allocations and dispatches through error scopes, not exceptions. `denoise()` checks them and rejects.
+- The default is 64 samples. Denoised, BSCH-04 at 1024x1280 reads 49.4 / 50.7 / 52.7 dB at 32 / 64 / 256 samples against a 512 sample render, in 43 / 77 / 278 s, and 64 and 256 look the same. Adaptive sampling (threshold 0.01 to 0.05, min samples 16) bought nothing over simply fewer samples.
 - Timings on the dev machine: 800x1000 at 64 samples takes about 53 s. An 11.2M triangle part at 1600x2000 and 256 samples takes 30 to 38 min and a 3 GiB heap with no time limit.
 - `?no-cycles` (development builds only) forces the raster fallback.
 - Parity against native Blender is 51 to 70 dB PSNR. Recheck with `bun tools/parity/run.ts` after touching `cycles-upload.ts` or `cycles/api/`.

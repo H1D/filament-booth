@@ -656,6 +656,7 @@ try {
     const parseMs = await openPart(LEKV2, "plate_1.gcode");
     // The default limit is 5 minutes and this photo takes about 40. It must run to its samples.
     await setTimeLimit("No limit", 0);
+    await setField("output", "Samples", "256");
     const tris = await page.evaluate(() => window.boothDev?.booth.scene.part?.mesh.tris ?? 0);
     await previewShot("12-lekv2-preview");
     const shot = await photo("12-lekv2-cycles", 3_600_000);
