@@ -4,7 +4,7 @@ The local bridge between a coding agent and the [Filament booth](https://booth.a
 an MCP server over stdio for the agent and a WebSocket server on `127.0.0.1` that the booth tab
 dials after you turn its switch on. Nothing leaves your computer.
 
-Open the booth, go to **Setup → Agent**, copy the command it shows and run it once in a terminal:
+Open the booth, open the **Agent** section at the bottom of the rail, copy the command it shows and run it once in a terminal:
 
 ```sh
 claude mcp add --scope user booth -- npx -y filament-booth --token <the token the tab shows>
