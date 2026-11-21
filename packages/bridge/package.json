@@ -2,6 +2,9 @@
   "name": "filament-booth",
   "version": "0.1.1",
   "description": "Let a local coding agent drive the Filament booth tab (booth.artems.net) with Blender Python, over MCP.",
+  "license": "AGPL-3.0-only",
+  "repository": { "type": "git", "url": "git+https://github.com/H1D/filament-booth.git", "directory": "packages/bridge" },
+  "homepage": "https://booth.artems.net",
   "type": "module",
   "bin": {
     "filament-booth": "bridge.mjs"
@@ -11,7 +14,7 @@
     "README.md"
   ],
   "scripts": {
-    "prepack": "cd ../.. && bun run bridge:build"
+    "prepack": "cd ../.. && bun run bridge:build && cp LICENSE packages/bridge/LICENSE"
   },
   "engines": {
     "node": ">=20"

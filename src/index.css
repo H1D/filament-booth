@@ -415,11 +415,13 @@ progress:indeterminate::-webkit-progress-bar {
   position-anchor: --reset-all;
   inset: auto; top: anchor(bottom); right: anchor(right); margin: 0.35rem 0 0;
   position-try-fallbacks: flip-block;
-  width: 17rem; padding: 0.75rem; display: grid; gap: 0.75rem;
+  width: 17rem; padding: 0.75rem; gap: 0.75rem;
   background: var(--panel); color: var(--text);
   border: 1px solid var(--line); border-radius: 8px;
   box-shadow: 0 10px 28px oklch(0 0 0 / 0.5);
 }
+/* Only when open: `display` on the closed popover would beat the browser's `display: none`. */
+.confirm:popover-open { display: grid; }
 
 /* ---- the props section's add menu (native popover, anchored to its button) ---------------- */
 
@@ -452,11 +454,12 @@ progress:indeterminate::-webkit-progress-bar {
   position-anchor: --agent-badge;
   inset: auto; top: anchor(bottom); right: anchor(right); margin: 0.35rem 0 0;
   position-try-fallbacks: flip-block;
-  width: 19rem; padding: 0.75rem; display: grid; gap: 0.75rem;
+  width: 19rem; padding: 0.75rem; gap: 0.75rem;
   background: var(--panel); color: var(--text);
   border: 1px solid var(--line); border-radius: 8px;
   box-shadow: 0 10px 28px oklch(0 0 0 / 0.5);
 }
+.agent-menu:popover-open { display: grid; }
 .agent-running { color: var(--text-dim); overflow-wrap: anywhere; }
 
 /* ---- narrow windows ------------------------------------------------------------------ */

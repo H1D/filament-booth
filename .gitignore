@@ -30,3 +30,5 @@ tools/e2e/out/
 tools/denoise/out/
 # Built by bun run bridge:build, published to npm, not committed.
 packages/bridge/bridge.mjs
+# Copied from the root by the package's prepack, so the npm tarball carries the licence.
+packages/bridge/LICENSE
