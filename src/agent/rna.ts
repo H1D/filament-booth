@@ -22,13 +22,13 @@
  * Pure: no DOM, no Pyodide. host.ts interprets it.
  */
 import {
-  AGX_LOOKS, BED_TYPES, BOUNDS, FILAMENT_PRESET_IDS, LOOK_IDS, OVERLAYS, PROP_SHAPES, REST_FACES, SEAM_POSITIONS, TOP_SURFACE_PATTERNS,
+  AGX_LOOKS, BED_TYPES, BOUNDS, FILAMENT_PRESET_IDS, LOOK_IDS, OPTICS_PRESET_IDS, OVERLAYS, PROP_SHAPES, REST_FACES, SEAM_POSITIONS, TOP_SURFACE_PATTERNS,
   deg, kelvin, m,
   type AgxLook, type AreaLight, type BoothDocument, type Bounds, type CameraSetup, type FilamentChoice, type FilamentRecipe,
-  type Imperfections, type OutputSetup, type Pose, type PropShape, type ScrimLight, type SliceSettings, type Studio, type StudioLight,
+  type FilmOptics, type Imperfections, type OutputSetup, type Pose, type PropShape, type ScrimLight, type SliceSettings, type Studio, type StudioLight,
   type StudioProp, type Vec3,
 } from "../document";
-import { applyFilamentPreset, applyLook, removeLight, removeProp, type Edit } from "../edits";
+import { applyFilamentPreset, applyLook, applyOpticsPreset, removeLight, removeProp, type Edit } from "../edits";
 import { LOOK_PRESETS, WORLD_HDRS } from "../presets";
 import { FILM_DEFAULTS, filmSize, primitiveGeometry, solveLight, sphericalAbout, sphericalOffset, type PropGeometry, type Scene } from "../scene";
 import { hexToLinear, linearToHex } from "../ui/color";
@@ -112,6 +112,7 @@ export const HDR_IMAGES: readonly HdrImage[] = Object.entries(WORLD_HDRS).map(([
 interface OwnerNodes {
   document: BoothDocument;
   output: OutputSetup;
+  optics: FilmOptics;
   viewTransform: OutputSetup["viewTransform"];
   camera: CameraSetup;
   light: StudioLight;
@@ -146,6 +147,7 @@ const lightOf = (doc: BoothDocument, h: Handle): StudioLight | null =>
 export const OWNERS: { readonly [O in OwnerKind]: Owner<OwnerNodes[O]> } = {
   document: { path: "", node: (doc) => doc },
   output: { path: "output", node: (doc) => doc.output },
+  optics: { path: "output.optics", node: (doc) => doc.output.optics },
   viewTransform: { path: "output.viewTransform", node: (doc) => doc.output.viewTransform },
   camera: { path: "camera", node: (doc) => doc.camera },
   light: { path: "studio.lights[]", node: lightOf },
@@ -781,7 +783,7 @@ function fixedSocket(pyClass: string, nodePath: string, name: string, value: Jso
 }
 
 export type RnaTypeName =
-  | "BlendData" | "Context" | "Scene" | "BoothScene" | "BoothFloorCards"
+  | "BlendData" | "Context" | "Scene" | "BoothScene" | "BoothFloorCards" | "BoothOptics"
   | "RenderSettings" | "ImageFormatSettings" | "CyclesRenderSettings" | "ViewSettings"
   | "LightObject" | "ScrimObject" | "AreaLight" | "BoothLight" | "BoothScrim"
   | "CameraObject" | "Camera" | "CameraDOF" | "BoothCamera"
@@ -834,7 +836,20 @@ export const RNA: { readonly [K in RnaTypeName]: RnaType } = {
     look: p.codec(lookBase),
     use_floor_cards: p.codec(floorCardsOn),
     floor_cards: ptr("BoothFloorCards"),
+    optics: ptr("BoothOptics"),
   })),
+  BoothOptics: rnaType("optics", "BoothOpticsSettings", "bpy.data.scenes['Scene'].booth.optics",
+    "Lens and sensor imperfections applied during development (default: STUDIO_DSLR; set all to 0 or apply CLEAN for raw Cycles + AgX). " +
+    "grain: shadow-weighted ISO sensor grain; glare: linear HDR specular bloom and veiling glare before AgX; vignette: optical corner falloff; " +
+    "chromatic: lateral radial R/B fringing; softness: corner optical softness; warmth: luminance-preserving white-balance drift (-1 cool to +1 warm). " +
+    "Apply a profile with bpy.ops.booth.optics_apply(profile=...).", (p) => ({
+      grain: p.num("grain", "optics"),
+      glare: p.num("glare", "optics"),
+      vignette: p.num("vignette", "optics"),
+      chromatic: p.num("chromatic", "optics"),
+      softness: p.num("softness", "optics"),
+      warmth: p.num("warmth", "opticsWarmth"),
+    })),
   BoothFloorCards: rnaType("floorCards", "BoothFloorCards", "bpy.data.scenes['Scene'].booth.floor_cards",
     "A lit ring on the table that only glossy reflections see, brightest on its key side.", (p) => ({
       key_radiance: p.num("keySide", "radiance"),
@@ -943,7 +958,8 @@ export const RNA: { readonly [K in RnaTypeName]: RnaType } = {
     dof: ptr("CameraDOF"),
     angle: missing("set the field of view with lens (mm)"),
   })),
-  CameraDOF: rnaType("camera", "CameraDOFSettings", "bpy.data.cameras['Camera'].dof", "Depth of field is always on.", (p) => ({
+  CameraDOF: rnaType("camera", "CameraDOFSettings", "bpy.data.cameras['Camera'].dof",
+    "Depth of field is always on. Opening a part chooses aperture_fstop dynamically from the part's size to keep it sharp front to back.", (p) => ({
     use_dof: fixed(true, "the booth always renders depth of field; aperture_fstop up to 64 is near sharp"),
     aperture_fstop: p.num("fStop", "fStop"),
     focus_distance: p.codec(focusDistance),
@@ -1364,12 +1380,13 @@ export interface OpDef {
 
 export type OpName =
   | "object.light_add" | "booth.scrim_add" | "wm.stl_import" | "booth.gcode_import"
-  | "render.render" | "render.opengl" | "booth.look_apply" | "booth.filament_apply"
+  | "render.render" | "render.opengl" | "booth.look_apply" | "booth.filament_apply" | "booth.optics_apply"
   | "mesh.primitive_cube_add" | "mesh.primitive_cylinder_add" | "mesh.primitive_uv_sphere_add" | "mesh.primitive_plane_add"
   | "booth.prop_import";
 
 const LOOK_ENUM = bpyEnum(LOOK_IDS);
 const PRESET_ENUM = bpyEnum(FILAMENT_PRESET_IDS);
+const OPTICS_ENUM = bpyEnum(OPTICS_PRESET_IDS);
 
 const LIGHT_TYPES: Readonly<Record<string, string>> = {
   POINT: "A point light is a small area light: light_add(type='AREA', ...), then data.size = 0.05.",
@@ -1541,6 +1558,14 @@ export const OPS: { readonly [K in OpName]: OpDef } = {
     params: { preset: enumParam(Object.keys(PRESET_ENUM)) },
     run: (args, host) => {
       host.edit(applyFilamentPreset(PRESET_ENUM[String(args.preset)]), "booth.filament_apply");
+      return "FINISHED";
+    },
+  },
+  "booth.optics_apply": {
+    doc: "Copies a lens and film profile into scene.booth.optics: CLEAN (all zeros), STUDIO_DSLR (default), MACRO, or DESK_PHONE.",
+    params: { profile: enumParam(Object.keys(OPTICS_ENUM)) },
+    run: (args, host) => {
+      host.edit(applyOpticsPreset(OPTICS_ENUM[String(args.profile)]), "booth.optics_apply");
       return "FINISHED";
     },
   },

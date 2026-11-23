@@ -155,6 +155,24 @@ describe("the sessions of usage.md, without the blocking operators", () => {
       "print(spot.name, spot.data.shape, round(math.degrees(spot.data.spread)))",
     ]))).toBe("Spot RECTANGLE 30\n");
   });
+
+  test("session 4: lens and film optics profiles, per-field overrides, and reference docs", () => {
+    const r = fresh();
+    const out = done(py_([
+      "import bpy",
+      "opt = bpy.context.scene.booth.optics",
+      "print('default', round(opt.grain, 2), round(opt.glare, 2))",
+      "bpy.ops.booth.optics_apply(profile='CLEAN')",
+      "print('clean', opt.grain, opt.vignette)",
+      "bpy.ops.booth.optics_apply(profile='MACRO')",
+      "opt.warmth = -0.25",
+      "print('macro', round(opt.vignette, 2), round(opt.warmth, 2))",
+      "ref = bpy.booth.reference('BoothOptics')",
+      "print('documented', all(k in ref for k in ('grain', 'glare', 'vignette', 'chromatic', 'softness', 'warmth')))",
+    ]));
+    expect(out).toBe("default 0.14 0.22\nclean 0.0 0.0\nmacro 0.32 -0.25\ndocumented True\n");
+    expect(r.booth.doc.output.optics).toMatchObject({ vignette: 0.32, warmth: -0.25 });
+  });
 });
 
 describe("props", () => {

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
-import { DocumentError, LOOK_IDS, defaultDocument, parseDocument } from "../src/document";
-import { LOOK_PRESETS } from "../src/presets";
+import { DEFAULT_FILM_OPTICS, DocumentError, LOOK_IDS, OPTICS_PRESET_IDS, defaultDocument, parseDocument } from "../src/document";
+import { LOOK_PRESETS, OPTICS_PRESETS } from "../src/presets";
 
 const roundTrip = (v: unknown): unknown => JSON.parse(JSON.stringify(v));
 
@@ -57,6 +57,30 @@ describe("the photo time limit", () => {
     const saved = roundTrip(defaultDocument());
     edit(saved, ["output", "timeLimitS"], undefined);
     expect(parseDocument(saved).output.timeLimitS).toBe(300);
+  });
+});
+
+describe("lens and film optics", () => {
+  test("a fresh document and a setup saved before optics existed default to the Studio camera profile", () => {
+    expect(defaultDocument().output.optics).toEqual(OPTICS_PRESETS["studio-dslr"].optics);
+    const saved = roundTrip(defaultDocument());
+    edit(saved, ["output", "optics"], undefined);
+    expect(parseDocument(saved).output.optics).toEqual(DEFAULT_FILM_OPTICS);
+  });
+
+  test("every optics preset parses back unchanged", () => {
+    for (const id of OPTICS_PRESET_IDS) {
+      const d = defaultDocument();
+      d.output.optics = { ...OPTICS_PRESETS[id].optics };
+      expect(parseDocument(roundTrip(d)).output.optics).toEqual(OPTICS_PRESETS[id].optics);
+    }
+  });
+
+  test("out-of-range optics values are rejected with their path", () => {
+    expect(rejectionOf(["output", "optics", "grain"], -0.1).path).toBe("output.optics.grain");
+    expect(rejectionOf(["output", "optics", "glare"], 1.1).path).toBe("output.optics.glare");
+    expect(rejectionOf(["output", "optics", "warmth"], 1.5).path).toBe("output.optics.warmth");
+    expect(rejectionOf(["output", "optics", "warmth"], -1.5).path).toBe("output.optics.warmth");
   });
 });
 

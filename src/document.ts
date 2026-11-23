@@ -18,7 +18,7 @@
  * This is render.py's camera convention and the old viewer's floor-card one.
  */
 import { TOP_SURFACE_PATTERNS, type TopSurfacePattern } from "./print/orca";
-import { FILAMENT_PRESETS, LOOK_PRESETS } from "./presets";
+import { FILAMENT_PRESETS, LOOK_PRESETS, OPTICS_PRESETS } from "./presets";
 import { deg, kelvin, m, mm, watts, type Degrees, type Kelvin, type Metres, type Mm, type Rgb, type Vec3, type Watts } from "./units";
 
 export { deg, kelvin, m, mm, watts };
@@ -234,6 +234,34 @@ export interface StudioProp {
 /** Blender's AgX looks. "medium-high-contrast" is what the reference stills use. */
 export const AGX_LOOKS = ["none", "punchy", "low-contrast", "medium-low-contrast", "medium-high-contrast", "high-contrast"] as const;
 export type AgxLook = (typeof AGX_LOOKS)[number];
+
+export const OPTICS_PRESET_IDS = ["clean", "studio-dslr", "macro", "desk-phone"] as const;
+export type OpticsPresetId = (typeof OPTICS_PRESET_IDS)[number];
+
+/**
+ * Camera lens and sensor imperfections applied during development (film.ts and
+ * the viewport display pass). All zeros leave Cycles + AgX untouched.
+ */
+export interface FilmOptics {
+  /** 0..1 sensor ISO grain: luminance + subtle chroma, strongest in shadows. */
+  grain: number;
+  /** 0..1 optical highlight bloom and wide veiling glare, in linear HDR before AgX. */
+  glare: number;
+  /** 0..1 optical corner falloff (cos^4-like lens shading), in linear light before AgX. */
+  vignette: number;
+  /** 0..1 lateral chromatic aberration (radial R/B fringe), in linear light before AgX. */
+  chromatic: number;
+  /** 0..1 optical lens softness (subtle radial MTF falloff), in linear light before AgX. */
+  softness: number;
+  /** -1..1 white-balance drift from cool to warm, in linear light before AgX. */
+  warmth: number;
+}
+export const CLEAN_FILM_OPTICS: FilmOptics = {
+  grain: 0, glare: 0, vignette: 0, chromatic: 0, softness: 0, warmth: 0,
+};
+/** Default camera look: subtle studio lens and sensor imperfections ("Studio camera" profile). */
+export const DEFAULT_FILM_OPTICS: FilmOptics = { ...OPTICS_PRESETS["studio-dslr"].optics };
+
 export interface OutputSetup {
   /** Crop frame in the preview, frame of the photo. Pixel size is derived in compileScene. */
   aspect: { w: number; h: number };
@@ -244,6 +272,7 @@ export interface OutputSetup {
   transparentBackground: boolean;
   viewTransform: { kind: "agx"; look: AgxLook };
   denoise: boolean;
+  optics: FilmOptics;
 }
 
 // ---- boundary ----------------------------------------------------------------
@@ -332,6 +361,8 @@ export const BOUNDS = {
   longEdgePx: { int: true, min: 16, max: 16384, step: 16, slider: { min: 512, max: 6144 } },
   samples: { int: true, min: 1, max: 65536, step: 1, slider: { min: 16, max: 4096 } },
   timeLimitS: { int: true, min: 0, max: 86400, step: 1 },
+  optics: UNIT,
+  opticsWarmth: { min: -1, max: 1, step: 0.01 },
 
   propLocation: { min: -100, max: 100, step: 0.001, slider: { min: -1, max: 1 } },
   propRotationDeg: { min: -3600, max: 3600, step: 1, slider: { min: -180, max: 180 } },
@@ -517,6 +548,18 @@ function parsePose(v: unknown, path: string): Pose {
   };
 }
 
+function parseFilmOptics(v: unknown, path: string): FilmOptics {
+  const o = object(v, path);
+  return {
+    grain: num(o.grain, at(path, "grain"), BOUNDS.optics),
+    glare: num(o.glare, at(path, "glare"), BOUNDS.optics),
+    vignette: num(o.vignette, at(path, "vignette"), BOUNDS.optics),
+    chromatic: num(o.chromatic, at(path, "chromatic"), BOUNDS.optics),
+    softness: num(o.softness, at(path, "softness"), BOUNDS.optics),
+    warmth: num(o.warmth, at(path, "warmth"), BOUNDS.opticsWarmth),
+  };
+}
+
 function parseOutput(v: unknown, path: string): OutputSetup {
   const o = object(v, path);
   const ap = at(path, "aspect");
@@ -533,6 +576,8 @@ function parseOutput(v: unknown, path: string): OutputSetup {
     transparentBackground: bool(o.transparentBackground, at(path, "transparentBackground")),
     viewTransform: { kind: "agx", look: oneOf(vt.look, at(vp, "look"), AGX_LOOKS) },
     denoise: bool(o.denoise, at(path, "denoise")),
+    // Setups saved before optics existed have no such field. They take the default studio camera look and stay version 1.
+    optics: o.optics === undefined ? { ...DEFAULT_FILM_OPTICS } : parseFilmOptics(o.optics, at(path, "optics")),
   };
 }
 
@@ -627,6 +672,7 @@ export function defaultDocument(): BoothDocument {
       transparentBackground: false,
       viewTransform: { kind: "agx", look: "medium-high-contrast" },
       denoise: true,
+      optics: { ...DEFAULT_FILM_OPTICS },
     },
     props: [],
   };

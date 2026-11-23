@@ -1,12 +1,22 @@
-import { AGX_LOOKS, BOUNDS, REST_FACES, deg, type AgxLook, type Pose } from "../document";
-import { Select, Slider, Switch, type Option } from "./controls";
+import { AGX_LOOKS, BOUNDS, OPTICS_PRESET_IDS, REST_FACES, deg, type AgxLook, type FilmOptics, type OpticsPresetId, type Pose } from "../document";
+import { applyOpticsPreset } from "../edits";
+import { OPTICS_PRESETS } from "../presets";
+import { Group, Scope, Select, Slider, Switch, type Option } from "./controls";
 import { linear, logarithmic } from "./mappings";
 import { useDoc, useEdit, useScene } from "./hooks";
-import { DEFAULTS, formatDuration, titleCase } from "./model";
+import { DEFAULTS, formatDuration, isSame, titleCase } from "./model";
 
 const TURNTABLE = linear(BOUNDS.turntableDeg);
 const LONG_EDGE = linear(BOUNDS.longEdgePx);
 const SAMPLES = logarithmic(BOUNDS.samples);
+const OPTICS = linear(BOUNDS.optics);
+const OPTICS_WARMTH = linear(BOUNDS.opticsWarmth);
+
+const OPTICS_OPTIONS: Option<OpticsPresetId>[] = OPTICS_PRESET_IDS.map((id) => ({ value: id, label: OPTICS_PRESETS[id].label }));
+
+function opticsPresetOf(optics: FilmOptics): OpticsPresetId | null {
+  return OPTICS_PRESET_IDS.find((id) => isSame(optics, OPTICS_PRESETS[id].optics)) ?? null;
+}
 
 /** The limits on offer, in seconds. 0 is no limit. */
 const TIME_LIMITS_S = [0, 30, 60, 120, 300, 600, 1200, 1800, 3600] as const;
@@ -62,6 +72,31 @@ export function OutputPanel() {
       <Select label="AgX look" value={output.viewTransform.look} options={LOOKS}
         hint="The contrast curve applied when the photo is developed."
         onChange={(look) => { edit((d) => { d.output.viewTransform = { kind: "agx", look }; }); }} />
+      <Scope name="Lens and film">
+        <Group title="Lens and film">
+          <Select label="Profile" value={opticsPresetOf(output.optics) ?? ""} options={OPTICS_OPTIONS}
+            hint="Copies subtle camera lens and sensor imperfections into the sliders below. Clean leaves Cycles and AgX untouched."
+            onChange={(id) => { edit(applyOpticsPreset(id)); }} />
+          <Slider label="Grain" mapping={OPTICS} value={output.optics.grain} defaultValue={DEFAULTS.output.optics.grain}
+            hint="Sensor ISO grain, stronger in shadows and muted in highlights."
+            onChange={(v) => { edit((d) => { d.output.optics.grain = v; }); }} />
+          <Slider label="Glare" mapping={OPTICS} value={output.optics.glare} defaultValue={DEFAULTS.output.optics.glare}
+            hint="Optical highlight bloom and veiling glare in linear light before AgX."
+            onChange={(v) => { edit((d) => { d.output.optics.glare = v; }); }} />
+          <Slider label="Vignette" mapping={OPTICS} value={output.optics.vignette} defaultValue={DEFAULTS.output.optics.vignette}
+            hint="Natural light falloff towards the corners of the lens."
+            onChange={(v) => { edit((d) => { d.output.optics.vignette = v; }); }} />
+          <Slider label="Chromatic" mapping={OPTICS} value={output.optics.chromatic} defaultValue={DEFAULTS.output.optics.chromatic}
+            hint="Subtle lateral red and blue colour fringing towards the frame edges."
+            onChange={(v) => { edit((d) => { d.output.optics.chromatic = v; }); }} />
+          <Slider label="Softness" mapping={OPTICS} value={output.optics.softness} defaultValue={DEFAULTS.output.optics.softness}
+            hint="Optical lens softness, sharpest at the centre and slightly softer at the corners."
+            onChange={(v) => { edit((d) => { d.output.optics.softness = v; }); }} />
+          <Slider label="Warmth" mapping={OPTICS_WARMTH} value={output.optics.warmth} defaultValue={DEFAULTS.output.optics.warmth}
+            hint="White-balance drift from cool to warm."
+            onChange={(v) => { edit((d) => { d.output.optics.warmth = v; }); }} />
+        </Group>
+      </Scope>
       <Switch label="Transparent background" checked={output.transparentBackground}
         hint="Keeps the part and its shadow and drops the backdrop."
         onChange={(on) => { edit((d) => { d.output.transparentBackground = on; }); }} />

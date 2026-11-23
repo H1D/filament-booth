@@ -1,9 +1,9 @@
 import { describe, expect, test } from "vitest";
 import { DEFAULT_GLOSS, defaultDocument, deg, m, parseDocument, watts, type BoothDocument, type StudioLight } from "../src/document";
 import {
-  addLight, applyFilamentPreset, applyLook, focusAt, patchLight, removeLight, setFocal, type Edit,
+  addLight, applyFilamentPreset, applyLook, applyOpticsPreset, focusAt, patchLight, removeLight, setFocal, type Edit,
 } from "../src/edits";
-import { FILAMENT_PRESETS, LOOK_PRESETS } from "../src/presets";
+import { FILAMENT_PRESETS, LOOK_PRESETS, OPTICS_PRESETS } from "../src/presets";
 import { compileScene } from "../src/scene";
 
 /** Applies an edit to a fresh default document and returns what the boundary accepts. */
@@ -52,6 +52,16 @@ describe("applyFilamentPreset", () => {
     expect(after.filament.gloss).toBe(DEFAULT_GLOSS);
     expect(after.filament.bed).toBe("smooth");
     expect(after.filament.imperfections.heatGloss).toBe(0.1);
+  });
+});
+
+describe("applyOpticsPreset", () => {
+  test("copies the profile into output.optics without mutating the preset", () => {
+    const draft = defaultDocument();
+    applyOpticsPreset("studio-dslr")(draft);
+    expect(draft.output.optics).toEqual(OPTICS_PRESETS["studio-dslr"].optics);
+    draft.output.optics.grain = 0.99;
+    expect(OPTICS_PRESETS["studio-dslr"].optics.grain).toBeLessThan(0.5);
   });
 });
 

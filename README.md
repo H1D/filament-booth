@@ -11,6 +11,12 @@ The tab slices the STL with OrcaSlicer's engine, builds the print bead by bead, 
 with Blender's Cycles. Both run in WebAssembly, so no file leaves your computer and there is
 nothing to install. The layer lines above are the toolpath of a 0.2 mm print.
 
+Opening a part frames it and chooses a default aperture (`f/`) for its size so small prints stay in
+focus front to back. Photos develop through Blender's AgX with subtle camera optics on by default
+(**Studio camera** profile: gentle highlight glare, corner vignetting, fine shadow-weighted sensor
+grain, light chromatic aberration and corner softness), with **Clean**, **Macro lens** and
+**Desk / phone** profiles plus per-effect sliders under **Output → Lens and film**.
+
 ![The booth with a Benchy open: the live preview, the photo card and the controls](docs/media/app.png)
 
 ## Let an agent take the photos
@@ -43,6 +49,7 @@ scene = bpy.context.scene
 scene.camera.data.lens = 105
 scene.render.resolution_x = scene.render.resolution_y = 1600
 scene.cycles.samples = 64
+bpy.ops.booth.optics_apply(profile="STUDIO_DSLR")  # or CLEAN, MACRO, DESK_PHONE; fine-tune via scene.booth.optics.*
 
 color = bpy.data.materials["Filament"].node_tree.nodes["Principled BSDF"].inputs["Base Color"]
 shots = [

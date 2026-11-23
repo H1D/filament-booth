@@ -1,7 +1,8 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, test, vi } from "vitest";
-import { AGX_LOOKS, type AgxLook } from "../src/document";
-import { agx, downscaleFrame, loadAgx, parseAgx, parseManifest, toneMapFrame, type AgxData, type RadianceFrame } from "../src/film";
+import { AGX_LOOKS, CLEAN_FILM_OPTICS, DEFAULT_FILM_OPTICS, type AgxLook, type FilmOptics } from "../src/document";
+import { agx, downscaleFrame, isOpticsClean, loadAgx, parseAgx, parseManifest, toneMapFrame, warmthGains, type AgxData, type RadianceFrame } from "../src/film";
+import { OPTICS_PRESETS } from "../src/presets";
 
 const LUT_DIR = new URL("../public/lut/", import.meta.url);
 const FIXTURES = new URL("./fixtures/", import.meta.url);
@@ -327,5 +328,139 @@ describe("downscaleFrame", () => {
     expect(Array.from(small.rgba)).toEqual([0.5, 0.5, 0.5, 1, 0.5, 0.5, 0.5, 1, 0.5, 0.5, 0.5, 1, 0.5, 0.5, 0.5, 1]);
     const wide = downscaleFrame({ width: 8, height: 2, samples: 1, rgba: new Float32Array(64) }, 4);
     expect([wide.width, wide.height]).toEqual([4, 1]);
+  });
+});
+
+describe("film optics", () => {
+  const data = lut("medium-high-contrast");
+  const uniformFrame = (w: number, h: number, r: number, g: number, b: number, a = 1): RadianceFrame => {
+    const rgba = new Float32Array(w * h * 4);
+    for (let i = 0; i < rgba.length; i += 4) {
+      rgba[i] = r * a; rgba[i + 1] = g * a; rgba[i + 2] = b * a; rgba[i + 3] = a;
+    }
+    return { width: w, height: h, samples: 1, rgba };
+  };
+  const opticsWith = (patch: Partial<FilmOptics>): FilmOptics => ({ ...CLEAN_FILM_OPTICS, ...patch });
+
+  test("clean optics takes the untouched AgX path and default optics is the Studio camera profile", () => {
+    expect(isOpticsClean(CLEAN_FILM_OPTICS)).toBe(true);
+    expect(isOpticsClean(OPTICS_PRESETS.clean.optics)).toBe(true);
+    expect(isOpticsClean(DEFAULT_FILM_OPTICS)).toBe(false);
+    expect(DEFAULT_FILM_OPTICS).toEqual(OPTICS_PRESETS["studio-dslr"].optics);
+    const f = uniformFrame(8, 8, 0.25, 0.18, 0.12);
+    expect(toneMapFrame(f, data, CLEAN_FILM_OPTICS)).toEqual(toneMapFrame(f, data));
+  });
+
+  test("vignette darkens corners while leaving the centre nearly untouched", () => {
+    const f = uniformFrame(32, 32, 0.25, 0.25, 0.25);
+    const clean = toneMapFrame(f, data);
+    const vig = toneMapFrame(f, data, opticsWith({ vignette: 0.8 }));
+    const at = (buf: Uint8ClampedArray, x: number, y: number) => buf[(y * 32 + x) * 4];
+    expect(Math.abs(at(vig, 16, 16) - at(clean, 16, 16))).toBeLessThanOrEqual(1);
+    expect(at(vig, 0, 0)).toBeLessThan(at(clean, 0, 0) - 15);
+    expect(at(vig, 31, 31)).toBe(at(vig, 0, 0));
+  });
+
+  test("warmth shifts red and blue oppositely while keeping linear luminance constant", () => {
+    const [r, g, b] = warmthGains(0.8);
+    expect(r).toBeGreaterThan(b);
+    expect(0.2126 * r + 0.7152 * g + 0.0722 * b).toBeCloseTo(1, 6);
+    const f = uniformFrame(4, 4, 0.2, 0.2, 0.2);
+    const warm = toneMapFrame(f, data, opticsWith({ warmth: 0.8 }));
+    const cool = toneMapFrame(f, data, opticsWith({ warmth: -0.8 }));
+    expect(warm[0]).toBeGreaterThan(warm[2]);
+    expect(cool[2]).toBeGreaterThan(cool[0]);
+  });
+
+  test("glare blooms bright linear highlights into dark neighbouring pixels", () => {
+    const w = 32, h = 32;
+    const f = uniformFrame(w, h, 0.01, 0.01, 0.01);
+    // A bright 4x4 specular highlight in the middle
+    for (let y = 14; y < 18; y++) {
+      for (let x = 14; x < 18; x++) {
+        const o = (y * w + x) * 4;
+        f.rgba[o] = 8; f.rgba[o + 1] = 8; f.rgba[o + 2] = 8;
+      }
+    }
+    const clean = toneMapFrame(f, data);
+    const glared = toneMapFrame(f, data, opticsWith({ glare: 0.7 }));
+    // Dark pixel just outside the highlight lifts noticeably
+    const near = (12 * w + 16) * 4;
+    expect(glared[near]).toBeGreaterThan(clean[near] + 5);
+  });
+
+  test("chromatic aberration fringes a high-contrast edge near the corner but not at the centre", () => {
+    const w = 256, h = 256;
+    const f = uniformFrame(w, h, 0.02, 0.02, 0.02);
+    // White vertical stripe near the left edge (x = 16..24) and another at the centre (x = 126..130)
+    for (let y = 0; y < h; y++) {
+      for (let x = 16; x <= 24; x++) {
+        const o = (y * w + x) * 4;
+        f.rgba[o] = 1.5; f.rgba[o + 1] = 1.5; f.rgba[o + 2] = 1.5;
+      }
+      for (let x = 126; x <= 130; x++) {
+        const o = (y * w + x) * 4;
+        f.rgba[o] = 1.5; f.rgba[o + 1] = 1.5; f.rgba[o + 2] = 1.5;
+      }
+    }
+    const ca = toneMapFrame(f, data, opticsWith({ chromatic: 1 }));
+    // Near top-left corner right on the stripe boundary, R and B separate clearly
+    const edgePx = (16 * w + 16) * 4;
+    expect(Math.abs(ca[edgePx] - ca[edgePx + 2])).toBeGreaterThan(20);
+    // At the exact frame centre, radial shift is near zero
+    const midPx = (128 * w + 128) * 4;
+    expect(Math.abs(ca[midPx] - ca[midPx + 2])).toBeLessThanOrEqual(2);
+  });
+
+  test("softness smooths a sharp step stronger near the corners than at the centre", () => {
+    const w = 32, h = 32;
+    const f = uniformFrame(w, h, 0.02, 0.02, 0.02);
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        if (x % 2 === 0) {
+          const o = (y * w + x) * 4;
+          f.rgba[o] = 0.8; f.rgba[o + 1] = 0.8; f.rgba[o + 2] = 0.8;
+        }
+      }
+    }
+    const clean = toneMapFrame(f, data);
+    const soft = toneMapFrame(f, data, opticsWith({ softness: 1 }));
+    const diffAt = (x: number, y: number) => Math.abs(soft[(y * w + x) * 4] - clean[(y * w + x) * 4]);
+    expect(diffAt(16, 16)).toBeGreaterThan(0);
+    expect(diffAt(2, 2)).toBeGreaterThan(diffAt(16, 16) * 3);
+  });
+
+  test("grain is deterministic, stronger in shadows than highlights, and skips transparent pixels", () => {
+    const dark = uniformFrame(32, 32, 0.04, 0.04, 0.04);
+    const bright = uniformFrame(32, 32, 2.5, 2.5, 2.5);
+    const opt = opticsWith({ grain: 0.8 });
+    const d1 = toneMapFrame(dark, data, opt);
+    const d2 = toneMapFrame(dark, data, opt);
+    expect(d1).toEqual(d2);
+
+    const stdDev = (buf: Uint8ClampedArray) => {
+      let sum = 0, n = buf.length / 4;
+      for (let i = 0; i < buf.length; i += 4) sum += buf[i];
+      const mean = sum / n;
+      let v = 0;
+      for (let i = 0; i < buf.length; i += 4) v += (buf[i] - mean) ** 2;
+      return Math.sqrt(v / n);
+    };
+    const darkStd = stdDev(d1);
+    const brightStd = stdDev(toneMapFrame(bright, data, opt));
+    expect(darkStd).toBeGreaterThan(1);
+    expect(darkStd).toBeGreaterThan(brightStd * 1.5);
+
+    const empty = uniformFrame(4, 4, 0.5, 0.5, 0.5, 0);
+    expect([...toneMapFrame(empty, data, opt)]).toEqual(new Array(4 * 4 * 4).fill(0));
+  });
+
+  test("a full profile develops a medium frame quickly", () => {
+    const w = 400, h = 400;
+    const f = uniformFrame(w, h, 0.2, 0.2, 0.2);
+    const t0 = performance.now();
+    const out = toneMapFrame(f, data, OPTICS_PRESETS["desk-phone"].optics);
+    expect(out).toHaveLength(w * h * 4);
+    expect(performance.now() - t0).toBeLessThan(2000);
   });
 });

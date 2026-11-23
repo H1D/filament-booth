@@ -64,7 +64,7 @@ export class Pipelines {
     r.setRenderTarget(this.#movingTarget);
     this.#moving.render();
     r.setRenderTarget(null);
-    this.display.show(this.#movingTarget.texture, 1);
+    this.display.show(this.#movingTarget.texture, 1, width, height);
     this.#show.render();
   }
 
@@ -79,7 +79,7 @@ export class Pipelines {
   }
 
   showSum(): void {
-    this.display.show(this.accumulator.latestTexture, this.accumulator.count);
+    this.display.show(this.accumulator.latestTexture, this.accumulator.count, this.accumulator.width, this.accumulator.height);
     this.#show.render();
   }
 

@@ -239,9 +239,26 @@ export class Viewport {
     if (prev?.backdrop !== scene.backdrop) stage.setBackdrop(scene.backdrop);
     if (prev?.props !== scene.props) stage.setProps(scene.props);
     if (prev?.film !== scene.film) {
-      this.#pipes.display.setLook(scene.film.look).then(() => this.#frame.dirty(), (err: unknown) =>
-        this.#events.onStatus(`could not load the AgX tables: ${err instanceof Error ? err.message : String(err)}`));
+      const lookChanged = prev?.film.look !== scene.film.look;
+      const transparentChanged = prev?.film.transparent !== scene.film.transparent;
+      const sizeChanged = prev?.film.width !== scene.film.width || prev?.film.height !== scene.film.height;
+      this.#pipes.display.setOptics(scene.film.optics);
       this.#pipes.display.transparent.value = scene.film.transparent ? 1 : 0;
+      if (lookChanged) {
+        this.#pipes.display.setLook(scene.film.look).then(() => {
+          if (this.#frame.settled) this.#pipes.redisplay();
+          else this.#frame.dirty();
+        }, (err: unknown) =>
+          this.#events.onStatus(`could not load the AgX tables: ${err instanceof Error ? err.message : String(err)}`));
+      }
+      // If only display-stage optics changed on a settled still, re-develop the accumulated frame in place with zero flicker.
+      const onlyDisplay = prev !== null && prev.part === scene.part && prev.lights === scene.lights
+        && prev.backdrop === scene.backdrop && prev.world === scene.world && prev.props === scene.props
+        && prev.camera === scene.camera && !sizeChanged && !transparentChanged && !exact;
+      if (onlyDisplay && this.#frame.settled) {
+        if (!lookChanged) this.#pipes.redisplay();
+        return;
+      }
     }
     if (exact) this.#rig.hold(scene.camera);
     else if (prev?.camera !== scene.camera) this.#rig.apply(scene.camera);
