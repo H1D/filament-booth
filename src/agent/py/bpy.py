@@ -279,6 +279,11 @@ class _Booth:
         """Every type, attribute and operator the booth offers, with units and limits. `only` names one type or operator."""
         return _call("reference", only)
 
+    @staticmethod
+    def share_url(part_url=None):
+        """A clickable URL encoding all current booth settings in the URL hash, plus part metadata (and an optional public http/https part_url)."""
+        return _call("share_url", part_url)
+
 
 _BOOT = _call("boot")
 _TYPES = _BOOT["types"]

@@ -5,6 +5,7 @@
  */
 import { AgentControl } from "../agent/agent";
 import { AgentHost, jpegThumbnail } from "../agent/host";
+import { BOOTH_URL } from "../agent/protocol";
 import { PythonRuntime, pythonUnavailable } from "../agent/python";
 import type { Booth } from "../booth";
 import { m } from "../document";
@@ -16,6 +17,7 @@ import { rasterEngine } from "../photo/raster";
 import type { BeadMesh, LoadedPrint } from "../print";
 import type { Viewport, ViewportEvents } from "../viewport/viewport";
 import type { Scene } from "../scene";
+import { encodeShareUrl } from "../share";
 import type { PhotoSession } from "./photo-session";
 import type { Ui } from "./store";
 
@@ -51,12 +53,24 @@ export function agentControl(
   },
 ): AgentControl {
   const { booth, photos, viewport, storage } = parts;
+  const shareUrl = (partUrl?: string | null): Promise<string> => {
+    const base = typeof location !== "undefined" && (location.protocol === "http:" || location.protocol === "https:")
+      ? `${location.origin}${location.pathname}`
+      : BOOTH_URL;
+    const meta = booth.partMeta;
+    const part = partUrl ? { ...(meta ?? {}), url: partUrl } : meta;
+    return encodeShareUrl(base, booth.doc, part);
+  };
   const host = new AgentHost({
     booth, photos, develop, thumbnail: jpegThumbnail,
     raster: viewport === null ? null : rasterEngine(viewport),
+    shareUrl,
   });
   const runtime = new PythonRuntime(host, () => new Worker(new URL("../agent/py-worker.ts", import.meta.url), { type: "module" }));
-  return new AgentControl({ storage, runtime, unavailable: pythonUnavailable, pageId: crypto.randomUUID() });
+  return new AgentControl({
+    storage, runtime, unavailable: pythonUnavailable, pageId: crypto.randomUUID(),
+    shareUrl: () => shareUrl(),
+  });
 }
 
 /**

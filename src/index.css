@@ -352,6 +352,13 @@ input[type="color"]::-webkit-color-swatch { border: 0; border-radius: 2px; }
   box-shadow: 0 4px 14px oklch(0 0 0 / 0.35);
 }
 .banner p { flex: 1; padding-top: 0.2rem; }
+.banner.share-prompt {
+  align-items: center;
+  background: var(--panel);
+  border-color: var(--accent);
+}
+.banner.share-prompt p { padding-top: 0; }
+.banner.share-prompt .btn { flex: none; }
 
 .busy { display: flex; align-items: center; gap: 0.6rem; color: var(--accent); }
 .busy:empty { display: block; height: 0; overflow: hidden; }

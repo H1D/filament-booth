@@ -790,11 +790,12 @@ export type RnaTypeName =
   | "World" | "WorldNodeTree" | "WorldBackground" | "WorldColorInput" | "WorldStrengthInput"
   | "WorldMapping" | "WorldVectorInput" | "WorldLocationInput" | "WorldRotationInput" | "WorldScaleInput"
   | "WorldEnvironment" | "Image"
-  | "BackdropObject" | "BackdropMaterial" | "BackdropNodeTree" | "BackdropPrincipled"
+  | "BackdropObject" | "BoothBackdrop" | "BackdropMaterial" | "BackdropNodeTree" | "BackdropPrincipled"
   | "BackdropBaseColorInput" | "BackdropMetallicInput" | "BackdropRoughnessInput"
   | "PartObject" | "BoothPart" | "BoothSlicing" | "BoothFilament" | "BoothRecipe" | "BoothRoughness" | "BoothImperfections"
   | "FilamentMaterial" | "FilamentNodeTree" | "FilamentPrincipled"
   | "FilamentBaseColorInput" | "FilamentMetallicInput" | "FilamentRoughnessInput" | "FilamentIorInput" | "FilamentAnisotropicInput"
+  | "FilamentSubsurfaceInput"
   | "PropObject" | "BoothProp" | "PropMaterial" | "PropNodeTree" | "PropPrincipled"
   | "PropBaseColorInput" | "PropMetallicInput" | "PropRoughnessInput";
 
@@ -1008,9 +1009,14 @@ export const RNA: { readonly [K in RnaTypeName]: RnaType } = {
   BackdropObject: rnaType("backdrop", "Object", "bpy.data.objects['Backdrop']", "The sweep: floor, cove and wall.", () => ({
     name: fixed("Backdrop"), type: fixed("MESH"),
     active_material: ptr("BackdropMaterial"),
+    booth: ptr("BoothBackdrop"),
     hide_render: missing("the sweep is always there; scene.render.film_transparent keeps only its shadows"),
     location: missing("the sweep stands where the booth puts it"),
   })),
+  BoothBackdrop: rnaType("backdrop", "BoothBackdropSettings", "bpy.data.objects['Backdrop'].booth",
+    "Surface texture on the studio sweep (seamless paper tooth, tonal clouding, roughness breakup).", (p) => ({
+      texture: p.num("texture", "backdropTexture"),
+    })),
   BackdropMaterial: rnaType("backdrop", "Material", "bpy.data.materials['Backdrop']", "", () => ({
     name: fixed("Backdrop"), use_nodes: fixed(true), node_tree: ptr("BackdropNodeTree"),
     diffuse_color: missing("set node_tree.nodes['Principled BSDF'].inputs['Base Color'].default_value"),
@@ -1077,12 +1083,14 @@ export const RNA: { readonly [K in RnaTypeName]: RnaType } = {
       bottom: p.num(3, "roughness"),
     })),
   BoothImperfections: rnaType("imperfections", "BoothImperfections", "bpy.data.objects[{name}].booth.filament.imperfections",
-    "How layer heat and print speed show on the surface.", (p) => ({
+    "How layer heat, print speed, handling wear and micro-dust show on the surface.", (p) => ({
       heat_gloss: p.num("heatGloss", "imperfection"),
       soft_lines: p.num("softLines", "imperfection"),
       speed_gloss: p.num("speedGloss", "imperfection"),
       cooling_tau_s: p.num("tauS", "coolingTauS", "s"),
       fan_cooling: p.num("fanCooling", "fanCooling"),
+      surface_wear: p.num("surfaceWear", "imperfection"),
+      dust: p.num("dust", "imperfection"),
       overlay: p.choice("overlay", bpyEnum(OVERLAYS)),
     })),
   FilamentMaterial: rnaType("recipe", "Material", "bpy.data.materials['Filament']", "The printed filament.", () => ({
@@ -1102,6 +1110,8 @@ export const RNA: { readonly [K in RnaTypeName]: RnaType } = {
   FilamentIorInput: socket("recipe", "NodeSocketFloat", `${FILAMENT_TREE}.nodes['Principled BSDF']`, "IOR", (p) => p.num("ior", "ior")),
   FilamentAnisotropicInput: socket("recipe", "NodeSocketFloatFactor", `${FILAMENT_TREE}.nodes['Principled BSDF']`, "Anisotropic",
     (p) => p.num("anisotropy", "anisotropy")),
+  FilamentSubsurfaceInput: socket("recipe", "NodeSocketFloatFactor", `${FILAMENT_TREE}.nodes['Principled BSDF']`, "Subsurface Weight",
+    (p) => p.num("subsurface", "subsurface")),
 
   // -- props -----------------------------------------------------------------------------------
   PropObject: rnaType("prop", "Object", "bpy.data.objects[{name}]",
@@ -1287,13 +1297,14 @@ export const COLLECTIONS: { readonly [K in CollectionName]: CollectionDef } = {
   },
   "filament.nodes": { item: "ShaderNode: Principled BSDF", members: fixedMembers([{ name: "Principled BSDF", handle: PART, type: "FilamentPrincipled" }]), newHint: FIXED_TREE },
   "filament.principled.inputs": {
-    item: "NodeSocket: Base Color, Metallic, Roughness, IOR, Anisotropic",
+    item: "NodeSocket: Base Color, Metallic, Roughness, IOR, Anisotropic, Subsurface Weight",
     members: fixedMembers([
       { name: "Base Color", handle: PART, type: "FilamentBaseColorInput" },
       { name: "Metallic", handle: PART, type: "FilamentMetallicInput" },
       { name: "Roughness", handle: PART, type: "FilamentRoughnessInput" },
       { name: "IOR", handle: PART, type: "FilamentIorInput" },
       { name: "Anisotropic", handle: PART, type: "FilamentAnisotropicInput" },
+      { name: "Subsurface Weight", handle: PART, type: "FilamentSubsurfaceInput" },
     ]),
     newHint: FIXED_TREE,
   },
@@ -1660,6 +1671,7 @@ const PREAMBLE = [
   "Reading an attribute reads the booth now. Each assignment is one edit to it, checked against the booth's limits.",
   "Ranges below are those limits in bpy units. Lengths are metres and angles radians unless a name says otherwise.",
   "Each script starts with fresh globals; the scene, scene.render.filepath and bpy.context.object carry over.",
+  "bpy.booth.share_url(part_url=None) returns a clickable URL encoding every current booth setting (every finished job and render also includes scene_url automatically).",
 ].join("\n");
 
 /** bpy.booth.reference(only): every type and operator, or the one named (a type, a Python class or an operator). */

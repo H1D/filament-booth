@@ -9,6 +9,7 @@ import { LightsPanel } from "../src/ui/LightsPanel";
 import { OutputPanel } from "../src/ui/OutputPanels";
 import { PartPanel } from "../src/ui/PartPanel";
 import { Section } from "../src/ui/Section";
+import { Stage } from "../src/ui/Stage";
 import { useEdit } from "../src/ui/hooks";
 import { HostProvider } from "../src/ui/host";
 import { PhotoSession } from "../src/ui/photo-session";
@@ -297,5 +298,25 @@ describe("the top pattern select", () => {
     expect(optionLabels(select(container, "Top pattern"))).toEqual([
       "Monotonic", "Monotonic line", "Concentric", "Zigzag", "Aligned rectilinear", "Hilbert curve", "Archimedean chords", "Octagram spiral",
     ]);
+  });
+});
+
+describe("missing shared file popup", () => {
+  test("prompts 'Please drop <file>' and can be dismissed", () => {
+    const { booth } = boothWith();
+    const canvas = document.createElement("canvas");
+    const { container, ui } = mount(booth, <Stage canvas={canvas} />);
+    expect(container.querySelector(".share-prompt")).toBeNull();
+
+    act(() => { ui.setMissingPart({ name: "BSCH-05-PETG.stl" }); });
+    const prompt = container.querySelector(".share-prompt");
+    expect(prompt).not.toBeNull();
+    expect(prompt?.textContent).toContain("Please drop BSCH-05-PETG.stl");
+    expect(prompt?.querySelector("button.primary")?.textContent).toBe("Choose file");
+
+    const dismiss = prompt?.querySelector<HTMLButtonElement>('button[aria-label="Dismiss missing file prompt"]');
+    expect(dismiss).not.toBeNull();
+    act(() => { dismiss?.click(); });
+    expect(container.querySelector(".share-prompt")).toBeNull();
   });
 });

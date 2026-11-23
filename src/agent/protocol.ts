@@ -53,7 +53,7 @@ export type TabMessage =
   | { readonly progress: { readonly job: JobId; readonly text: string; readonly fraction: number | null } }
   /** A finished render or preview. Its thumbnail (JPEG) follows as one binary frame. */
   | { readonly image: ImageMeta & { readonly job: JobId; readonly binary: number } }
-  | { readonly done: { readonly job: JobId; readonly outcome: ScriptOutcome } }
+  | { readonly done: { readonly job: JobId; readonly outcome: ScriptOutcome; readonly sceneUrl?: string | null } }
   /** Read a file on the agent's machine for a running job. The bridge refuses paths outside its roots. */
   | { readonly read: { readonly call: number; readonly job: JobId; readonly path: string } }
   /** Write a file for a running job. Its bytes follow as one binary frame. `name` is used when `path` is a folder. */
@@ -75,6 +75,8 @@ export interface ImageMeta {
   readonly height: number;
   /** "431/512 samples, stopped by the 600 s time limit, Cycles", or "live preview, not a Cycles photo". */
   readonly note: string;
+  /** Shareable booth URL encoding the exact scene state when this image was captured. */
+  readonly sceneUrl?: string | null;
 }
 
 /** How a script ended. Produced in the tab, carried as is into the bridge's job report. */
@@ -182,6 +184,15 @@ function parseReply(body: Fields): ReadReply | WriteReply | CallFailed {
   }
 }
 
+function optionalNullableText(from: Fields, path: string, key: string): string | null | undefined {
+  if (!Object.hasOwn(from, key)) return undefined;
+  const value = from[key];
+  if (value !== null && typeof value !== "string") {
+    throw new ProtocolError(`${path}.${key}: expected a string or null, got ${kindOf(value)}`);
+  }
+  return value;
+}
+
 /** Throws ProtocolError naming the field. An unknown kind is an error, not ignored. */
 export function parseTabMessage(json: unknown): TabMessage {
   const { kind, body } = envelope(json);
@@ -203,6 +214,7 @@ export function parseTabMessage(json: unknown): TabMessage {
     case "image": {
       const path = member(body, kind, "path");
       if (path !== null && typeof path !== "string") throw new ProtocolError(`image.path: expected a string or null, got ${kindOf(path)}`);
+      const sceneUrl = optionalNullableText(body, kind, "sceneUrl");
       return {
         image: {
           job: job(body, kind),
@@ -211,12 +223,21 @@ export function parseTabMessage(json: unknown): TabMessage {
           width: pixels(body, kind, "width"),
           height: pixels(body, kind, "height"),
           note: text(body, kind, "note"),
+          ...(sceneUrl === undefined ? {} : { sceneUrl }),
           binary: count(body, kind, "binary"),
         },
       };
     }
-    case "done":
-      return { done: { job: job(body, kind), outcome: parseOutcome(member(body, kind, "outcome"), "done.outcome") } };
+    case "done": {
+      const sceneUrl = optionalNullableText(body, kind, "sceneUrl");
+      return {
+        done: {
+          job: job(body, kind),
+          outcome: parseOutcome(member(body, kind, "outcome"), "done.outcome"),
+          ...(sceneUrl === undefined ? {} : { sceneUrl }),
+        },
+      };
+    }
     case "read":
       return { read: { call: count(body, kind, "call"), job: job(body, kind), path: nonEmptyText(body, kind, "path") } };
     case "write":

@@ -72,6 +72,8 @@ export interface AgentDeps {
   readonly schedule?: Schedule;
   /** A new pairing token, for a page that has none. Random unless a test fixes it. */
   readonly newToken?: () => string;
+  /** Builds a shareable URL for the current booth state, sent along with every finished script. */
+  readonly shareUrl?: () => Promise<string | null>;
 }
 
 /** 16 random bytes as hex, the same shape the bridge's own bridge.json token has. */
@@ -135,14 +137,14 @@ class JobWire {
     };
   }
 
-  async finish(outcome: ScriptOutcome): Promise<void> {
+  async finish(outcome: ScriptOutcome, sceneUrl?: string | null): Promise<void> {
     if (this.#over) return;
     this.#over = true;
     this.#cancelWindow?.();
     this.#cancelWindow = null;
     this.#flush();
     await Promise.all(this.#images);
-    this.#link.done(this.#id, outcome);
+    this.#link.done(this.#id, outcome, sceneUrl);
   }
 
   #print(text: string): void {
@@ -345,7 +347,10 @@ export class AgentControl {
     const outcome = await this.#deps.runtime.run(code, wire.io).catch(
       (error: unknown): ScriptOutcome => ({ kind: "failed", type: "RuntimeError", message: errorText(error), traceback: "" }),
     );
-    await wire.finish(outcome);
+    const sceneUrl = this.#deps.shareUrl === undefined
+      ? undefined
+      : await this.#deps.shareUrl().catch(() => null);
+    await wire.finish(outcome, sceneUrl);
     if (this.#job?.id === id) this.#job = null;
     this.#patch({ running: null });
   }

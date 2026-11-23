@@ -9,11 +9,13 @@ import {
   DEFAULT_GLOSS, DocumentError, defaultDocument, parseDocument,
   type BoothDocument, type SliceSettings,
 } from "./document";
+import { NO_PART_CACHE, partCacheKey, propCacheKey, type PartCache } from "./part-cache";
 import type { PhotoRun } from "./photo/photo";
 import { FILAMENT_PRESETS, LOOK_PRESETS } from "./presets";
 import type { LoadedPrint, PrintSource, PrintState } from "./print";
 import { setTimer, type Schedule } from "./schedule";
 import { compileScene, framePart, stlPropGeometry, type PropGeometry, type Scene } from "./scene";
+import type { SharePartMeta, ShareState } from "./share";
 import { triangleSoup } from "./print/stl";
 
 /**
@@ -34,6 +36,8 @@ export interface BoothDeps {
   readonly takePhoto: (scene: Scene, partName: string) => PhotoRun;
   /** The debounce clock for re-slicing and saving. Defaults to setTimeout. */
   readonly schedule?: Schedule;
+  /** Optional IndexedDB cache for big part and prop files referenced by shared links. */
+  readonly partCache?: PartCache;
 }
 
 export const STORAGE_KEY = "booth.document";
@@ -68,10 +72,13 @@ interface SavedScenes {
 export class Booth {
   readonly #deps: BoothDeps;
   readonly #schedule: Schedule;
+  readonly #partCache: PartCache;
   #doc: BoothDocument;
   #print: PrintState = { status: "empty" };
   /** The part the scene is built from. It outlives a re-slice and an error: the last good part stays on show. */
   #shown: LoadedPrint | null = null;
+  /** Set by loadShared() when a shared link names a part not yet in this browser, so dropping it keeps the link's exact camera. */
+  #pendingSharedPart: SharePartMeta | null = null;
   #scene: Scene;
   #rev = 0;
   readonly #listeners = new Set<() => void>();
@@ -98,6 +105,7 @@ export class Booth {
   constructor(deps: BoothDeps) {
     this.#deps = deps;
     this.#schedule = deps.schedule ?? setTimer;
+    this.#partCache = deps.partCache ?? NO_PART_CACHE;
     this.#doc = freezeDeep(restore(deps.storage));
     const saved = restoreScenes(deps.storage);
     if (saved === null) {
@@ -122,6 +130,14 @@ export class Booth {
   /** The name of the part on show, without its print extension, or null with no part. */
   get partName(): string | null {
     return this.#shown === null ? null : partNameOf(this.#shown.source);
+  }
+
+  /** Identity of the open part for shareable links (file name + content hash prefix, or remote URL). */
+  get partMeta(): SharePartMeta | null {
+    if (this.#shown === null) return this.#pendingSharedPart;
+    const src = this.#shown.source;
+    if (src.kind === "bin") return { name: partNameOf(src), url: src.url };
+    return { name: src.file.name, hash: src.fileHash.slice(0, 16) };
   }
 
   /**
@@ -193,13 +209,14 @@ export class Booth {
   /**
    * Opens a dropped .stl, .gcode or .gcode.3mf. A second call supersedes the
    * first, and a late result from the old file is dropped. A fresh part is
-   * framed once and its focus point is cleared.
+   * framed once and its focus point is cleared unless `keepCamera` is true
+   * (or this file fulfils a pending shared link).
    */
-  open(file: File): Promise<void> {
-    return this.#work(this.#open(file));
+  open(file: File, options?: { readonly keepCamera?: boolean }): Promise<void> {
+    return this.#work(this.#open(file, options?.keepCamera ?? false));
   }
 
-  async #open(file: File): Promise<void> {
+  async #open(file: File, keepCamera: boolean): Promise<void> {
     const job = this.#supersede();
     let source: PrintSource;
     try {
@@ -209,12 +226,79 @@ export class Booth {
       return;
     }
     if (job !== this.#job) return;
-    await this.#load(job, source);
+    if (source.kind === "stl" || source.kind === "gcode") {
+      void file.arrayBuffer().then((buf) => this.#partCache.put(partCacheKey(source.fileHash), file.name, buf), () => {});
+    }
+    const preserve = keepCamera || this.#consumeSharedPart(source);
+    await this.#load(job, source, preserve);
+  }
+
+  /**
+   * Applies a setup decoded from a share link, restores any cached prop meshes,
+   * and loads the referenced part from IndexedDB cache or `part.url` while
+   * keeping the link's exact camera. When the part is not available locally,
+   * the settings stay active and dropping that file later preserves the camera.
+   */
+  async loadShared(state: ShareState): Promise<{ readonly partStatus: "none" | "loaded" | "missing"; readonly missingName?: string; readonly error?: string }> {
+    this.#pendingSharedPart = null;
+    this.update((draft) => { Object.assign(draft, state.doc); });
+    // Restore any cached prop STL meshes named by this shared setup.
+    const propIds = [...new Set(state.doc.props.flatMap((p) => (p.shape === "mesh" && p.mesh !== null && this.propMesh(p.mesh) === null ? [p.mesh] : [])))];
+    for (const id of propIds) {
+      const cached = await this.#partCache.get(propCacheKey(id));
+      if (cached !== null) {
+        try { this.addPropMesh(cached.name, await cached.arrayBuffer()); } catch { /* ignore corrupt cache entry */ }
+      }
+    }
+    const { part } = state;
+    if (part === null) return { partStatus: "none" };
+    // Already showing this exact part: keep it and the link's camera.
+    if (this.#shown !== null && part.hash !== undefined && this.#shown.source.kind !== "bin"
+      && this.#shown.source.fileHash.toLowerCase().startsWith(part.hash.toLowerCase())) {
+      return { partStatus: "loaded" };
+    }
+    if (part.hash !== undefined) {
+      const cached = await this.#partCache.get(partCacheKey(part.hash));
+      if (cached !== null) {
+        await this.open(cached, { keepCamera: true });
+        return { partStatus: "loaded" };
+      }
+    }
+    if (part.url !== undefined) {
+      try {
+        const res = await fetch(part.url);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const blob = await res.blob();
+        const fallbackName = new URL(part.url).pathname.split("/").pop() || "part.stl";
+        const file = new File([blob], part.name ?? fallbackName);
+        await this.open(file, { keepCamera: true });
+        return { partStatus: "loaded" };
+      } catch (e) {
+        this.#pendingSharedPart = part;
+        return {
+          partStatus: "missing",
+          ...(part.name === undefined ? {} : { missingName: part.name }),
+          error: e instanceof Error ? e.message : String(e),
+        };
+      }
+    }
+    this.#pendingSharedPart = part;
+    return { partStatus: "missing", ...(part.name === undefined ? {} : { missingName: part.name }) };
+  }
+
+  #consumeSharedPart(source: PrintSource): boolean {
+    const pending = this.#pendingSharedPart;
+    if (pending === null) return false;
+    this.#pendingSharedPart = null;
+    if (source.kind === "bin") return false;
+    if (pending.hash !== undefined && source.fileHash.toLowerCase().startsWith(pending.hash.toLowerCase())) return true;
+    if (pending.name !== undefined && source.file.name.toLowerCase() === pending.name.toLowerCase()) return true;
+    return false;
   }
 
   openSample(url: string): Promise<void> {
     const job = this.#supersede();
-    return this.#work(this.#load(job, { kind: "bin", url }));
+    return this.#work(this.#load(job, { kind: "bin", url }, false));
   }
 
   /**
@@ -316,6 +400,7 @@ export class Booth {
    */
   addPropMesh(name: string, stl: ArrayBuffer): string {
     const id = `mesh-${fnv1a(new Uint8Array(stl))}`;
+    void this.#partCache.put(propCacheKey(id), name, stl);
     if (this.#propMeshes.has(id)) return id;
     this.#propMeshes.set(id, { ...stlPropGeometry(triangleSoup(stl)), name });
     // Props the document already names (a saved setup) come back now, with no document change to trigger it.
@@ -425,7 +510,7 @@ export class Booth {
     return ++this.#job;
   }
 
-  async #load(job: number, source: PrintSource): Promise<void> {
+  async #load(job: number, source: PrintSource, keepCamera: boolean): Promise<void> {
     const settings = this.#doc.slicing;
     this.#stl = null;
     this.#commit({ print: { status: "loading", stage: "reading", source } });
@@ -439,20 +524,25 @@ export class Booth {
     if (job !== this.#job) return;
     try {
       // The part and its framing land in one commit, so no subscriber sees the new part through the old camera.
-      const doc = this.#revise((draft) => {
-        Object.assign(draft.camera, framePart(loaded.mesh, draft.camera, draft.output.aspect));
-        draft.camera.focusPartPoint = null;
-      });
+      // Shared links preserve the exact camera stored in the URL instead of re-framing.
+      const doc = keepCamera
+        ? this.#doc
+        : this.#revise((draft) => {
+          Object.assign(draft.camera, framePart(loaded.mesh, draft.camera, draft.output.aspect));
+          draft.camera.focusPartPoint = null;
+        });
       // Every scene shows this part, so every scene is framed on it, each keeping its own angle and lens.
-      for (const [id, stored] of this.#stored) {
-        const framed = structuredClone(stored);
-        Object.assign(framed.camera, framePart(loaded.mesh, framed.camera, framed.output.aspect));
-        framed.camera.focusPartPoint = null;
-        this.#stored.set(id, freezeDeep(framed));
-      }
-      if (this.#stored.size > 0) {
-        this.#scenesDirty = true;
-        this.#scheduleSave();
+      if (!keepCamera) {
+        for (const [id, stored] of this.#stored) {
+          const framed = structuredClone(stored);
+          Object.assign(framed.camera, framePart(loaded.mesh, framed.camera, framed.output.aspect));
+          framed.camera.focusPartPoint = null;
+          this.#stored.set(id, freezeDeep(framed));
+        }
+        if (this.#stored.size > 0) {
+          this.#scenesDirty = true;
+          this.#scheduleSave();
+        }
       }
       this.#stl = source.kind === "stl" ? source : null;
       this.#commit({ doc, shown: loaded, print: { status: "ready", loaded } });

@@ -12,12 +12,12 @@
  * The part is lit only by its environment (the studio bake): no live lights.
  */
 import {
-  DataTexture, FloatType, InterpolationSamplingType, MeshPhysicalNodeMaterial, NearestFilter, RGBAFormat, Texture,
+  Color, DataTexture, FloatType, InterpolationSamplingType, MeshPhysicalNodeMaterial, NearestFilter, RGBAFormat, Texture,
   type Node, type NodeBuilder,
 } from "three/webgpu";
 import {
   Fn, alphaT, anisotropy, anisotropyB, anisotropyT, attribute, float, fwidth, int, ivec2, lights, mix, mx_noise_float,
-  mx_noise_vec3, normalLocal, normalView, normalViewGeometry, normalize, pmremTexture, positionLocal, roughness,
+  mx_noise_vec3, mx_worley_noise_float, normalLocal, normalView, normalViewGeometry, normalWorld, normalize, pmremTexture, positionLocal, roughness,
   smoothstep, step, tangentView, textureLoad, transformNormalToView, uniform, uniformTexture, varying, vec2, vec3,
 } from "three/tsl";
 import { BEAD_WORD, PLATE_EPS, SPEED_STEP_MMS, type BeadMesh, type WordField } from "../print";
@@ -79,8 +79,9 @@ export class BeadShading {
   #table: DataTexture = emptyTable(1);
   readonly #tableNode = uniformTexture(this.#table);
   readonly #u = {
+    baseColor: uniform(new Color(0.012, 0.012, 0.012)),
     layerCount: uniform(1), layerHeightM: uniform(2e-4), vRef: uniform(100), speedGain: uniform(0),
-    mottleScale: uniform(300), mottleAmp: uniform(0), overlay: uniform(0),
+    mottleScale: uniform(300), mottleAmp: uniform(0), surfaceWear: uniform(0), dust: uniform(0), overlay: uniform(0),
     plateTextured: uniform(1), plateRough: uniform(0.5), plateFar: uniform(0.5), grainPerM: uniform(0),
     anisotropy: uniform(0),
   };
@@ -130,12 +131,26 @@ export class BeadShading {
     const mottle = mx_noise_float(positionLocal.mul(u.mottleScale)).mul(0.5).mul(u.mottleAmp);
     const beadRough = tableRough.add(speedRel.mul(u.speedGain)).add(mottle).clamp(ROUGH_MIN, 1);
     const plateRough = mix(u.plateRough, u.plateFar, smoothstep(0.25, 0.5, grainPx));
+    const smudge = mx_noise_float(positionLocal.mul(32)).mul(0.5).mul(1.05);
+    const scuff = mx_noise_float(positionLocal.mul(180)).mul(0.5).mul(0.65);
+    const wornRough = mix(beadRough, plateRough, isPlate).add(smudge.add(scuff).mul(u.surfaceWear)).clamp(ROUGH_MIN, 1);
+
+    // Sparse matte micro-dust specks settled mostly on upward-facing surfaces (viewer +Y = Blender +Z).
+    const dustDist = mx_worley_noise_float(positionLocal.mul(300));
+    const dustShape = float(0.088).sub(dustDist).div(0.35 * 0.088).clamp(0, 1);
+    const dustKeepLo = float(0.94).sub(u.dust.mul(0.16));
+    const dustKeep = mx_noise_float(positionLocal.mul(110)).mul(0.5).add(0.5).sub(dustKeepLo).div(float(1).sub(dustKeepLo)).clamp(0, 1);
+    const dustUp = normalWorld.y.sub(0.15).div(0.65).clamp(0, 1);
+    const dustSettle = dustUp.pow2().mul(0.90).add(0.10);
+    const dustActive = step(0.001, u.dust);
+    const dustMask = dustShape.mul(dustKeep).mul(dustSettle).mul(float(0.45).add(u.dust.mul(0.45))).mul(dustActive).clamp(0, 1);
 
     // False colour: blue cool / slow, red warm / fast.
     const ramp = (x: Node<"float">) => mix(vec3(0.05, 0.25, 1), vec3(1, 0.2, 0.02), x.mul(0.5).add(0.5).clamp(0, 1));
     const overlay = mix(ramp(heat), ramp(speedRel), step(1.5, u.overlay)).mul(step(0.5, u.overlay)).mul(0.6);
 
-    const m = this.material = new BeadNodeMaterial(mix(beadRough, plateRough, isPlate), spread);
+    const m = this.material = new BeadNodeMaterial(mix(wornRough, float(0.92), dustMask), spread.mul(dustMask.oneMinus()));
+    m.colorNode = mix(u.baseColor, vec3(0.48, 0.46, 0.42), dustMask.mul(0.85));
     m.normalNode = transformNormalToView(mix(motionNormal(), plateNormal(), isPlate));
     m.emissiveNode = overlay;
     // On the node: three reads material.envMapIntensity only for an envMap, never for an envNode.
@@ -154,12 +169,15 @@ export class BeadShading {
     u.vRef.value = mesh.vRefMmS;
     if (section === this.#shown) return;
     this.#shown = section;
+    u.baseColor.value.setRGB(section.baseColor[0], section.baseColor[1], section.baseColor[2]);
     m.color.setRGB(section.baseColor[0], section.baseColor[1], section.baseColor[2]);
     m.ior = section.ior;
     u.anisotropy.value = section.anisotropy;
     u.speedGain.value = section.speedGain;
     u.mottleScale.value = section.mottleScale;
     u.mottleAmp.value = section.mottleAmp;
+    u.surfaceWear.value = section.surfaceWear;
+    u.dust.value = section.dust;
     u.overlay.value = section.overlay === "print" ? 0 : section.overlay === "heat" ? 1 : 2;
     const p = section.plate;
     u.plateTextured.value = p.textured ? 1 : 0;

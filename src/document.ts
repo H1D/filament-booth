@@ -61,6 +61,8 @@ export interface FilamentRecipe {
   /** Plate-face roughness per bed. `smooth` reuses wall roughness + gloss. */
   peiRough: number;
   peiFarRough: number;
+  /** 0..1 dielectric subsurface translucency (Christensen-Burley). 0 = opaque. */
+  subsurface: number;
 }
 export type FeatureCode = 0 | 1 | 2 | 3; // wall | top | bridge | bottom
 
@@ -71,11 +73,15 @@ export interface Imperfections {
   speedGloss: number;  // 0..1 fast walls rougher
   tauS: number;        // cooling time constant, seconds
   fanCooling: number;  // part-fan multiplier on cooling
+  /** 0..1 handling smudges and fine micro-scuffs breaking up uniform gloss. */
+  surfaceWear: number;
+  /** 0..1 sparse matte micro-dust specks settled mostly on upward-facing surfaces. */
+  dust: number;
   overlay: (typeof OVERLAYS)[number]; // debug false-colour, preview only
 }
-/** The old viewer's IMP_DEFAULTS. */
+/** The old viewer's IMP_DEFAULTS, plus subtle studio handling wear and micro-dust. */
 export const DEFAULT_IMPERFECTIONS: Imperfections = {
-  heatGloss: 0.6, softLines: 0.5, speedGloss: 0.5, tauS: 10, fanCooling: 1, overlay: "print",
+  heatGloss: 0.6, softLines: 0.5, speedGloss: 0.5, tauS: 10, fanCooling: 1, surfaceWear: 0.35, dust: 0.25, overlay: "print",
 };
 
 export const BED_TYPES = ["textured-pei", "smooth"] as const;
@@ -160,9 +166,13 @@ export interface ScrimLight extends LightBase {
 }
 export type StudioLight = AreaLight | ScrimLight;
 
+/** Default seamless paper / matte tabletop surface grain on the studio backdrop. */
+export const DEFAULT_BACKDROP_TEXTURE = 0.4;
+
 export interface Studio {
   lights: StudioLight[];
-  backdrop: { color: Rgb; roughness: number }; // linear albedo of the sweep
+  /** Linear albedo, roughness and 0..1 surface texture (paper tooth, tonal clouding, roughness breakup) of the sweep. */
+  backdrop: { color: Rgb; roughness: number; texture: number };
   world: { hdrId: string; strength: number; rotationDeg: Degrees };
   /** Reflector ring on the table that only glossy reflections see: the camera,
    *  the backdrop and shadows never do. The gradient and rim looks read wall
@@ -333,6 +343,7 @@ export const BOUNDS = {
   ior: { min: 1, max: 3, step: 0.01 },
   anisotropy: UNIT,
   roughness: UNIT,
+  subsurface: UNIT,
   vary: { min: 0, max: 2, step: 0.01 },
   gloss: UNIT,
   imperfection: UNIT,
@@ -349,6 +360,7 @@ export const BOUNDS = {
   radiance: { min: 0, max: 1e6, step: 0.05, slider: { min: 0, max: 8 } },
   colorChannel: { min: 0 },
   backdropRoughness: UNIT,
+  backdropTexture: UNIT,
   worldStrength: { min: 0, max: 1e4, step: 0.005, slider: { min: 0, max: 1 } },
   worldRotationDeg: { min: -360, max: 360, step: 1, slider: { min: -180, max: 180 } },
 
@@ -428,6 +440,8 @@ function parseRecipe(v: unknown, path: string): FilamentRecipe {
     vary: num(o.vary, at(path, "vary"), BOUNDS.vary),
     peiRough: num(o.peiRough, at(path, "peiRough"), BOUNDS.roughness),
     peiFarRough: num(o.peiFarRough, at(path, "peiFarRough"), BOUNDS.roughness),
+    // Setups saved before subsurface existed have no such field. They stay opaque and version 1.
+    subsurface: o.subsurface === undefined ? 0 : num(o.subsurface, at(path, "subsurface"), BOUNDS.subsurface),
   };
 }
 
@@ -439,6 +453,9 @@ function parseImperfections(v: unknown, path: string): Imperfections {
     speedGloss: num(o.speedGloss, at(path, "speedGloss"), BOUNDS.imperfection),
     tauS: num(o.tauS, at(path, "tauS"), BOUNDS.coolingTauS),
     fanCooling: num(o.fanCooling, at(path, "fanCooling"), BOUNDS.fanCooling),
+    // Setups saved before surfaceWear and dust existed take the defaults and stay version 1.
+    surfaceWear: o.surfaceWear === undefined ? DEFAULT_IMPERFECTIONS.surfaceWear : num(o.surfaceWear, at(path, "surfaceWear"), BOUNDS.imperfection),
+    dust: o.dust === undefined ? DEFAULT_IMPERFECTIONS.dust : num(o.dust, at(path, "dust"), BOUNDS.imperfection),
     overlay: oneOf(o.overlay, at(path, "overlay"), OVERLAYS),
   };
 }
@@ -517,7 +534,12 @@ function parseStudio(v: unknown, path: string): Studio {
   }
   return {
     lights,
-    backdrop: { color: rgb(b.color, at(bp, "color")), roughness: num(b.roughness, at(bp, "roughness"), BOUNDS.backdropRoughness) },
+    backdrop: {
+      color: rgb(b.color, at(bp, "color")),
+      roughness: num(b.roughness, at(bp, "roughness"), BOUNDS.backdropRoughness),
+      // Setups saved before backdrop texture existed take the default and stay version 1.
+      texture: b.texture === undefined ? DEFAULT_BACKDROP_TEXTURE : num(b.texture, at(bp, "texture"), BOUNDS.backdropTexture),
+    },
     world: {
       hdrId: text(w.hdrId, at(wp, "hdrId")),
       strength: num(w.strength, at(wp, "strength"), BOUNDS.worldStrength),

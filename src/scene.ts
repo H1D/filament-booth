@@ -84,6 +84,9 @@ export interface BeadMaterial {
   readonly speedGain: number;
   readonly mottleScale: number; // per metre
   readonly mottleAmp: number;
+  readonly surfaceWear: number;
+  readonly dust: number;
+  readonly subsurface: number;
   readonly plate: PlateFace;
   readonly overlay: "print" | "heat" | "speed"; // false colour, preview only
 }
@@ -179,6 +182,8 @@ export interface BackdropSection {
   readonly index: Uint32Array;
   readonly albedo: Rgb;
   readonly roughness: number;
+  /** 0..1 studio sweep surface texture: seamless paper tooth, subtle tonal clouding, roughness breakup. */
+  readonly texture: number;
   /** True when the film is transparent: it only catches shadows. */
   readonly shadowCatcher: boolean;
 }
@@ -394,6 +399,7 @@ export function compileScene(
   const sweep = sharedSweep();
   const backdrop = keep<BackdropSection>(previous?.backdrop, {
     ...sweep, albedo: [...doc.studio.backdrop.color], roughness: doc.studio.backdrop.roughness,
+    texture: doc.studio.backdrop.texture,
     shadowCatcher: doc.output.transparentBackground,
   });
   const w = doc.studio.world;
@@ -835,6 +841,7 @@ export function resolveMaterial(f: FilamentChoice, mesh: BeadMesh, sliced: Slice
     layers: { count, rough, flatten, heat: warmth },
     speedGain: SPEED_GLOSS_GAIN * imp.speedGloss,
     mottleScale: MOTTLE_SCALE_PER_M, mottleAmp: MOTTLE_PEAK_TO_PEAK * recipe.vary,
+    surfaceWear: imp.surfaceWear, dust: imp.dust, subsurface: recipe.subsurface,
     plate, overlay: imp.overlay,
   };
 }

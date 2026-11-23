@@ -55,18 +55,20 @@ function useFileDrop(onFile: (file: File) => void): boolean {
 
 function Shell({ canvas }: { canvas: HTMLCanvasElement }) {
   const { booth, ui } = useHost();
-  const { focusTool } = useUi();
+  const { focusTool, missingPart } = useUi();
   const open = useCallback((file: File) => { void booth.open(file); }, [booth]);
   const dragging = useFileDrop(open);
 
   useEffect(() => {
-    if (!focusTool) return;
+    if (!focusTool && missingPart === null) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") ui.setFocusTool(false);
+      if (e.key !== "Escape") return;
+      if (focusTool) ui.setFocusTool(false);
+      else if (missingPart !== null) ui.setMissingPart(null);
     };
     window.addEventListener("keydown", onKey);
     return () => { window.removeEventListener("keydown", onKey); };
-  }, [focusTool, ui]);
+  }, [focusTool, missingPart, ui]);
 
   return (
     <div className="app">

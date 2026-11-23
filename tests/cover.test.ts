@@ -294,14 +294,15 @@ describe("what each rule keeps (each test fails if its rule is taken out)", () =
     };
     const M = new Proxy(stub, { get: (t, k: string) => (k in t ? t[k] : () => 0) }) as unknown as CyclesModule;
     const material = {
-      baseColor: [0.5, 0.5, 0.5], ior: 1.5, anisotropy: 0, speedGain: 0, mottleScale: 1, mottleAmp: 0, overlay: "print",
+      baseColor: [0.5, 0.5, 0.5], ior: 1.5, anisotropy: 0, speedGain: 0, mottleScale: 1, mottleAmp: 0,
+      surfaceWear: 0, dust: 0, subsurface: 0, overlay: "print",
       layers: { count: 8, rough: new Float32Array(32), flatten: new Float32Array(8).fill(1), heat: new Float32Array(8) },
       plate: { textured: false, rough: 0.4, roughUnresolved: 0.5, grainPerM: 1, bumpDistanceM: 0 },
     };
     const scene = {
       film: { width: 4, height: 4, samples: 1 }, camera: { position: [0, 0, 0], target: [0, 0, 0], up: [0, 0, 1] }, world: { strength: 1, rotationRad: 0 },
       part: { mesh, material, toWorld: new Array(16).fill(0) },
-      backdrop: { positions: new Float32Array(9), index: new Uint32Array(3), normals: new Float32Array(9), albedo: [1, 1, 1], roughness: 1 },
+      backdrop: { positions: new Float32Array(9), index: new Uint32Array(3), normals: new Float32Array(9), albedo: [1, 1, 1], roughness: 1, texture: 0 },
       lights: { emitters: [], floorCards: null }, props: [],
     } as unknown as Scene;
     uploadScene(M, scene, { width: 1, height: 1, rgb: new Float32Array(3) });

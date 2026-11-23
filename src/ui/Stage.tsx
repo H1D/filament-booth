@@ -26,24 +26,26 @@ export function Stage({ canvas }: { canvas: HTMLCanvasElement }) {
   const picker = useRef<HTMLInputElement>(null);
   const showError = print.status === "error" && state.dismissedPrint !== print;
   const loading = print.status === "loading" ? print : null;
+  const missing = state.missingPart;
 
   return (
     <main className="stage" aria-label="Preview" data-focus-tool={state.focusTool || undefined}>
       <div className="canvas-slot" ref={slot} />
 
+      <input ref={picker} type="file" accept={ACCEPTED_FILES} hidden aria-label="Choose an STL or G-code file"
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          e.target.value = "";
+          if (file !== undefined) void booth.open(file);
+        }} />
+
       {print.status === "empty" ? (
         <div className="empty">
           <div className="empty-card">
             <Icon name="upload" />
-            <h2>Drop a print to photograph it</h2>
+            <h2>{missing?.name ? `Please drop ${missing.name}` : "Drop a print to photograph it"}</h2>
             <p>An <b>.stl</b> is sliced here with the settings on the right. A <b>.gcode</b> or <b>.gcode.3mf</b> keeps the slicing it was made with.</p>
             <button type="button" className="btn primary" onClick={() => { picker.current?.click(); }}>Choose a file</button>
-            <input ref={picker} type="file" accept={ACCEPTED_FILES} hidden aria-label="Choose an STL or G-code file"
-              onChange={(e) => {
-                const file = e.target.files?.[0];
-                e.target.value = "";
-                if (file !== undefined) void booth.open(file);
-              }} />
           </div>
         </div>
       ) : null}
@@ -53,6 +55,18 @@ export function Stage({ canvas }: { canvas: HTMLCanvasElement }) {
           <div className="pill" role="status">
             <span className="busy-bar" aria-hidden="true" />
             <span>{sourceName(loading.source)}: {scene.part !== null && loading.stage === "slicing" ? "re-slicing" : stageLabel(loading.stage).toLowerCase()}</span>
+          </div>
+        ) : null}
+        {missing !== null ? (
+          <div className="banner share-prompt" role="status" aria-live="polite">
+            <p>
+              <b>{missing.name ? `Please drop ${missing.name}` : "Please drop the model file"}</b>
+              {" — "}scene settings are loaded{missing.error ? ` (${missing.error})` : ""}. Drop it here to open with this exact camera.
+            </p>
+            <button type="button" className="btn primary" onClick={() => { picker.current?.click(); }}>Choose file</button>
+            <button type="button" className="icon-btn" aria-label="Dismiss missing file prompt" title="Dismiss" onClick={() => { ui.setMissingPart(null); }}>
+              <Icon name="close" />
+            </button>
           </div>
         ) : null}
         {showError ? (

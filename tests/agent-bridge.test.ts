@@ -651,10 +651,10 @@ async function agent(over: Partial<BridgeConfig> = {}, listen = true): Promise<A
 }
 
 describe("the tools", () => {
-  test("three tools are listed with their descriptions and the wait_s range", async () => {
+  test("four tools are listed with their descriptions and the wait_s range", async () => {
     const a = await agent();
     const { tools } = await a.client.listTools();
-    expect(tools.map((tool) => tool.name).sort()).toEqual(["booth_cancel", "booth_python", "booth_wait"]);
+    expect(tools.map((tool) => tool.name).sort()).toEqual(["booth_cancel", "booth_python", "booth_share_url", "booth_wait"]);
     for (const tool of tools) expect(tool.description).toBeTruthy();
     const python = tools.find((tool) => tool.name === "booth_python")!;
     expect(python.description).toContain("bpy.booth.reference()");
@@ -664,6 +664,7 @@ describe("the tools", () => {
     });
     expect(tools.find((tool) => tool.name === "booth_wait")!.inputSchema).toMatchObject({ required: ["job"] });
     expect(tools.find((tool) => tool.name === "booth_cancel")!.inputSchema).toMatchObject({ required: ["job"] });
+    expect(tools.find((tool) => tool.name === "booth_share_url")!.inputSchema).toMatchObject({ type: "object" });
   });
 
   test.each([0, 601])("wait_s %d is refused by the schema", async (wait) => {
@@ -881,6 +882,45 @@ describe("the tools", () => {
     tab.send({ image: { job, ...image, path: written.kind === "write" ? written.path : null, binary: jpeg.length } }, jpeg);
     tab.send({ done: { job, outcome: { kind: "done" } } });
     expect(reportOf(await call).images[0]!.path).toBe(join(a.root, "renders", "photo.png"));
+  });
+
+  test("scene_url from done and image reaches structuredContent and the text report", async () => {
+    const a = await agent();
+    const tab = await pairedTab(a);
+    const call = a.call("booth_python", { code: "render()" });
+    const { job } = await tab.nextRun();
+    const shotUrl = "https://booth.artems.net/#s=1j.e30&part=widget.stl";
+    tab.send({ image: { job, ...image, path: null, sceneUrl: shotUrl, binary: jpeg.length } }, jpeg);
+    tab.send({ done: { job, outcome: { kind: "done" }, sceneUrl: shotUrl } });
+    const result = await call;
+    expect(reportOf(result).scene_url).toBe(shotUrl);
+    expect(reportOf(result).images[0]!.sceneUrl).toBe(shotUrl);
+    expect(textOf(result)).toContain(`scene_url: ${shotUrl}`);
+    expect(textOf(result)).toContain(`scene: ${shotUrl}`);
+  });
+
+  test("booth_share_url builds a valid share link without a connected tab and refuses bad setups", async () => {
+    const a = await agent();
+    const built = await a.call("booth_share_url", {
+      setup: { lookBase: "dark", filament: { presetId: "petg-basic", recipe: { colorHex: "#1c1c1c" } }, camera: { azimuth: 42 } },
+      part_name: "bracket.stl",
+      part_hash: "0123456789abcdef",
+      part_url: "https://example.com/models/bracket.stl",
+    });
+    expect(built.isError).toBeUndefined();
+    const url = textOf(built);
+    expect(url).toMatch(/^http:\/\/localhost:5173\/#s=1[jz]\./);
+    expect(url).toContain("part=bracket.stl");
+    expect(url).toContain("hash=0123456789abcdef");
+    expect(url).toContain("partUrl=https%3A%2F%2Fexample.com%2Fmodels%2Fbracket.stl");
+
+    const bad = await a.call("booth_share_url", { setup: { lookBase: "not-a-look" } });
+    expect(bad.isError).toBe(true);
+    expect(textOf(bad)).toContain("lookBase");
+
+    const badPartUrl = await a.call("booth_share_url", { part_url: "javascript:alert(1)" });
+    expect(badPartUrl.isError).toBe(true);
+    expect(textOf(badPartUrl)).toContain("http:// or https://");
   });
 });
 

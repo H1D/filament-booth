@@ -6,6 +6,7 @@ import { useDoc, useEdit } from "./hooks";
 import { lookStudio } from "./model";
 
 const ROUGHNESS = linear(BOUNDS.backdropRoughness);
+const TEXTURE = linear(BOUNDS.backdropTexture);
 const STRENGTH = linear(BOUNDS.worldStrength);
 const ROTATION = linear(BOUNDS.worldRotationDeg);
 const RADIANCE = linear(BOUNDS.radiance);
@@ -33,6 +34,9 @@ export function WorldPanel() {
           }} />
         <Slider label="Roughness" mapping={ROUGHNESS} value={backdrop.roughness} defaultValue={look?.backdrop.roughness}
           onChange={(v) => { setStudio((s) => { s.backdrop.roughness = v; }); }} />
+        <Slider label="Texture" mapping={TEXTURE} value={backdrop.texture} defaultValue={look?.backdrop.texture}
+          hint="Seamless paper tooth, subtle tonal variation and roughness breakup on the sweep."
+          onChange={(v) => { setStudio((s) => { s.backdrop.texture = v; }); }} />
       </Group>
 
       <Group title="Environment">

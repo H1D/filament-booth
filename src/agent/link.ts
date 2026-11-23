@@ -146,8 +146,8 @@ export class BridgeLink {
     this.#transmit({ image: { job, ...meta, binary: thumbnail.byteLength } }, thumbnail);
   }
 
-  done(job: JobId, outcome: ScriptOutcome): void {
-    this.#transmit({ done: { job, outcome } });
+  done(job: JobId, outcome: ScriptOutcome, sceneUrl?: string | null): void {
+    this.#transmit({ done: { job, outcome, ...(sceneUrl === undefined ? {} : { sceneUrl }) } });
   }
 
   /** The bytes of a file on the agent's machine. Rejects with the bridge's reason, such as a path outside its folders. */

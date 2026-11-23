@@ -42,7 +42,7 @@ export interface TabEvents {
   output(job: JobId, text: string): void;
   progress(job: JobId, text: string, fraction: number | null): void;
   image(job: JobId, meta: ImageMeta, thumbnail: Uint8Array): void;
-  done(job: JobId, outcome: ScriptOutcome): void;
+  done(job: JobId, outcome: ScriptOutcome, sceneUrl?: string | null): void;
   /** The paired tab went away. Its running job, if any, is over. */
   disconnected(reason: string | null): void;
   /** Gates file calls: only the running job may read or write. */
@@ -241,7 +241,7 @@ export class TabServer {
 
     if ("output" in message) this.#events.output(message.output.job, message.output.text);
     else if ("progress" in message) this.#events.progress(message.progress.job, message.progress.text, message.progress.fraction);
-    else if ("done" in message) this.#events.done(message.done.job, message.done.outcome);
+    else if ("done" in message) this.#events.done(message.done.job, message.done.outcome, message.done.sceneUrl);
     else if ("read" in message) void this.#read(session, message.read);
     else session.awaiting = message;
   }

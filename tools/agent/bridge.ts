@@ -32,6 +32,8 @@ import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/proto
 import type { CallToolResult, ServerNotification, ServerRequest } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { BOOTH_URL, BRIDGE_ORIGINS, DEFAULT_PORT, TOKEN_PATTERN, pairingHash } from "../../src/agent/protocol";
+import { DocumentError } from "../../src/document";
+import { documentFromPatch, encodeShareHash, encodeShareUrl, validPartUrl, type SharePartMeta } from "../../src/share";
 import { Jobs, ToolRefusal, refusalResult, toMcpResult, type ProgressSink, type Reported } from "./jobs";
 import { TabServer } from "./tabs";
 
@@ -50,6 +52,8 @@ export const TOOL_TEXT = {
     "and anything else raises an error that names the booth's equivalent. Run print(bpy.booth.reference()) first: it lists every supported " +
     "attribute and operator with units and limits. Each call starts with fresh globals and the scene persists between calls. " +
     "bpy.ops.render.render(write_still=True) takes a photo and writes it to scene.render.filepath. bpy.ops.render.opengl() returns a quick preview image. " +
+    "Every finished job and every rendered image automatically includes scene_url — a clickable URL encoding the exact booth settings so the user can open the scene, tweak it, and hit PHOTO. " +
+    "Inside Python, bpy.booth.share_url(part_url=None) also returns the current shareable URL. " +
     "File paths are on this machine and relative to the folder you run in. Only that folder, and folders the bridge was started with --allow, can be read or written. " +
     "One script runs at a time. If the result's state is 'running', the script is still going in the tab: call booth_wait with its job id.",
   wait:
@@ -57,6 +61,9 @@ export const TOOL_TEXT = {
     "and the final state once it ends. Waiting never stops the job.",
   cancel:
     "Stop a running booth_python job and report its final state. The script ends where it is: edits it already made stay, and a render in progress is cancelled.",
+  share_url:
+    "Build a clickable Filament booth share URL encoding a full or partial scene setup (look, filament, lights, camera, props, slicing, optics) in the URL hash. " +
+    "Works even without a browser tab connected. Include part_name/part_hash so the user's browser auto-restores the cached model, or a public http(s) part_url for 1-click loading anywhere.",
 } as const;
 
 // ---- command line -----------------------------------------------------------
@@ -265,6 +272,62 @@ export function createBridge(config: BridgeConfig): Bridge {
     },
   }, (input, extra) =>
     answer(!jobs.has(input.job), () => jobs.cancel(input.job, extra.signal)));
+
+  server.registerTool("booth_share_url", {
+    title: "Build a shareable Filament booth scene URL",
+    description: TOOL_TEXT.share_url,
+    inputSchema: {
+      setup: z.union([z.record(z.string(), z.unknown()), z.string()]).optional()
+        .describe("Full or partial BoothDocument JSON (object or JSON string). Omitted fields take the named lookBase/filament preset or defaults."),
+      part_name: z.string().min(1).optional().describe("Model file name shown in the booth (e.g. 'bracket.stl')."),
+      part_hash: z.string().regex(/^[0-9a-f]{8,64}$/i).optional().describe("SHA-256 hex prefix of the model file for local browser IndexedDB cache auto-restore."),
+      part_url: z.string().min(1).optional().describe("Optional public http(s) URL to a CORS-accessible STL or G-code file."),
+      app_url: z.string().min(1).optional().describe(`Base booth URL (default ${config.app.href}).`),
+    },
+  }, async (input) => {
+    let raw: unknown = {};
+    if (input.setup !== undefined) {
+      if (typeof input.setup === "string") {
+        try {
+          raw = JSON.parse(input.setup);
+        } catch {
+          return refusalResult("setup is not valid JSON.");
+        }
+      } else {
+        raw = input.setup;
+      }
+    }
+    let doc;
+    try {
+      doc = documentFromPatch(raw);
+    } catch (error) {
+      return refusalResult(error instanceof DocumentError ? `Invalid setup (${error.path}): ${error.message}` : String(error));
+    }
+    let baseUrl = config.app;
+    if (input.app_url !== undefined) {
+      const checked = validPartUrl(input.app_url);
+      if (checked === undefined) return refusalResult(`app_url must be an http:// or https:// URL, got ${input.app_url}`);
+      baseUrl = new URL(checked);
+    }
+    let validatedPartUrl: string | undefined;
+    if (input.part_url !== undefined) {
+      validatedPartUrl = validPartUrl(input.part_url);
+      if (validatedPartUrl === undefined) return refusalResult(`part_url must be an http:// or https:// URL, got ${input.part_url}`);
+    }
+    const part: SharePartMeta | null = (input.part_name || input.part_hash || validatedPartUrl)
+      ? {
+        ...(input.part_name === undefined ? {} : { name: input.part_name }),
+        ...(input.part_hash === undefined ? {} : { hash: input.part_hash }),
+        ...(validatedPartUrl === undefined ? {} : { url: validatedPartUrl }),
+      }
+      : null;
+    const url = await encodeShareUrl(baseUrl, doc, part);
+    const hash = await encodeShareHash(doc, part);
+    return {
+      content: [{ type: "text", text: url }],
+      structuredContent: { url, hash, part },
+    };
+  });
 
   return {
     server,

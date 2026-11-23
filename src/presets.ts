@@ -30,16 +30,16 @@ const roomW = (w: number) => watts(w / 40);
 export const FILAMENT_PRESETS: Record<FilamentPresetId, { label: string; calibrated: boolean; recipe: FilamentRecipe }> = {
   "petg-basic": { label: "PETG Basic", calibrated: true, recipe: {
     colorHex: "#1c1c1c", ior: 1.57, anisotropy: 0.25, vary: 1.0,
-    roughness: { 0: 0.21, 1: 0.24, 2: 0.36, 3: 0.50 }, peiRough: 0.42, peiFarRough: 0.55 } },
+    roughness: { 0: 0.21, 1: 0.24, 2: 0.36, 3: 0.50 }, peiRough: 0.42, peiFarRough: 0.55, subsurface: 0 } },
   "pla-matte": { label: "PLA Matte", calibrated: true, recipe: {
     colorHex: "#292929", ior: 1.46, anisotropy: 0.10, vary: 0.5,
-    roughness: { 0: 0.74, 1: 0.62, 2: 0.80, 3: 0.85 }, peiRough: 0.66, peiFarRough: 0.74 } },
+    roughness: { 0: 0.74, 1: 0.62, 2: 0.80, 3: 0.85 }, peiRough: 0.66, peiFarRough: 0.74, subsurface: 0 } },
   "pla-basic": { label: "PLA Basic", calibrated: false, recipe: {
     colorHex: "#1c1c1c", ior: 1.46, anisotropy: 0.15, vary: 0.8,
-    roughness: { 0: 0.38, 1: 0.34, 2: 0.48, 3: 0.58 }, peiRough: 0.48, peiFarRough: 0.60 } },
+    roughness: { 0: 0.38, 1: 0.34, 2: 0.48, 3: 0.58 }, peiRough: 0.48, peiFarRough: 0.60, subsurface: 0.15 } },
   "pla-silk": { label: "PLA Silk", calibrated: false, recipe: {
     colorHex: "#3a3a40", ior: 1.46, anisotropy: 0.45, vary: 0.9,
-    roughness: { 0: 0.16, 1: 0.20, 2: 0.30, 3: 0.44 }, peiRough: 0.40, peiFarRough: 0.52 } },
+    roughness: { 0: 0.16, 1: 0.20, 2: 0.30, 3: 0.44 }, peiRough: 0.40, peiFarRough: 0.52, subsurface: 0.05 } },
 };
 
 const white: LightColor = { kind: "rgb", rgb: [1, 1, 1] };
@@ -80,7 +80,7 @@ const grey = (v: number) => [v, v, v] as const;
  */
 export const LOOK_PRESETS: Record<LookId, { label: string; studio: Studio }> = {
   studio: { label: "Studio", studio: {
-    backdrop: { color: grey(0.55), roughness: 0.55 },
+    backdrop: { color: grey(0.55), roughness: 0.55, texture: 0.40 },
     world: { hdrId: "studio_small_09_1k", strength: 0.25, rotationDeg: deg(30) },
     floorCards: null,
     lights: [
@@ -91,7 +91,7 @@ export const LOOK_PRESETS: Record<LookId, { label: string; studio: Studio }> = {
       area("front", "Front fill", 0, 11.81, 2.2476, 2.0, 0.8, 120),
     ] } },
   dark: { label: "Dark", studio: {
-    backdrop: { color: grey(0.012), roughness: 0.32 },
+    backdrop: { color: grey(0.012), roughness: 0.32, texture: 0.35 },
     world: { hdrId: "studio_small_09_1k", strength: 0.02, rotationDeg: deg(30) },
     floorCards: null,
     lights: [
@@ -102,7 +102,7 @@ export const LOOK_PRESETS: Record<LookId, { label: string; studio: Studio }> = {
       scrim("grad-left", "Left gradient", -125.218, 19.086, 1.101, 1.2, 1.6, 2.0, 0.0, true),
     ] } },
   gradient: { label: "Gradient", studio: {
-    backdrop: { color: grey(0.35), roughness: 0.6 },
+    backdrop: { color: grey(0.35), roughness: 0.6, texture: 0.40 },
     world: { hdrId: "studio_small_09_1k", strength: 0.03, rotationDeg: deg(30) },
     floorCards: { keySide: 3.5, farSide: 0.05, azimuth: deg(-90) },
     lights: [
@@ -113,7 +113,7 @@ export const LOOK_PRESETS: Record<LookId, { label: string; studio: Studio }> = {
       scrim("back", "Back card", 180, 14.574, 1.0332, 2.0, 1.6, 3.0, 0.3),
     ] } },
   rim: { label: "Rim", studio: {
-    backdrop: { color: grey(0.02), roughness: 0.35 },
+    backdrop: { color: grey(0.02), roughness: 0.35, texture: 0.35 },
     world: { hdrId: "studio_small_09_1k", strength: 0.01, rotationDeg: deg(30) },
     floorCards: { keySide: 0.8, farSide: 0, azimuth: deg(-90) },
     lights: [
@@ -124,7 +124,7 @@ export const LOOK_PRESETS: Record<LookId, { label: string; studio: Studio }> = {
       scrim("right", "Right kicker", 90, 14.574, 1.0332, 0.8, 1.6, 0.9, 0.08),
     ] } },
   raking: { label: "Raking", studio: {
-    backdrop: { color: grey(0.35), roughness: 0.6 },
+    backdrop: { color: grey(0.35), roughness: 0.6, texture: 0.45 },
     world: { hdrId: "studio_small_09_1k", strength: 0.12, rotationDeg: deg(120) },
     floorCards: null,
     lights: [
