@@ -404,5 +404,18 @@ describe("the FFI boundary", () => {
     expect(progressText({ state: "rendering", fraction: 0.5, image: null, etaS: null }, 0)).toBe("rendering 50%");
     expect(progressText({ state: "cancelled" }, 0)).toBeNull();
   });
+
+  test("share_url returns a clickable encoded URL and rejects non-http part_url", async () => {
+    const r = rig();
+    r.booth.update((d) => { d.camera.fStop = 18; });
+    const url = ok<string>(await r.w.sendAsync("share_url", null));
+    expect(url).toMatch(/^https:\/\/booth\.artems\.net\/#s=1[jz]\./);
+    const withPart = ok<string>(await r.w.sendAsync("share_url", "https://example.com/part.stl"));
+    expect(withPart).toContain("partUrl=https%3A%2F%2Fexample.com%2Fpart.stl");
+    expect(err(await r.w.sendAsync("share_url", "javascript:alert(1)"))).toEqual({
+      type: "ValueError",
+      message: expect.stringContaining("http:// or https://"),
+    });
+  });
 });
 

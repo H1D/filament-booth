@@ -32,7 +32,9 @@ export interface CyclesModule {
   _cb_object(mesh: number, shader: number, secondShader: number, tfm: number, flags: number): number;
   _cb_shader_bead(r: number, g: number, b: number, ior: number, anisotropy: number,
     mottleScale: number, mottleAmp: number, roughMin: number, plateRough: number,
-    plateTextured: number, grainPerM: number, bumpDistanceM: number): number;
+    plateTextured: number, grainPerM: number, bumpDistanceM: number,
+    surfaceWear: number, dust: number, subsurface: number): number;
+  _cb_shader_backdrop(r: number, g: number, b: number, roughness: number, texture: number): number;
   _cb_shader_principled(r: number, g: number, b: number, roughness: number): number;
   _cb_area_light(frame: number, sizeX: number, sizeY: number, ellipse: number, powerW: number,
     r: number, g: number, b: number, spread: number, partOnly: number): number;
@@ -296,7 +298,8 @@ function uploadPart(M: CyclesModule, part: PartSection): void {
   attribute(M, handle, "path_tangent", 3, nverts, (out) => pathTangents(mesh, out));
   const { baseColor, plate } = material;
   const bead = (textured: boolean) => check(M, M._cb_shader_bead(...baseColor, material.ior, material.anisotropy, material.mottleScale,
-    material.mottleAmp, ROUGH_MIN, plate.rough, textured ? 1 : 0, plate.grainPerM, plate.bumpDistanceM), "bead shader");
+    material.mottleAmp, ROUGH_MIN, plate.rough, textured ? 1 : 0, plate.grainPerM, plate.bumpDistanceM,
+    material.surfaceWear, material.dust, material.subsurface), "bead shader");
   const shader = bead(plate.textured);
   // The textured plate's bump costs about a tenth of sampling; only triangles on the plate need it.
   let walls = -1;
@@ -314,7 +317,7 @@ function uploadBackdrop(M: CyclesModule, backdrop: BackdropSection): void {
     copyToHeap(M, backdrop.index, (indices) =>
       copyToHeap(M, backdrop.normals, (normals) =>
         check(M, M._cb_mesh(backdrop.positions.length / 3, backdrop.index.length / 3, positions, indices, normals), "backdrop mesh"))));
-  const shader = check(M, M._cb_shader_principled(...backdrop.albedo, backdrop.roughness), "backdrop shader");
+  const shader = check(M, M._cb_shader_backdrop(...backdrop.albedo, backdrop.roughness, backdrop.texture), "backdrop shader");
   copyToHeap(M, IDENTITY, (tfm) =>
     check(M, M._cb_object(handle, shader, -1, tfm, backdrop.shadowCatcher ? OBJECT_SHADOW_CATCHER : 0), "backdrop"));
 }

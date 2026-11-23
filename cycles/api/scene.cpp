@@ -33,6 +33,23 @@ constexpr float PLATE_MASK_THRESHOLD = 0.999f;
  * reference material). */
 constexpr float GRIT_PER_GRAIN = 25000.0f / 6000.0f;
 constexpr float GRIT_WEIGHT = 0.35f;
+constexpr float WEAR_SMUDGE_SCALE = 32.0f;
+constexpr float WEAR_SMUDGE_AMP = 1.05f;
+constexpr float WEAR_SCUFF_SCALE = 180.0f;
+constexpr float WEAR_SCUFF_AMP = 0.65f;
+constexpr float DUST_SCALE = 300.0f;
+constexpr float DUST_RADIUS = 0.088f;
+constexpr float DUST_UP_LO = 0.15f;
+constexpr float DUST_UP_HI = 0.80f;
+constexpr float DUST_WALL_FLOOR = 0.10f;
+constexpr float DUST_COLOR_WEIGHT = 0.85f;
+constexpr float DUST_ROUGHNESS = 0.92f;
+constexpr float SSS_SCALE_M = 0.0028f;
+constexpr float BACKDROP_CLOUD_SCALE = 3.2f;
+constexpr float BACKDROP_TOOTH_SCALE = 34.0f;
+constexpr float BACKDROP_FINE_SCALE = 180.0f;
+constexpr float BACKDROP_BUMP_M = 0.0008f;
+constexpr float BACKDROP_BUMP_STRENGTH = 0.35f;
 constexpr int RING_SEGMENTS = 256;
 constexpr int ELLIPSE_SEGMENTS = 64;
 /* Glossy rays must meet the ring before the floor it lies on. */
@@ -342,7 +359,8 @@ CB_EXPORT int cb_object(int mesh, int shader, int second_shader, const float *tf
 CB_EXPORT int cb_shader_bead(float r, float g, float b, float ior, float anisotropy,
                              float mottle_scale, float mottle_amp, float rough_min,
                              float plate_rough, int plate_textured, float grain_per_m,
-                             float bump_distance_m)
+                             float bump_distance_m, float surface_wear, float dust,
+                             float subsurface)
 {
   unique_ptr<ShaderGraph> graph = make_unique<ShaderGraph>();
   ShaderGraph *gr = graph.get();
@@ -374,8 +392,38 @@ CB_EXPORT int cb_shader_bead(float r, float g, float b, float ior, float anisotr
   gr->connect(plate->output("Value"), roughness->input("Value1"));
   gr->connect(to_plate->output("Value"), roughness->input("Value2"));
   gr->connect(clamped->output("Result"), roughness->input("Value3"));
+  ShaderOutput *rough_out = roughness->output("Value");
+
+  if (surface_wear > 0.0f) {
+    NoiseTextureNode *smudge_noise = noise(gr, WEAR_SMUDGE_SCALE, 2.0f);
+    gr->connect(texco->output("Object"), smudge_noise->input("Vector"));
+    const float smudge_amp = WEAR_SMUDGE_AMP * surface_wear;
+    MathNode *smudge = math(gr, NODE_MATH_MULTIPLY_ADD, 0.0f, smudge_amp, -0.5f * smudge_amp);
+    gr->connect(smudge_noise->output("Fac"), smudge->input("Value1"));
+
+    NoiseTextureNode *scuff_noise = noise(gr, WEAR_SCUFF_SCALE, 3.0f);
+    gr->connect(texco->output("Object"), scuff_noise->input("Vector"));
+    const float scuff_amp = WEAR_SCUFF_AMP * surface_wear;
+    MathNode *scuff = math(gr, NODE_MATH_MULTIPLY_ADD, 0.0f, scuff_amp, -0.5f * scuff_amp);
+    gr->connect(scuff_noise->output("Fac"), scuff->input("Value1"));
+
+    MathNode *wear_delta = math(gr, NODE_MATH_ADD);
+    gr->connect(smudge->output("Value"), wear_delta->input("Value1"));
+    gr->connect(scuff->output("Value"), wear_delta->input("Value2"));
+    MathNode *worn = math(gr, NODE_MATH_ADD);
+    gr->connect(rough_out, worn->input("Value1"));
+    gr->connect(wear_delta->output("Value"), worn->input("Value2"));
+    ClampNode *worn_clamped = gr->create_node<ClampNode>();
+    worn_clamped->set_clamp_type(NODE_CLAMP_MINMAX);
+    worn_clamped->set_min(rough_min);
+    worn_clamped->set_max(1.0f);
+    gr->connect(worn->output("Value"), worn_clamped->input("Value"));
+    rough_out = worn_clamped->output("Result");
+  }
+
   MathNode *aniso = math(gr, NODE_MATH_MULTIPLY_ADD, 0.0f, -anisotropy, anisotropy);
   gr->connect(plate->output("Value"), aniso->input("Value1"));
+  ShaderOutput *aniso_out = aniso->output("Value");
 
   VectorMathNode *tangent = gr->create_node<VectorMathNode>();
   tangent->set_math_type(NODE_VECTOR_MATH_CROSS_PRODUCT);
@@ -385,8 +433,87 @@ CB_EXPORT int cb_shader_bead(float r, float g, float b, float ior, float anisotr
   PrincipledBsdfNode *bsdf = gr->create_node<PrincipledBsdfNode>();
   bsdf->set_base_color(make_float3(r, g, b));
   bsdf->set_ior(ior);
-  gr->connect(roughness->output("Value"), bsdf->input("Roughness"));
-  gr->connect(aniso->output("Value"), bsdf->input("Anisotropic"));
+
+  if (dust > 0.0f) {
+    VoronoiTextureNode *vor = gr->create_node<VoronoiTextureNode>();
+    vor->set_dimensions(3);
+    vor->set_metric(NODE_VORONOI_EUCLIDEAN);
+    vor->set_feature(NODE_VORONOI_F1);
+    vor->set_scale(DUST_SCALE);
+    vor->set_randomness(1.0f);
+    gr->connect(texco->output("Object"), vor->input("Vector"));
+
+    MathNode *shape = math(gr, NODE_MATH_MULTIPLY_ADD, 0.0f, -1.0f / (0.35f * DUST_RADIUS), 1.0f / 0.35f);
+    shape->set_use_clamp(true);
+    gr->connect(vor->output("Distance"), shape->input("Value1"));
+
+    SeparateColorNode *sep_col = gr->create_node<SeparateColorNode>();
+    sep_col->set_color_type(NODE_COMBSEP_COLOR_RGB);
+    gr->connect(vor->output("Color"), sep_col->input("Color"));
+    const float keep_lo = 0.94f - 0.16f * dust;
+    const float keep_inv = 1.0f / (1.0f - keep_lo);
+    MathNode *keep = math(gr, NODE_MATH_MULTIPLY_ADD, 0.0f, keep_inv, -keep_lo * keep_inv);
+    keep->set_use_clamp(true);
+    gr->connect(sep_col->output("Red"), keep->input("Value1"));
+
+    SeparateXYZNode *sep_n = gr->create_node<SeparateXYZNode>();
+    gr->connect(geometry->output("Normal"), sep_n->input("Vector"));
+    const float up_inv = 1.0f / (DUST_UP_HI - DUST_UP_LO);
+    MathNode *up = math(gr, NODE_MATH_MULTIPLY_ADD, 0.0f, up_inv, -DUST_UP_LO * up_inv);
+    up->set_use_clamp(true);
+    gr->connect(sep_n->output("Z"), up->input("Value1"));
+    MathNode *up2 = math(gr, NODE_MATH_MULTIPLY);
+    gr->connect(up->output("Value"), up2->input("Value1"));
+    gr->connect(up->output("Value"), up2->input("Value2"));
+    MathNode *settle = math(gr, NODE_MATH_MULTIPLY_ADD, 0.0f, 1.0f - DUST_WALL_FLOOR, DUST_WALL_FLOOR);
+    gr->connect(up2->output("Value"), settle->input("Value1"));
+
+    MathNode *m1 = math(gr, NODE_MATH_MULTIPLY);
+    gr->connect(shape->output("Value"), m1->input("Value1"));
+    gr->connect(keep->output("Value"), m1->input("Value2"));
+    MathNode *m2 = math(gr, NODE_MATH_MULTIPLY);
+    gr->connect(m1->output("Value"), m2->input("Value1"));
+    gr->connect(settle->output("Value"), m2->input("Value2"));
+    const float dust_strength = 0.45f + 0.45f * dust;
+    MathNode *mask = math(gr, NODE_MATH_MULTIPLY, 0.0f, dust_strength);
+    mask->set_use_clamp(true);
+    gr->connect(m2->output("Value"), mask->input("Value1"));
+
+    MathNode *col_fac = math(gr, NODE_MATH_MULTIPLY, 0.0f, DUST_COLOR_WEIGHT);
+    gr->connect(mask->output("Value"), col_fac->input("Value1"));
+    MixColorNode *mix_col = gr->create_node<MixColorNode>();
+    mix_col->set_blend_type(NODE_MIX_BLEND);
+    mix_col->set_use_clamp(true);
+    mix_col->set_a(make_float3(r, g, b));
+    mix_col->set_b(make_float3(0.48f, 0.46f, 0.42f));
+    gr->connect(col_fac->output("Value"), mix_col->input("Factor"));
+    gr->connect(mix_col->output("Result"), bsdf->input("Base Color"));
+
+    MathNode *to_dust_r = math(gr, NODE_MATH_SUBTRACT, DUST_ROUGHNESS);
+    gr->connect(rough_out, to_dust_r->input("Value2"));
+    MathNode *dust_r = math(gr, NODE_MATH_MULTIPLY_ADD);
+    gr->connect(mask->output("Value"), dust_r->input("Value1"));
+    gr->connect(to_dust_r->output("Value"), dust_r->input("Value2"));
+    gr->connect(rough_out, dust_r->input("Value3"));
+    rough_out = dust_r->output("Value");
+
+    MathNode *keep_aniso = math(gr, NODE_MATH_MULTIPLY_ADD, 0.0f, -1.0f, 1.0f);
+    gr->connect(mask->output("Value"), keep_aniso->input("Value1"));
+    MathNode *dust_aniso = math(gr, NODE_MATH_MULTIPLY);
+    gr->connect(aniso_out, dust_aniso->input("Value1"));
+    gr->connect(keep_aniso->output("Value"), dust_aniso->input("Value2"));
+    aniso_out = dust_aniso->output("Value");
+  }
+
+  if (subsurface > 0.0f) {
+    bsdf->set_subsurface_method(CLOSURE_BSSRDF_BURLEY_ID);
+    bsdf->set_subsurface_weight(subsurface);
+    bsdf->set_subsurface_scale(SSS_SCALE_M);
+    bsdf->set_subsurface_radius(make_float3(1.0f, 0.70f, 0.45f));
+  }
+
+  gr->connect(rough_out, bsdf->input("Roughness"));
+  gr->connect(aniso_out, bsdf->input("Anisotropic"));
   gr->connect(tangent->output("Vector"), bsdf->input("Tangent"));
 
   if (plate_textured) {
@@ -412,6 +539,80 @@ CB_EXPORT int cb_shader_bead(float r, float g, float b, float ior, float anisotr
 
   gr->connect(bsdf->output("BSDF"), gr->output()->input("Surface"));
   return keep_shader(add_shader(booth().scene, "booth_bead", std::move(graph)));
+}
+
+/* The studio sweep backdrop: Principled BSDF, plus multi-scale seamless paper / matte tabletop
+ * tonal clouding, roughness breakup and fine tooth micro-bump when texture > 0. */
+CB_EXPORT int cb_shader_backdrop(float r, float g, float b, float roughness, float texture)
+{
+  unique_ptr<ShaderGraph> graph = make_unique<ShaderGraph>();
+  ShaderGraph *gr = graph.get();
+  PrincipledBsdfNode *bsdf = gr->create_node<PrincipledBsdfNode>();
+  bsdf->set_base_color(make_float3(r, g, b));
+  bsdf->set_roughness(roughness);
+
+  if (texture > 0.0f) {
+    TextureCoordinateNode *texco = gr->create_node<TextureCoordinateNode>();
+    NoiseTextureNode *cloud = noise(gr, BACKDROP_CLOUD_SCALE, 3.0f);
+    NoiseTextureNode *tooth = noise(gr, BACKDROP_TOOTH_SCALE, 4.0f);
+    NoiseTextureNode *fine = noise(gr, BACKDROP_FINE_SCALE, 4.0f);
+    gr->connect(texco->output("Object"), cloud->input("Vector"));
+    gr->connect(texco->output("Object"), tooth->input("Vector"));
+    gr->connect(texco->output("Object"), fine->input("Vector"));
+
+    const float ca = 0.58f * texture;
+    const float ta = 0.36f * texture;
+    const float fa = 0.44f * texture;
+    MathNode *cloud_a = math(gr, NODE_MATH_MULTIPLY_ADD, 0.0f, ca, 1.0f - 0.5f * ca);
+    gr->connect(cloud->output("Fac"), cloud_a->input("Value1"));
+    MathNode *tooth_a = math(gr, NODE_MATH_MULTIPLY_ADD, 0.0f, ta, -0.5f * ta);
+    gr->connect(tooth->output("Fac"), tooth_a->input("Value1"));
+    MathNode *fine_a = math(gr, NODE_MATH_MULTIPLY_ADD, 0.0f, fa, -0.5f * fa);
+    gr->connect(fine->output("Fac"), fine_a->input("Value1"));
+    MathNode *sum_a1 = math(gr, NODE_MATH_ADD);
+    gr->connect(cloud_a->output("Value"), sum_a1->input("Value1"));
+    gr->connect(tooth_a->output("Value"), sum_a1->input("Value2"));
+    MathNode *sum_a2 = math(gr, NODE_MATH_ADD);
+    gr->connect(sum_a1->output("Value"), sum_a2->input("Value1"));
+    gr->connect(fine_a->output("Value"), sum_a2->input("Value2"));
+    ClampNode *albedo_fac = gr->create_node<ClampNode>();
+    albedo_fac->set_clamp_type(NODE_CLAMP_MINMAX);
+    albedo_fac->set_min(0.5f);
+    albedo_fac->set_max(1.5f);
+    gr->connect(sum_a2->output("Value"), albedo_fac->input("Value"));
+
+    VectorMathNode *scaled_col = gr->create_node<VectorMathNode>();
+    scaled_col->set_math_type(NODE_VECTOR_MATH_SCALE);
+    scaled_col->set_vector1(make_float3(r, g, b));
+    gr->connect(albedo_fac->output("Result"), scaled_col->input("Scale"));
+    gr->connect(scaled_col->output("Vector"), bsdf->input("Base Color"));
+
+    const float cr = 0.70f * texture;
+    const float tr = 0.55f * texture;
+    MathNode *cloud_r = math(gr, NODE_MATH_MULTIPLY_ADD, 0.0f, cr, roughness - 0.5f * cr);
+    gr->connect(cloud->output("Fac"), cloud_r->input("Value1"));
+    MathNode *tooth_r = math(gr, NODE_MATH_MULTIPLY_ADD, 0.0f, tr, -0.5f * tr);
+    gr->connect(tooth->output("Fac"), tooth_r->input("Value1"));
+    MathNode *sum_r = math(gr, NODE_MATH_ADD);
+    gr->connect(cloud_r->output("Value"), sum_r->input("Value1"));
+    gr->connect(tooth_r->output("Value"), sum_r->input("Value2"));
+    ClampNode *rough_clamped = gr->create_node<ClampNode>();
+    rough_clamped->set_clamp_type(NODE_CLAMP_MINMAX);
+    rough_clamped->set_min(0.05f);
+    rough_clamped->set_max(1.0f);
+    gr->connect(sum_r->output("Value"), rough_clamped->input("Value"));
+    gr->connect(rough_clamped->output("Result"), bsdf->input("Roughness"));
+
+    BumpNode *bump = gr->create_node<BumpNode>();
+    bump->set_distance(BACKDROP_BUMP_M);
+    bump->set_strength(BACKDROP_BUMP_STRENGTH * texture);
+    bump->set_filter_width(0.1f);
+    gr->connect(tooth->output("Fac"), bump->input("Height"));
+    gr->connect(bump->output("Normal"), bsdf->input("Normal"));
+  }
+
+  gr->connect(bsdf->output("BSDF"), gr->output()->input("Surface"));
+  return keep_shader(add_shader(booth().scene, "booth_backdrop", std::move(graph)));
 }
 
 /* A Principled BSDF at factory settings except base colour and roughness. */

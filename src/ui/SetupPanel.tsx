@@ -1,6 +1,7 @@
-import { useId, useRef } from "react";
+import { useId, useRef, useState } from "react";
 import { defaultDocument } from "../document";
 import { framePart } from "../scene";
+import { encodeShareUrl } from "../share";
 import { downloadAs } from "./download";
 import { describeError, useEdit, useHost } from "./hooks";
 import { Icon } from "./icons";
@@ -13,6 +14,21 @@ export function SetupPanel() {
   const input = useRef<HTMLInputElement>(null);
   const confirm = useRef<HTMLDivElement>(null);
   const confirmId = useId();
+  const [copied, setCopied] = useState(false);
+
+  const copyLink = async () => {
+    try {
+      const base = `${location.origin}${location.pathname}`;
+      const url = await encodeShareUrl(base, booth.doc, booth.partMeta);
+      history.replaceState(null, "", new URL(url).hash);
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      setTimeout(() => { setCopied(false); }, 1800);
+      ui.setNotice(null);
+    } catch (e) {
+      ui.setNotice(`Could not copy share link. ${describeError(e)}`);
+    }
+  };
 
   const importFile = async (file: File) => {
     try {
@@ -36,6 +52,9 @@ export function SetupPanel() {
   return (
     <>
       <div className="actions">
+        <button type="button" className="btn" onClick={() => { void copyLink(); }}>
+          <Icon name="link" />{copied ? "Copied link" : "Copy link"}
+        </button>
         <button type="button" className="btn" onClick={() => { downloadAs(SETUP_FILE, new Blob([booth.exportJson()], { type: "application/json" })); }}>
           <Icon name="save" />Export JSON
         </button>
@@ -49,7 +68,7 @@ export function SetupPanel() {
             if (file !== undefined) void importFile(file);
           }} />
       </div>
-      <p className="note">The setup is every setting here: slicing, filament, lights, camera and output. It is saved in this browser as you edit.</p>
+      <p className="note">Every setting encodes into the URL hash for sharing and saves in this browser. Big 3D models stay in this browser's local cache; on another machine, drop the model file to keep the link's exact camera.</p>
       <div className="actions">
         <button type="button" className="btn danger reset-all" popoverTarget={confirmId} popoverTargetAction="toggle">
           Reset everything

@@ -12,6 +12,7 @@ import { titleCase } from "./model";
 const GLOSS = linear(BOUNDS.gloss);
 const IOR = linear(BOUNDS.ior);
 const ANISOTROPY = linear(BOUNDS.anisotropy);
+const SUBSURFACE = linear(BOUNDS.subsurface);
 const ROUGHNESS = linear(BOUNDS.roughness);
 const VARY = linear(BOUNDS.vary);
 const IMPERFECTION = linear(BOUNDS.imperfection);
@@ -61,6 +62,9 @@ export function FilamentPanel() {
           <Slider label="Layer variation" mapping={VARY} value={f.recipe.vary} defaultValue={preset?.vary}
             hint="How much the sheen differs from layer to layer."
             onChange={(v) => { setRecipe((r) => { r.vary = v; }); }} />
+          <Slider label="Subsurface" mapping={SUBSURFACE} value={f.recipe.subsurface} defaultValue={preset?.subsurface}
+            hint="Polymer translucency on light or thin-walled prints. Zero on opaque black."
+            onChange={(v) => { setRecipe((r) => { r.subsurface = v; }); }} />
         </Group>
 
         <Scope name="Roughness">
@@ -100,6 +104,12 @@ export function FilamentPanel() {
               onChange={(v) => { setImperfection((x) => { x.tauS = v; }); }} />
             <Slider label="Fan cooling" unit="x" mapping={FAN} value={f.imperfections.fanCooling} defaultValue={DEFAULT_IMPERFECTIONS.fanCooling}
               onChange={(v) => { setImperfection((x) => { x.fanCooling = v; }); }} />
+            <Slider label="Surface wear" mapping={IMPERFECTION} value={f.imperfections.surfaceWear} defaultValue={DEFAULT_IMPERFECTIONS.surfaceWear}
+              hint="Handling smudges and fine scuffs that break up uniform gloss."
+              onChange={(v) => { setImperfection((x) => { x.surfaceWear = v; }); }} />
+            <Slider label="Micro-dust" mapping={IMPERFECTION} value={f.imperfections.dust} defaultValue={DEFAULT_IMPERFECTIONS.dust}
+              hint="Sparse matte dust specks settled mostly on upward-facing surfaces."
+              onChange={(v) => { setImperfection((x) => { x.dust = v; }); }} />
             <Select label="Overlay" value={f.imperfections.overlay} options={OVERLAY_OPTIONS}
               hint="A false-colour view of the heat or speed model. The preview only: a photo is never overlaid."
               onChange={(overlay) => { setImperfection((x) => { x.overlay = overlay; }); }} />

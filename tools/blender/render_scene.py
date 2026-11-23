@@ -192,6 +192,23 @@ def bead_material(mat):
     plate = math_node(nt, 'GREATER_THAN', attr['plate'].outputs['Fac'], PLATE_MASK_THRESHOLD)
     to_plate = math_node(nt, 'SUBTRACT', mat['plate']['rough'], bead)
     roughness = math_node(nt, 'MULTIPLY_ADD', plate, to_plate, bead)
+
+    wear = mat.get('surfaceWear', 0.0)
+    if wear > 0.0:
+        smudge_noise = node(nt, 'ShaderNodeTexNoise', Scale=32.0, Detail=2.0)
+        nt.links.new(texco.outputs['Object'], smudge_noise.inputs['Vector'])
+        smudge_amp = 1.05 * wear
+        smudge = math_node(nt, 'MULTIPLY_ADD', smudge_noise.outputs['Fac'], smudge_amp, -0.5 * smudge_amp)
+        scuff_noise = node(nt, 'ShaderNodeTexNoise', Scale=180.0, Detail=3.0)
+        nt.links.new(texco.outputs['Object'], scuff_noise.inputs['Vector'])
+        scuff_amp = 0.65 * wear
+        scuff = math_node(nt, 'MULTIPLY_ADD', scuff_noise.outputs['Fac'], scuff_amp, -0.5 * scuff_amp)
+        wear_delta = math_node(nt, 'ADD', smudge, scuff)
+        worn = math_node(nt, 'ADD', roughness, wear_delta)
+        worn_clamp = node(nt, 'ShaderNodeClamp', Min=ROUGH_MIN, Max=1.0)
+        nt.links.new(worn, worn_clamp.inputs['Value'])
+        roughness = worn_clamp.outputs['Result']
+
     aniso = math_node(nt, 'MULTIPLY_ADD', plate, -mat['anisotropy'], mat['anisotropy'])
 
     cross = nt.nodes.new('ShaderNodeVectorMath')
@@ -200,6 +217,53 @@ def bead_material(mat):
     nt.links.new(attr['path_tangent'].outputs['Vector'], cross.inputs[1])
 
     bsdf = node(nt, 'ShaderNodeBsdfPrincipled', **{'Base Color': (*mat['baseColor'], 1.0), 'IOR': mat['ior']})
+
+    dust = mat.get('dust', 0.0)
+    if dust > 0.0:
+        vor = node(nt, 'ShaderNodeTexVoronoi', Scale=300.0, Randomness=1.0)
+        nt.links.new(texco.outputs['Object'], vor.inputs['Vector'])
+        shape = math_node(nt, 'MULTIPLY_ADD', vor.outputs['Distance'], -1.0 / (0.35 * 0.088), 1.0 / 0.35)
+        shape.node.use_clamp = True
+        sep_col = nt.nodes.new('ShaderNodeSeparateColor')
+        nt.links.new(vor.outputs['Color'], sep_col.inputs['Color'])
+        keep_lo = 0.94 - 0.16 * dust
+        keep_inv = 1.0 / (1.0 - keep_lo)
+        keep = math_node(nt, 'MULTIPLY_ADD', sep_col.outputs['Red'], keep_inv, -keep_lo * keep_inv)
+        keep.node.use_clamp = True
+        sep_n = nt.nodes.new('ShaderNodeSeparateXYZ')
+        nt.links.new(geometry.outputs['Normal'], sep_n.inputs[0])
+        up_inv = 1.0 / (0.80 - 0.15)
+        up = math_node(nt, 'MULTIPLY_ADD', sep_n.outputs['Z'], up_inv, -0.15 * up_inv)
+        up.node.use_clamp = True
+        up2 = math_node(nt, 'MULTIPLY', up, up)
+        settle = math_node(nt, 'MULTIPLY_ADD', up2, 1.0 - 0.10, 0.10)
+        dust_strength = 0.45 + 0.45 * dust
+        mask = math_node(nt, 'MULTIPLY', math_node(nt, 'MULTIPLY', math_node(nt, 'MULTIPLY', shape, keep), settle), dust_strength)
+        mask.node.use_clamp = True
+
+        col_fac = math_node(nt, 'MULTIPLY', mask, 0.85)
+        mix_col = nt.nodes.new('ShaderNodeMix')
+        mix_col.data_type = 'RGBA'
+        mix_col.blend_type = 'MIX'
+        mix_col.clamp_factor = True
+        mix_in = {s.identifier: s for s in mix_col.inputs}
+        mix_out = {s.identifier: s for s in mix_col.outputs}
+        mix_in['A_Color'].default_value = (*mat['baseColor'], 1.0)
+        mix_in['B_Color'].default_value = (0.48, 0.46, 0.42, 1.0)
+        nt.links.new(col_fac, mix_in['Factor_Float'])
+        nt.links.new(mix_out['Result_Color'], bsdf.inputs['Base Color'])
+
+        to_dust_r = math_node(nt, 'SUBTRACT', 0.92, roughness)
+        roughness = math_node(nt, 'MULTIPLY_ADD', mask, to_dust_r, roughness)
+        aniso = math_node(nt, 'MULTIPLY', aniso, math_node(nt, 'MULTIPLY_ADD', mask, -1.0, 1.0))
+
+    sss = mat.get('subsurface', 0.0)
+    if sss > 0.0:
+        bsdf.subsurface_method = 'BURLEY'
+        bsdf.inputs['Subsurface Weight'].default_value = sss
+        bsdf.inputs['Subsurface Scale'].default_value = 0.0028
+        bsdf.inputs['Subsurface Radius'].default_value = (1.0, 0.70, 0.45)
+
     nt.links.new(roughness, bsdf.inputs['Roughness'])
     nt.links.new(aniso, bsdf.inputs['Anisotropic'])
     nt.links.new(cross.outputs['Vector'], bsdf.inputs['Tangent'])
@@ -243,6 +307,40 @@ def add_backdrop(b):
     ob = add_mesh('sweep', b['positions'], b['index'], b['normals'])
     m, nt = new_material('backdrop')
     bsdf = node(nt, 'ShaderNodeBsdfPrincipled', **{'Base Color': (*b['albedo'], 1.0), 'Roughness': b['roughness']})
+    tex = b.get('texture', 0.0)
+    if tex > 0.0:
+        texco = nt.nodes.new('ShaderNodeTexCoord')
+        cloud = node(nt, 'ShaderNodeTexNoise', Scale=3.2, Detail=3.0)
+        tooth = node(nt, 'ShaderNodeTexNoise', Scale=34.0, Detail=4.0)
+        fine = node(nt, 'ShaderNodeTexNoise', Scale=180.0, Detail=4.0)
+        for n in (cloud, tooth, fine):
+            nt.links.new(texco.outputs['Object'], n.inputs['Vector'])
+
+        ca, ta, fa = 0.58 * tex, 0.36 * tex, 0.44 * tex
+        cloud_a = math_node(nt, 'MULTIPLY_ADD', cloud.outputs['Fac'], ca, 1.0 - 0.5 * ca)
+        tooth_a = math_node(nt, 'MULTIPLY_ADD', tooth.outputs['Fac'], ta, -0.5 * ta)
+        fine_a = math_node(nt, 'MULTIPLY_ADD', fine.outputs['Fac'], fa, -0.5 * fa)
+        albedo_sum = math_node(nt, 'ADD', math_node(nt, 'ADD', cloud_a, tooth_a), fine_a)
+        albedo_fac = node(nt, 'ShaderNodeClamp', Min=0.5, Max=1.5)
+        nt.links.new(albedo_sum, albedo_fac.inputs['Value'])
+
+        scaled = nt.nodes.new('ShaderNodeVectorMath')
+        scaled.operation = 'SCALE'
+        scaled.inputs[0].default_value = tuple(b['albedo'])
+        nt.links.new(albedo_fac.outputs['Result'], scaled.inputs['Scale'])
+        nt.links.new(scaled.outputs['Vector'], bsdf.inputs['Base Color'])
+
+        cr, tr = 0.70 * tex, 0.55 * tex
+        cloud_r = math_node(nt, 'MULTIPLY_ADD', cloud.outputs['Fac'], cr, b['roughness'] - 0.5 * cr)
+        tooth_r = math_node(nt, 'MULTIPLY_ADD', tooth.outputs['Fac'], tr, -0.5 * tr)
+        rough_clamp = node(nt, 'ShaderNodeClamp', Min=0.05, Max=1.0)
+        nt.links.new(math_node(nt, 'ADD', cloud_r, tooth_r), rough_clamp.inputs['Value'])
+        nt.links.new(rough_clamp.outputs['Result'], bsdf.inputs['Roughness'])
+
+        bump = node(nt, 'ShaderNodeBump', Distance=0.0008, Strength=0.35 * tex)
+        nt.links.new(tooth.outputs['Fac'], bump.inputs['Height'])
+        nt.links.new(bump.outputs['Normal'], bsdf.inputs['Normal'])
+
     nt.links.new(bsdf.outputs[0], nt.nodes.new('ShaderNodeOutputMaterial').inputs[0])
     ob.data.materials.append(m)
     ob.is_shadow_catcher = b['shadowCatcher']

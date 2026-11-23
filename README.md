@@ -17,6 +17,12 @@ focus front to back. Photos develop through Blender's AgX with subtle camera opt
 grain, light chromatic aberration and corner softness), with **Clean**, **Macro lens** and
 **Desk / phone** profiles plus per-effect sliders under **Output → Lens and film**.
 
+Every booth setting (look, filament, surface wear/dust/translucency, lights, props, camera, pose,
+slicing, lens & film optics) syncs live to the URL hash (`#s=…`). **Setup → Copy link** shares the
+exact scene; opened models and prop STLs are cached locally by content hash in IndexedDB so opening
+a link in the same browser restores the model and exact camera automatically (or pass `&partUrl=…`
+for a hosted STL/G-code).
+
 ![The booth with a Benchy open: the live preview, the photo card and the controls](docs/media/app.png)
 
 ## Let an agent take the photos
@@ -75,8 +81,10 @@ It wrote these three files, and the agent got a thumbnail of each to look at.
 </p>
 
 `print(bpy.booth.reference())` lists every attribute and operator the booth's `bpy` has. An
-attribute it lacks raises an error that names the booth's equivalent. Setup, flags and file access
-are in [docs/agent.md](docs/agent.md).
+attribute it lacks raises an error that names the booth's equivalent. Every finished `booth_python`
+job and rendered image also returns `scene_url` (and `bpy.booth.share_url()` or the `booth_share_url`
+MCP tool builds one directly) so you can click straight into the exact setup, tweak it, and press
+PHOTO yourself. Setup, flags and file access are in [docs/agent.md](docs/agent.md).
 
 ## Run it yourself
 

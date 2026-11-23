@@ -27,6 +27,8 @@ export interface JobReport {
   readonly error: { readonly type: string; readonly message: string; readonly traceback: string } | null;
   /** Renders and previews finished since the last report. Each thumbnail is an image block beside the report. */
   readonly images: readonly ImageMeta[];
+  /** Clickable shareable URL encoding the exact booth scene state, when the tab sent one. */
+  readonly scene_url: string | null;
   readonly elapsed_s: number;
 }
 
@@ -61,6 +63,7 @@ interface JobRecord {
   droppedChars: number;
   droppedImages: number;
   images: { readonly meta: ImageMeta; readonly thumbnail: Uint8Array }[];
+  sceneUrl: string | null;
   readonly waiters: Set<Waiter>;
 }
 
@@ -122,6 +125,7 @@ export class Jobs implements TabEvents {
       droppedChars: 0,
       droppedImages: 0,
       images: [],
+      sceneUrl: null,
       waiters: new Set(),
     };
     this.#jobs.set(record.id, record);
@@ -172,15 +176,18 @@ export class Jobs implements TabEvents {
   image(job: JobId, meta: ImageMeta, thumbnail: Uint8Array): void {
     const record = this.#runningRecord(job);
     if (record === undefined) return;
+    if (meta.sceneUrl) record.sceneUrl = meta.sceneUrl;
     record.images.push({ meta, thumbnail });
     if (record.images.length <= MAX_IMAGES) return;
     record.images.shift();
     record.droppedImages += 1;
   }
 
-  done(job: JobId, outcome: ScriptOutcome): void {
+  done(job: JobId, outcome: ScriptOutcome, sceneUrl?: string | null): void {
     const record = this.#runningRecord(job);
-    if (record !== undefined) this.#end(record, outcome);
+    if (record === undefined) return;
+    if (sceneUrl) record.sceneUrl = sceneUrl;
+    this.#end(record, outcome);
   }
 
   disconnected(reason: string | null): void {
@@ -268,6 +275,7 @@ export class Jobs implements TabEvents {
       progress: status.kind === "running" ? status.progress : null,
       error: outcome?.kind === "failed" ? { type: outcome.type, message: outcome.message, traceback: outcome.traceback } : null,
       images: record.images.map((image) => image.meta),
+      scene_url: record.sceneUrl,
       elapsed_s: Math.round(((status.kind === "ended" ? status.at : this.#now()) - record.startedAt) / 1000),
     };
     const thumbnails = record.images.map((image) => image.thumbnail);
@@ -310,12 +318,14 @@ export function refusalResult(text: string): CallToolResult {
 export function reportText(report: JobReport): string {
   const lines = [`job ${report.job}: ${report.state} (${report.elapsed_s} s)`];
   if (report.progress !== null) lines.push(report.progress);
+  if (report.scene_url !== null) lines.push(`scene_url: ${report.scene_url}`);
   if (report.output !== "") lines.push("--- output", report.output.replace(/\n$/, ""));
   if (report.error !== null) lines.push("--- error", report.error.traceback !== "" ? report.error.traceback : `${report.error.type}: ${report.error.message}`);
   if (report.images.length > 0) {
     lines.push("--- images");
     for (const image of report.images) {
       lines.push(`${image.label} ${image.width}x${image.height} ${image.path ?? "(not saved)"} (${image.note})`);
+      if (image.sceneUrl) lines.push(`  scene: ${image.sceneUrl}`);
     }
   }
   return lines.join("\n");

@@ -20,7 +20,7 @@ function material(rough: number[], flatten: number[]): BeadMaterial {
   return {
     baseColor: [0.5, 0.5, 0.5], ior: 1.5, anisotropy: 0.2,
     layers: { count: flatten.length, rough: Float32Array.from(rough), flatten: Float32Array.from(flatten), heat: new Float32Array(flatten.length) },
-    speedGain: 0.1, mottleScale: 300, mottleAmp: 0.06,
+    speedGain: 0.1, mottleScale: 300, mottleAmp: 0.06, surfaceWear: 0, dust: 0, subsurface: 0,
     plate: { textured: true, rough: 0.4, roughUnresolved: 0.5, grainPerM: 6000, bumpDistanceM: 5e-5 },
     overlay: "print",
   };

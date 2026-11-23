@@ -21,8 +21,9 @@ import { addLight, addProp } from "../edits";
 import type { RadianceFrame } from "../film";
 import { PhotoCancelled, type Photo, type PhotoEngine, type PhotoProgress } from "../photo/photo";
 import type { FilmSection } from "../scene";
+import { encodeShareUrl, validPartUrl } from "../share";
 import type { PhotoSession } from "../ui/photo-session";
-import type { ImageMeta } from "./protocol";
+import { BOOTH_URL, type ImageMeta } from "./protocol";
 import {
   COLLECTIONS, DEFAULT_RENDER_FILEPATH, HostError, OPS, OPS_MISSING, OWNERS, PART, RNA, SCENE,
   boolOf, enumError, fmt, handleKey, lightHandle, numberOf, parseHandle, propHandle, propRange, pyRepr, pyTypeName, referenceText,
@@ -49,6 +50,8 @@ export interface HostPorts {
   readonly develop: (frame: RadianceFrame, film: FilmSection) => Promise<Blob>;
   /** A PNG to a JPEG with the given long edge, for the agent to look at. */
   readonly thumbnail: (png: Blob, maxEdgePx: number) => Promise<Thumbnail>;
+  /** Builds a shareable URL for the current booth state, optionally carrying a remote part URL. */
+  readonly shareUrl?: (partUrl?: string | null) => Promise<string>;
 }
 
 /** One running script's reach outside the tab. Built per job over the bridge link, or in memory by the dev page. */
@@ -91,7 +94,8 @@ type Request =
   | { readonly fn: "create"; readonly collection: CollectionName }
   | { readonly fn: "op"; readonly name: string; readonly args: OpArgs }
   | { readonly fn: "repr"; readonly handle: Handle; readonly type: RnaTypeName }
-  | { readonly fn: "reference"; readonly only: string | null };
+  | { readonly fn: "reference"; readonly only: string | null }
+  | { readonly fn: "share_url"; readonly partUrl: string | null };
 
 export class AgentHost {
   readonly #ports: HostPorts;
@@ -129,7 +133,16 @@ export class AgentHost {
       case "op": return this.#op(req.name, req.args, io);
       case "repr": return this.#path(RNA[req.type], req.handle);
       case "reference": return referenceText(req.only);
+      case "share_url": return this.#shareUrl(req.partUrl);
     }
+  }
+
+  #shareUrl(partUrl: string | null): Promise<string> {
+    if (partUrl !== null && validPartUrl(partUrl) === undefined) {
+      throw new HostError("ValueError", `bpy.booth.share_url: part_url must be an http:// or https:// URL, got ${pyRepr(partUrl)}`);
+    }
+    if (this.#ports.shareUrl !== undefined) return this.#ports.shareUrl(partUrl);
+    return encodeShareUrl(BOOTH_URL, this.#ports.booth.doc, partUrl === null ? null : { url: partUrl });
   }
 
   // ---- reading ------------------------------------------------------------------------------
@@ -460,7 +473,8 @@ export class AgentHost {
     if (stopped !== null) io.print(`${stopped}\n`);
     const path = writeStill ? await this.#write(io, "render.render", photo.fileName, photo.png) : null;
     const thumb = await thumbnail(photo.png, THUMBNAIL_EDGE_PX);
-    io.image({ label: "render", path, width: photo.width, height: photo.height, note: photoNote(photo) }, thumb.blob);
+    const sceneUrl = this.#ports.shareUrl === undefined ? undefined : await this.#ports.shareUrl().catch(() => null);
+    io.image({ label: "render", path, width: photo.width, height: photo.height, note: photoNote(photo), ...(sceneUrl === undefined ? {} : { sceneUrl }) }, thumb.blob);
     return "FINISHED";
   }
 
@@ -481,7 +495,8 @@ export class AgentHost {
     const png = await develop(frame, scene.film);
     const path = writeStill ? await this.#write(io, "render.opengl", `${booth.partName ?? "booth"}_preview.png`, png) : null;
     const thumb = await thumbnail(png, THUMBNAIL_EDGE_PX);
-    io.image({ label: "preview", path, width: frame.width, height: frame.height, note: "raster preview, not a Cycles photo" }, thumb.blob);
+    const sceneUrl = this.#ports.shareUrl === undefined ? undefined : await this.#ports.shareUrl().catch(() => null);
+    io.image({ label: "preview", path, width: frame.width, height: frame.height, note: "raster preview, not a Cycles photo", ...(sceneUrl === undefined ? {} : { sceneUrl }) }, thumb.blob);
   }
 
   async #write(io: JobIo, where: string, name: string, png: Blob): Promise<string> {
@@ -541,6 +556,10 @@ function parseRequest(text: string): Request {
     }
     case "repr": return { fn, handle: handle(a), type: type(b) };
     case "reference": return { fn, only: typeof a === "string" ? a : null };
+    case "share_url": {
+      if (a !== undefined && a !== null && typeof a !== "string") throw bad("share_url");
+      return { fn, partUrl: typeof a === "string" && a !== "" ? a : null };
+    }
     default: throw bad(`no function ${fn}`);
   }
 }

@@ -15,7 +15,10 @@ import {
   MeshStandardNodeMaterial, NearestFilter, Object3D, PerspectiveCamera, RectAreaLight, RenderTarget, Scene,
   ShadowNodeMaterial, SphereGeometry, Sphere, SpotLight, Texture, Vector3, type WebGPURenderer,
 } from "three/webgpu";
-import { pmremTexture, positionLocal, uniform, vec4 } from "three/tsl";
+import {
+  float, fwidth, mx_noise_float, mx_noise_vec3, normalLocal, normalize, pmremTexture, positionLocal, smoothstep,
+  transformNormalToView, uniform, vec4,
+} from "three/tsl";
 import type { BeadMesh } from "../print";
 import { propWorldBounds, type BackdropSection, type LightsSection, type PartSection, type PropGeometry, type PropItem, type WorldSection } from "../scene";
 import { BeadShading } from "./bead-material";
@@ -41,6 +44,9 @@ export class Stage {
   readonly #sweep: Mesh<BufferGeometry, MeshStandardNodeMaterial | ShadowNodeMaterial>;
   readonly #sweepLit = new MeshStandardNodeMaterial({ side: DoubleSide });
   readonly #sweepCatcher = new ShadowNodeMaterial({ side: DoubleSide });
+  readonly #sweepColor = uniform(new Color(0.55, 0.55, 0.55));
+  readonly #sweepRoughness = uniform(0.55);
+  readonly #sweepTexture = uniform(0);
   #sweepSource: BackdropSection | null = null;
   readonly #worldEnv = pmremTexture(new Texture());
   readonly #worldStrength = uniform(1);
@@ -73,6 +79,18 @@ export class Stage {
     this.#sweep = new Mesh(new BufferGeometry(), this.#sweepLit);
     this.#sweep.receiveShadow = true;
     this.#sweepLit.envNode = this.#worldEnv;
+    // Mirror cb_shader_backdrop: broad tonal clouding, medium tooth, fine paper grain and subtle normal relief.
+    const p = positionLocal, tex = this.#sweepTexture;
+    const cloud = mx_noise_float(p.mul(3.2)).mul(0.5);
+    const tooth = mx_noise_float(p.mul(34)).mul(0.5);
+    const fine = mx_noise_float(p.mul(180)).mul(0.5);
+    const albedoFac = float(1).add(cloud.mul(0.58).add(tooth.mul(0.36)).add(fine.mul(0.44)).mul(tex)).clamp(0.5, 1.5);
+    this.#sweepLit.colorNode = this.#sweepColor.mul(albedoFac);
+    this.#sweepLit.roughnessNode = this.#sweepRoughness.add(cloud.mul(0.70).add(tooth.mul(0.55)).mul(tex)).clamp(0.05, 1);
+    const toothPx = fwidth(p).length().mul(34);
+    const toothFade = smoothstep(0.25, 0.6, toothPx).oneMinus();
+    const grainN = mx_noise_vec3(p.mul(34)).mul(0.04).mul(tex).mul(toothFade);
+    this.#sweepLit.normalNode = transformNormalToView(normalize(normalLocal.add(grainN)));
     const k = this.#key;
     k.castShadow = true;
     k.shadow.mapSize.set(SHADOW_MAP_PX, SHADOW_MAP_PX);
@@ -187,6 +205,9 @@ export class Stage {
       this.#sweep.geometry = sweepGeometry(b);
     }
     this.#sweepSource = b;
+    this.#sweepColor.value.setRGB(b.albedo[0], b.albedo[1], b.albedo[2]);
+    this.#sweepRoughness.value = b.roughness;
+    this.#sweepTexture.value = b.texture;
     this.#sweepLit.color.setRGB(b.albedo[0], b.albedo[1], b.albedo[2]);
     this.#sweepLit.roughness = b.roughness;
     this.#sweep.material = b.shadowCatcher ? this.#sweepCatcher : this.#sweepLit;

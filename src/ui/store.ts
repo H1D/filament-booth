@@ -28,6 +28,11 @@ export class Store<T> {
   }
 }
 
+export interface MissingSharedPart {
+  readonly name: string | null;
+  readonly error?: string;
+}
+
 export interface UiState {
   /** The next click on the part picks the focus point. */
   readonly focusTool: boolean;
@@ -39,10 +44,14 @@ export interface UiState {
   readonly dismissedPrint: PrintState | null;
   /** A pairing link was opened, so the Agent section starts open and in view. */
   readonly showAgent: boolean;
+  /** A shared link named a model file that was not in local cache: prompt the user to drop it. */
+  readonly missingPart: MissingSharedPart | null;
 }
 
 export class Ui {
-  readonly state = new Store<UiState>({ focusTool: false, viewportStatus: "", notice: null, dismissedPrint: null, showAgent: false });
+  readonly state = new Store<UiState>({
+    focusTool: false, viewportStatus: "", notice: null, dismissedPrint: null, showAgent: false, missingPart: null,
+  });
 
   #patch(patch: Partial<UiState>): void {
     this.state.set({ ...this.state.get(), ...patch });
@@ -53,4 +62,5 @@ export class Ui {
   setNotice(text: string | null): void { this.#patch({ notice: text }); }
   dismissPrintError(print: PrintState): void { this.#patch({ dismissedPrint: print }); }
   revealAgent(): void { this.#patch({ showAgent: true }); }
+  setMissingPart(part: MissingSharedPart | null): void { this.#patch({ missingPart: part }); }
 }

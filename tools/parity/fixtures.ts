@@ -139,6 +139,9 @@ export function beadMaterial(layers: number, baseColor: Rgb, finish: "gloss" | "
     speedGain: 0.0875 * 0.5,
     mottleScale: 300,
     mottleAmp: 0.06,
+    surfaceWear: 0,
+    dust: 0,
+    subsurface: 0,
     plate: { textured: true, rough: 0.42, roughUnresolved: 0.55, grainPerM: 6000, bumpDistanceM: 5e-5 },
     overlay: "print",
   };
@@ -183,7 +186,7 @@ export function sweep(albedo: number, roughness: number, shadowCatcher: boolean)
   }
   const index = new Uint32Array((n - 1) * 6);
   for (let i = 0; i < n - 1; i++) index.set([i, n + i, n + i + 1, i, n + i + 1, i + 1], i * 6);
-  return { positions, normals, index, albedo: [albedo, albedo, albedo], roughness, shadowCatcher };
+  return { positions, normals, index, albedo: [albedo, albedo, albedo], roughness, texture: 0, shadowCatcher };
 }
 
 const v3 = (x: number, y: number, z: number): Vec3 => [m(x), m(y), m(z)];
