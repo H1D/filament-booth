@@ -17,7 +17,7 @@
 import {
   DEFAULT_GLOSS, deg, m, mm,
   type AgxLook, type BedType, type BoothDocument, type CameraSetup, type Degrees, type FeatureCode, type FilamentChoice,
-  type Imperfections, type Metres, type Pose, type PropShape, type Rgb, type Studio, type StudioLight, type StudioProp, type Vec3,
+  type FilmOptics, type Imperfections, type Metres, type Pose, type PropShape, type Rgb, type Studio, type StudioLight, type StudioProp, type Vec3,
 } from "./document";
 import { BEAD_WORD, type BeadMesh, type LoadedPrint, type SlicedPrint } from "./print";
 
@@ -223,6 +223,7 @@ export interface FilmSection {
   readonly transparent: boolean;
   readonly denoise: boolean;
   readonly look: AgxLook;
+  readonly optics: FilmOptics;
 }
 
 /** Blender 5.2.3 factory values (dumped from the build, tools/blender/dump_defaults.py),
@@ -368,6 +369,7 @@ export function compileScene(
   const film = keep<FilmSection>(previous?.film, {
     width, height, samples: doc.output.samples, timeLimitS: doc.output.timeLimitS, ...FILM_DEFAULTS,
     transparent: doc.output.transparentBackground, denoise: doc.output.denoise, look: doc.output.viewTransform.look,
+    optics: { ...doc.output.optics },
   });
 
   const part = print === null ? null : compilePart(doc, print, previous?.part ?? null);
@@ -683,14 +685,45 @@ export function filmSize(aspect: { w: number; h: number }, longEdgePx: number): 
   return aspect.w >= aspect.h ? { width: longEdgePx, height: short } : { width: short, height: longEdgePx };
 }
 
-/** Camera distance so a freshly opened part, as printed, fills the frame at the
- *  current focal length: its bounding sphere just inside the narrower half-angle. */
+/** The marked third-stop aperture scale, f/1 to f/64. Shared by dynamic framing and the Camera panel slider. */
+export const F_STOPS = [
+  1, 1.1, 1.2, 1.4, 1.6, 1.8, 2, 2.2, 2.5, 2.8, 3.2, 3.5, 4, 4.5, 5, 5.6, 6.3, 7.1, 8, 9, 10, 11, 13, 14, 16, 18, 20, 22,
+  25, 29, 32, 36, 40, 45, 51, 57, 64,
+] as const;
+
+/** Target circle of confusion on the 36 mm sensor at the front of the framed part (~5 px on a 1600 px still). */
+const FRAME_COC_M = 1.2e-4;
+const FRAME_FSTOP_MIN = 4;
+const FRAME_FSTOP_MAX = 64;
+
+/**
+ * Default f-stop for a framed part: tight enough to keep the part in focus from
+ * front to back at `focalMm`, snapped to the third-stop scale. Small macro prints
+ * close down (e.g. f/45 for a 60 mm Benchy, f/22 for a 105 mm bracket); large
+ * prints open up (e.g. f/10 for a 260 mm helmet).
+ */
+export function defaultFStopForPart(mesh: BeadMesh, focalMm: number, aspect: { w: number; h: number }): number {
+  const size = sub(mesh.bboxM.max, mesh.bboxM.min);
+  const radius = length(size) / 2;
+  if (radius <= 0) return 11;
+  const half = Math.atan((18 / focalMm) * Math.min(1, aspect.w / aspect.h, aspect.h / aspect.w));
+  const distance = (radius / Math.sin(half)) * FRAME_MARGIN;
+  const f = focalMm / 1000;
+  const dz = Math.min(radius * 0.75, distance * 0.5);
+  const raw = (f * f * dz) / (FRAME_COC_M * distance * Math.max(distance - dz, 1e-4));
+  const clamped = clamp(raw, FRAME_FSTOP_MIN, FRAME_FSTOP_MAX);
+  return F_STOPS.reduce((best, s) => (Math.abs(s - clamped) < Math.abs(best - clamped) ? s : best));
+}
+
+/** Camera distance and aperture so a freshly opened part, as printed, fills the
+ *  frame and stays in focus front-to-back at the current focal length. */
 export function framePart(mesh: BeadMesh, cam: CameraSetup, aspect: { w: number; h: number }): Partial<CameraSetup> {
   const size = sub(mesh.bboxM.max, mesh.bboxM.min);
   const half = Math.atan((18 / cam.focalMm) * Math.min(1, aspect.w / aspect.h, aspect.h / aspect.w));
   return {
     distance: m((length(size) / 2 / Math.sin(half)) * FRAME_MARGIN),
     target: [m(0), m(0), m(size[2] / 2)],
+    fStop: defaultFStopForPart(mesh, cam.focalMm, aspect),
   };
 }
 

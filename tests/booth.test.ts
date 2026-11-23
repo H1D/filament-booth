@@ -525,13 +525,17 @@ describe("open", () => {
     expect(rig.booth.doc.camera.focusPartPoint).toBeNull();
   });
 
-  test("a second fresh part is framed again", async () => {
+  test("a second fresh part is framed again, with its f-stop scaled to its size", async () => {
     const rig = setup();
     await openPart(rig, binaryStl("a.stl"), 0.05);
-    const small = rig.booth.doc.camera.distance;
+    const smallDist = rig.booth.doc.camera.distance;
+    const smallFStop = rig.booth.doc.camera.fStop;
     const tall = await openPart(rig, binaryStl("b.stl"), 0.3);
-    expect(rig.booth.doc.camera.distance).toBe(framePart(tall.mesh, defaultDocument().camera, defaultDocument().output.aspect).distance);
-    expect(rig.booth.doc.camera.distance).toBeGreaterThan(small);
+    const tallFramed = framePart(tall.mesh, defaultDocument().camera, defaultDocument().output.aspect);
+    expect(rig.booth.doc.camera.distance).toBe(tallFramed.distance);
+    expect(rig.booth.doc.camera.fStop).toBe(tallFramed.fStop);
+    expect(rig.booth.doc.camera.distance).toBeGreaterThan(smallDist);
+    expect(rig.booth.doc.camera.fStop).toBeLessThan(smallFStop);
   });
 
   test("openSample opens a bundled .bin by url and names the photo after it", async () => {

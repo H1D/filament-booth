@@ -257,6 +257,29 @@ describe("the output section", () => {
     act(() => { denoise?.click(); });
     expect(booth.doc.output.denoise).toBe(false);
   });
+
+  test("lens and film profiles start at Studio camera, copy values into output.optics, and editing switches to Custom", () => {
+    const { booth } = boothWith();
+    const { container } = mount(booth, <Section id="output" open><OutputPanel /></Section>);
+    const profile = select(container, "Lens and film: Profile");
+    expect(optionLabels(profile)).toEqual(["Clean", "Studio camera", "Macro lens", "Desk / phone"]);
+    expect(profile.value).toBe("studio-dslr");
+    expect(booth.doc.output.optics.grain).toBeGreaterThan(0);
+
+    act(() => { profile.value = "clean"; profile.dispatchEvent(new Event("change", { bubbles: true })); });
+    expect(booth.doc.output.optics.grain).toBe(0);
+    expect(booth.scene.film.optics).toEqual(booth.doc.output.optics);
+
+    typeInto(input(container, "Lens and film: Grain value"), "0.55");
+    expect(booth.doc.output.optics.grain).toBe(0.55);
+    expect(profile.value).toBe("");
+
+    const reset = container.querySelector<HTMLButtonElement>('button[aria-label="Reset Output"]');
+    expect(reset).not.toBeNull();
+    act(() => { reset?.click(); });
+    expect(profile.value).toBe("studio-dslr");
+    expect(booth.doc.output.optics.grain).toBeGreaterThan(0);
+  });
 });
 
 describe("the filament section", () => {

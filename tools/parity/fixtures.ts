@@ -3,7 +3,7 @@
  * the ones that go through compileScene. Pure and deterministic: the dev page builds them in the
  * browser and run.ts builds the same values for native Blender.
  */
-import { deg, m, type Rgb, type Vec3 } from "../../src/document";
+import { CLEAN_FILM_OPTICS, deg, m, type Rgb, type Vec3 } from "../../src/document";
 import { packBeadWord, type BeadMesh } from "../../src/print";
 import {
   FILM_DEFAULTS, primitiveGeometry, propMatrix, type AreaEmitter, type BackdropSection, type BeadMaterial, type CameraSection,
@@ -240,7 +240,7 @@ function camera(target: [number, number, number], azDeg: number, elDeg: number, 
 }
 
 function film(width: number, height: number, samples: number, transparent = false): FilmSection {
-  return { width, height, samples, timeLimitS: 0, ...FILM_DEFAULTS, transparent, denoise: false, look: "medium-high-contrast" };
+  return { width, height, samples, timeLimitS: 0, ...FILM_DEFAULTS, transparent, denoise: false, look: "medium-high-contrast", optics: CLEAN_FILM_OPTICS };
 }
 
 // ---- the fixtures ------------------------------------------------------------------------

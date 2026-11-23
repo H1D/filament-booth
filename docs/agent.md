@@ -66,6 +66,17 @@ File paths in a script are on your computer and relative to the folder the agent
 reads and writes only inside that folder and the folders you pass with `--allow`. A render with
 `write_still=True` writes a PNG to `scene.render.filepath` and also shows in the photo card.
 
+### Camera aperture and lens & film optics
+
+- Importing a part with `bpy.ops.wm.stl_import` or `bpy.ops.booth.gcode_import` frames the camera and picks a default `scene.camera.data.dof.aperture_fstop` sized to keep the part sharp from front to back (tighter f-stops for small macro prints, wider for large parts). You can still override `aperture_fstop` afterwards.
+- Developed photos include subtle lens and sensor imperfections by default (`STUDIO_DSLR` profile). Switch profiles with `bpy.ops.booth.optics_apply(profile=...)` (`CLEAN`, `STUDIO_DSLR`, `MACRO`, `DESK_PHONE`) or tune individual settings on `bpy.context.scene.booth.optics`:
+  - `grain` (`0..1`) — shadow-weighted ISO sensor grain
+  - `glare` (`0..1`) — linear HDR highlight bloom and veiling glare before AgX
+  - `vignette` (`0..1`) — optical corner falloff before AgX
+  - `chromatic` (`0..1`) — lateral radial R/B fringing towards frame edges
+  - `softness` (`0..1`) — radial optical softness (sharp centre, softer corners)
+  - `warmth` (`-1..1`) — luminance-preserving white-balance drift (cool to warm)
+
 ## Options
 
 `npx -y filament-booth` and `bun tools/agent/bridge.ts` take these flags. The agent's MCP config can

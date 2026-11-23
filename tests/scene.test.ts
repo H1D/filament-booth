@@ -7,7 +7,7 @@ import { addProp } from "../src/edits";
 import { LOOK_PRESETS } from "../src/presets";
 import type { BeadMesh, LoadedPrint, SlicedPrint } from "../src/print";
 import {
-  compileScene, filmSize, framePart, glossRoughness, kelvinToRgb, layerHeatCurve, refocal, resolveMaterial,
+  F_STOPS, compileScene, defaultFStopForPart, filmSize, framePart, glossRoughness, kelvinToRgb, layerHeatCurve, refocal, resolveMaterial,
   exportScene, solveCamera, solveLight, solvePose, sphericalAbout, studioAim, sweepMesh, transformPoint, type Scene,
 } from "../src/scene";
 
@@ -312,7 +312,28 @@ describe("camera helpers", () => {
       expect(subtended).toBeLessThan(half);
       expect(subtended / half).toBeGreaterThan(0.85);
       expect(framed.target[2]).toBeCloseTo(0.05, 9);
+      expect(F_STOPS).toContain(framed.fStop);
     }
+  });
+
+  test("defaultFStopForPart closes down for small macro prints and opens up for large ones", () => {
+    const sized = (mmEdge: number): BeadMesh => ({
+      ...fakeMesh(),
+      bboxM: { min: [-mmEdge / 2000, -mmEdge / 2000, 0], max: [mmEdge / 2000, mmEdge / 2000, mmEdge / 1000] },
+    });
+    const aspect = { w: 1, h: 1 };
+    const tiny = defaultFStopForPart(sized(25), 85, aspect);
+    const medium = defaultFStopForPart(sized(105), 85, aspect);
+    const large = defaultFStopForPart(sized(260), 85, aspect);
+    expect(F_STOPS).toContain(tiny);
+    expect(F_STOPS).toContain(medium);
+    expect(F_STOPS).toContain(large);
+    expect(tiny).toBeGreaterThan(medium);
+    expect(medium).toBeGreaterThan(large);
+    expect(medium).toBeGreaterThanOrEqual(20);
+    expect(medium).toBeLessThanOrEqual(25);
+    expect(large).toBeGreaterThanOrEqual(6.3);
+    expect(large).toBeLessThanOrEqual(11);
   });
 });
 

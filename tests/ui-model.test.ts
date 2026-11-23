@@ -3,6 +3,7 @@ import { deg, m, mm, watts } from "../src/document";
 import { applyFilamentPreset, applyLook, patchLight, setFocal } from "../src/edits";
 import type { BeadMesh, LoadedPrint, PrintSource, PrintState, SlicedPrint } from "../src/print";
 import { DEFAULTS, SECTION_IDS, formatDuration, isSame, lookLight, printSource, sectionState, slicingEditable, sourceName, stageLabel, titleCase, type SectionId } from "../src/ui/model";
+import { defaultFStopForPart } from "../src/scene";
 import { boothWith } from "./ui-fixtures";
 
 const stl: PrintSource = { kind: "stl", file: new File([], "bracket.stl"), fileHash: "x" };
@@ -69,6 +70,21 @@ describe("section state", () => {
     if (reset !== null) booth.update(reset);
     expect(booth.doc.camera.focalMm).toBe(85);
     expect(booth.doc.camera.distance).toBeCloseTo((wide * 85) / 35, 9);
+  });
+
+  test("with a part open, the camera baseline f-stop is the part's dynamic f-stop", () => {
+    const { booth } = boothWith();
+    const part = loaded(stl, "booth");
+    const open: PrintState = { status: "ready", loaded: part };
+    const expected = defaultFStopForPart(part.mesh, DEFAULTS.camera.focalMm, DEFAULTS.output.aspect);
+    booth.update((d) => { d.camera.fStop = expected; });
+    expect(stateOf(booth, open, "camera").modified).toBe(false);
+    booth.update((d) => { d.camera.fStop = 4; });
+    const marked = stateOf(booth, open, "camera");
+    expect(marked.modified).toBe(true);
+    if (marked.reset !== null) booth.update(marked.reset);
+    expect(booth.doc.camera.fStop).toBe(expected);
+    expect(stateOf(booth, open, "camera").modified).toBe(false);
   });
 
   test("the output section ignores the aspect, which the camera section owns", () => {

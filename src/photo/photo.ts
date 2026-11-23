@@ -8,7 +8,7 @@
  *
  * A Scene is immutable, so edits made after the press cannot reach a run.
  */
-import type { AgxLook } from "../document";
+import type { AgxLook, FilmOptics } from "../document";
 import { develop, loadAgx, quickLook, type AgxData, type RadianceFrame } from "../film";
 import type { FilmSection, Scene } from "../scene";
 import { setTimer, type Schedule } from "../schedule";
@@ -88,7 +88,7 @@ export interface PhotoEngine {
  */
 export interface PhotoTools {
   readonly loadAgx: (look: AgxLook) => Promise<AgxData>;
-  readonly quickLook: (frame: RadianceFrame, lut: AgxData, maxEdgePx: number) => ImageBitmap;
+  readonly quickLook: (frame: RadianceFrame, lut: AgxData, maxEdgePx: number, optics?: FilmOptics) => ImageBitmap;
   /** The frame with its colour denoised. Rejects when it cannot be. */
   readonly denoise: (frame: RadianceFrame) => Promise<RadianceFrame>;
   readonly develop: (frame: RadianceFrame, film: FilmSection) => Promise<Blob>;
@@ -311,7 +311,7 @@ class Run implements PhotoRun {
       const shown = this.#latest;
       let image = shown.state === "rendering" ? shown.image : null;
       try {
-        image = this.#tools.quickLook(frame, lut, QUICK_LOOK_EDGE_PX);
+        image = this.#tools.quickLook(frame, lut, QUICK_LOOK_EDGE_PX, this.#scene.film.optics);
       } catch (error) {
         // A missing preview must not cost the photo.
         console.error("quick look failed", error);

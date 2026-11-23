@@ -45,7 +45,8 @@ const CONFIG_DIR_ENV = "FILAMENT_BOOTH_CONFIG_DIR";
 export const TOOL_TEXT = {
   python:
     "Run a Blender Python (bpy) script inside the open Filament booth browser tab. The booth is a photo booth for one 3D-printed part: " +
-    "area lights and scrims, one orbit camera, one part, a backdrop, an HDR world and Cycles. It is not Blender. Only what the booth has exists, " +
+    "area lights and scrims, one orbit camera (whose default aperture_fstop scales with the part's size when a part opens), one part, a backdrop, " +
+    "an HDR world, Cycles, and lens/film development (scene.booth.optics and bpy.ops.booth.optics_apply). It is not Blender. Only what the booth has exists, " +
     "and anything else raises an error that names the booth's equivalent. Run print(bpy.booth.reference()) first: it lists every supported " +
     "attribute and operator with units and limits. Each call starts with fresh globals and the scene persists between calls. " +
     "bpy.ops.render.render(write_still=True) takes a photo and writes it to scene.render.filepath. bpy.ops.render.opengl() returns a quick preview image. " +

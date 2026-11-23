@@ -5,7 +5,7 @@
  * so a difference in the compile between Node and Chromium cannot hide inside a parity number.
  */
 import { applyFilamentPreset, applyLook } from "../../src/edits";
-import { defaultDocument, deg, DEFAULT_SLICE, type BoothDocument } from "../../src/document";
+import { CLEAN_FILM_OPTICS, defaultDocument, deg, DEFAULT_SLICE, type BoothDocument } from "../../src/document";
 import type { LoadedPrint, PrintSource } from "../../src/print";
 import { PrintSession } from "../../src/print/session";
 import { compileScene, exportScene, framePart, type Scene, type SceneFile } from "../../src/scene";
@@ -45,8 +45,9 @@ function documentFor(name: CompiledName, print: LoadedPrint, o: Required<Fixture
   doc.output.samples = o.samples;
   // Parity compares equal sample counts, so no time limit may cut a render short.
   doc.output.timeLimitS = 0;
-  // Parity compares the engines' renders. tools/denoise/run.ts checks the denoiser.
+  // Parity compares the engines' renders against native Blender, without denoising or film optics.
   doc.output.denoise = false;
+  doc.output.optics = { ...CLEAN_FILM_OPTICS };
   // What Booth does when a part opens.
   Object.assign(doc.camera, framePart(print.mesh, doc.camera, doc.output.aspect));
   return doc;

@@ -1,7 +1,7 @@
 import { BOUNDS, deg, m } from "../document";
 import { focusAt, setFocal } from "../edits";
 import { ASPECT_PRESETS, FOCAL_PRESETS_MM } from "../presets";
-import { framePart } from "../scene";
+import { F_STOPS, defaultFStopForPart, framePart } from "../scene";
 import { Fold, Group, Note, Segmented, Slider, type Option } from "./controls";
 import { ladder, linear } from "./mappings";
 import { useDoc, useEdit, useHost, useScene, useUi } from "./hooks";
@@ -13,11 +13,6 @@ const AZIMUTH = linear(BOUNDS.azimuth);
 const ELEVATION = linear(BOUNDS.elevation);
 const DISTANCE = linear(BOUNDS.cameraDistance);
 
-/** The marked third-stop scale, f/1 to f/64. The standard full stops are every third entry from f/1. */
-const F_STOPS = [
-  1, 1.1, 1.2, 1.4, 1.6, 1.8, 2, 2.2, 2.5, 2.8, 3.2, 3.5, 4, 4.5, 5, 5.6, 6.3, 7.1, 8, 9, 10, 11, 13, 14, 16, 18, 20, 22,
-  25, 29, 32, 36, 40, 45, 51, 57, 64,
-] as const;
 const APERTURE = ladder(F_STOPS, BOUNDS.fStop);
 
 const FOCALS: Option<string>[] = FOCAL_PRESETS_MM.map((mmValue) => ({ value: String(mmValue), label: String(mmValue) }));
@@ -63,8 +58,9 @@ export function CameraPanel() {
           onChange={(v) => { edit(setFocal(Number(v))); }} />
         <Slider label="Focal length" unit="mm" mapping={FOCAL} value={c.focalMm} defaultValue={DEFAULTS.camera.focalMm}
           onChange={(v) => { edit(setFocal(v)); }} />
-        <Slider label="Aperture" prefix="f/" mapping={APERTURE} value={c.fStop} defaultValue={DEFAULTS.camera.fStop}
-          hint="Standard third-stop scale. A wider opening blurs more of what is not in focus."
+        <Slider label="Aperture" prefix="f/" mapping={APERTURE} value={c.fStop}
+          defaultValue={mesh === null ? DEFAULTS.camera.fStop : defaultFStopForPart(mesh, c.focalMm, output.aspect)}
+          hint="Standard third-stop scale. Opening or framing a part picks an f-stop sized to keep it sharp front to back; a wider opening blurs more outside focus."
           onChange={(v) => { edit((d) => { d.camera.fStop = v; }); }} />
       </Group>
 

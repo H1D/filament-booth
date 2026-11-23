@@ -6,10 +6,10 @@
  */
 import {
   DEFAULT_GLOSS, deg, m, watts,
-  type AreaLight, type BoothDocument, type FilamentPresetId, type LookId, type PropShape, type Rgb, type ScrimLight, type StudioLight,
+  type AreaLight, type BoothDocument, type FilamentPresetId, type LookId, type OpticsPresetId, type PropShape, type Rgb, type ScrimLight, type StudioLight,
   type StudioProp, type Vec3,
 } from "./document";
-import { FILAMENT_PRESETS, LOOK_PRESETS } from "./presets";
+import { FILAMENT_PRESETS, LOOK_PRESETS, OPTICS_PRESETS } from "./presets";
 import { refocal } from "./scene";
 
 export type Edit = (draft: BoothDocument) => void;
@@ -28,6 +28,13 @@ export function applyFilamentPreset(id: FilamentPresetId): Edit {
     draft.filament.presetId = id;
     draft.filament.recipe = structuredClone(FILAMENT_PRESETS[id].recipe);
     draft.filament.gloss = DEFAULT_GLOSS;
+  };
+}
+
+/** Copies a lens and film profile's values into `output.optics`. */
+export function applyOpticsPreset(id: OpticsPresetId): Edit {
+  return (draft) => {
+    draft.output.optics = { ...OPTICS_PRESETS[id].optics };
   };
 }
 

@@ -11,7 +11,7 @@
  * when this module loads first.
  */
 import type {
-  AreaLight, FilamentPresetId, FilamentRecipe, LightColor, LookId, ScrimLight, Studio,
+  AreaLight, FilamentPresetId, FilamentRecipe, FilmOptics, LightColor, LookId, OpticsPresetId, ScrimLight, Studio,
 } from "./document";
 import { deg, m, watts } from "./units";
 
@@ -139,6 +139,26 @@ export const ASPECT_PRESETS = [
   { label: "4:5", w: 4, h: 5 }, { label: "1:1", w: 1, h: 1 },
   { label: "3:2", w: 3, h: 2 }, { label: "16:9", w: 16, h: 9 },
 ] as const;
+
+/** Photographic lens and sensor profiles copied into `doc.output.optics` on selection. */
+export const OPTICS_PRESETS: Record<OpticsPresetId, { label: string; optics: FilmOptics }> = {
+  clean: {
+    label: "Clean",
+    optics: { grain: 0, glare: 0, vignette: 0, chromatic: 0, softness: 0, warmth: 0 },
+  },
+  "studio-dslr": {
+    label: "Studio camera",
+    optics: { grain: 0.14, glare: 0.22, vignette: 0.18, chromatic: 0.12, softness: 0.08, warmth: 0.04 },
+  },
+  macro: {
+    label: "Macro lens",
+    optics: { grain: 0.20, glare: 0.30, vignette: 0.32, chromatic: 0.28, softness: 0.16, warmth: 0.0 },
+  },
+  "desk-phone": {
+    label: "Desk / phone",
+    optics: { grain: 0.34, glare: 0.36, vignette: 0.24, chromatic: 0.32, softness: 0.24, warmth: 0.14 },
+  },
+};
 
 /** The one table from a document's `hdrId` to its file. Both renderers load
  *  through it. Files live under public/hdr/. */

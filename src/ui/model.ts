@@ -14,7 +14,8 @@ import {
 } from "../document";
 import { applyFilamentPreset, setFocal, type Edit } from "../edits";
 import { LOOK_PRESETS } from "../presets";
-import type { PrintSource, PrintState } from "../print";
+import type { BeadMesh, PrintSource, PrintState } from "../print";
+import { defaultFStopForPart } from "../scene";
 
 export const SECTION_IDS = ["scenes", "part", "filament", "lights", "props", "world", "camera", "pose", "output", "setup", "agent"] as const;
 export type SectionId = (typeof SECTION_IDS)[number];
@@ -140,10 +141,16 @@ const resetWorld = (base: LookId): Edit => (d) => {
   d.studio.floorCards = structuredClone(look.floorCards);
 };
 
+function loadedMesh(print: PrintState): BeadMesh | null {
+  if (print.status === "ready") return print.loaded.mesh;
+  if (print.status === "error") return print.loaded?.mesh ?? null;
+  return null;
+}
+
 /** The focal length goes through setFocal, so resetting it keeps the framing like the slider does. */
-const resetCamera: Edit = (d) => {
+const resetCamera = (defaultFStop: number): Edit => (d) => {
   setFocal(DEFAULTS.camera.focalMm)(d);
-  d.camera.fStop = DEFAULTS.camera.fStop;
+  d.camera.fStop = defaultFStop;
   d.camera.focusPartPoint = null;
   d.output.aspect = { ...DEFAULTS.output.aspect };
 };
@@ -184,10 +191,12 @@ export function sectionState(id: SectionId, ctx: SectionContext): SectionState {
     case "camera": {
       const c = doc.camera;
       const d = DEFAULTS.camera;
+      const mesh = loadedMesh(ctx.print);
+      const defaultFStop = mesh === null ? d.fStop : defaultFStopForPart(mesh, d.focalMm, DEFAULTS.output.aspect);
       return {
-        modified: c.focalMm !== d.focalMm || c.fStop !== d.fStop || c.focusPartPoint !== null
+        modified: c.focalMm !== d.focalMm || c.fStop !== defaultFStop || c.focusPartPoint !== null
           || !isSame(doc.output.aspect, DEFAULTS.output.aspect),
-        reset: resetCamera,
+        reset: resetCamera(defaultFStop),
       };
     }
     case "pose":
