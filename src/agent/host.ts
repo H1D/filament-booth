@@ -689,7 +689,8 @@ export function stoppedLine(photo: Photo): string | null {
 export function photoNote(photo: Photo): string {
   const why = photo.stoppedBy.kind === "time-limit" ? `, stopped by the ${photo.stoppedBy.limitS} s time limit`
     : photo.stoppedBy.kind === "user" ? ", finished early in the tab" : "";
-  return `${photo.samples}/${photo.targetSamples} samples${why}, ${photo.engine === "cycles" ? "Cycles" : "raster fallback, not Cycles"}`;
+  const engine = photo.engine === "webgpu" ? "WebGPU" : photo.engine === "cycles" ? "Cycles" : "raster fallback, not Cycles";
+  return `${photo.samples}/${photo.targetSamples} samples${why}, ${engine}`;
 }
 
 /** The thumbnail port in a browser: a JPEG with the given long edge. */

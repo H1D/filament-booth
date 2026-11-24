@@ -15,7 +15,7 @@
  * two seconds after their parent goes (measured: 16 cores busy for 2.2 to 2.5 s).
  */
 import type { Scene } from "../scene";
-import { decodeRgbe, loadCycles, readPasses, RenderState, uploadAgain, uploadScene, type CyclesModule, type Frame, type Passes } from "./cycles-upload";
+import { decodeRgbe, loadCycles, readPasses, RenderState, uploadAgain, uploadScene, uploadStudio, type CyclesModule, type Frame, type Passes, type StudioFrame } from "./cycles-upload";
 
 interface Request {
   readonly type: "render";
@@ -24,9 +24,11 @@ interface Request {
   readonly poolSize: number;
 }
 export type RenderRequest =
-  | Request & { readonly again: false; readonly scene: Scene }
+  | Request & { readonly mode: "full"; readonly scene: Scene }
+  /** Keeps the part mesh, shaders and object BVH while replacing studio, pose, camera and film. */
+  | Request & { readonly mode: "studio"; readonly scene: StudioFrame }
   /** The last render's scene, which finished, with this camera and film. Never a worker's first. */
-  | Request & { readonly again: true; readonly scene: Frame };
+  | Request & { readonly mode: "again"; readonly scene: Frame };
 export type ControlMessage = RenderRequest | { readonly type: "finish" } | { readonly type: "cancel" };
 
 export interface RenderStats {
@@ -73,10 +75,11 @@ async function render(request: RenderRequest): Promise<void> {
   finishRequested = false;
   cancelRequested = false;
   module ??= loadCycles(request.moduleUrl, request.poolSize);
-  // The world image loads alongside the module, and only for a new session.
-  const describe: Promise<(M: CyclesModule) => void> = request.again
+  // The world image loads alongside the module, and only when the world is built.
+  const describe: Promise<(M: CyclesModule) => void> = request.mode === "again"
     ? Promise.resolve((M) => uploadAgain(M, request.scene))
-    : fetchWorld(request.hdrUrl).then((world) => (M) => uploadScene(M, request.scene, world));
+    : fetchWorld(request.hdrUrl).then((world) => (M) =>
+        request.mode === "studio" ? uploadStudio(M, request.scene, world) : uploadScene(M, request.scene, world));
   const [M, upload] = await Promise.all([module, describe]);
   if (cancelRequested) {
     post({ type: "cancelled" });

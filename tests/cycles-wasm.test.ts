@@ -7,7 +7,7 @@ import { beforeAll, expect, test } from "vitest";
 import { defaultDocument, m, type BoothDocument } from "../src/document";
 import { addProp, type Edit } from "../src/edits";
 import { sameButFrame } from "../src/photo/cycles";
-import { decodeRgbe, loadCycles, readPasses, RenderState, uploadAgain, uploadScene, type CyclesModule, type Passes, type WorldImage } from "../src/photo/cycles-upload";
+import { decodeRgbe, loadCycles, readPasses, RenderState, uploadAgain, uploadScene, uploadStudio, type CyclesModule, type Passes, type WorldImage } from "../src/photo/cycles-upload";
 import { compileScene, type Scene } from "../src/scene";
 import { beadMesh, fixture } from "../tools/parity/fixtures";
 
@@ -21,14 +21,21 @@ beforeAll(async () => {
 }, 60_000);
 
 async function render(scene: Scene, during?: () => void): Promise<{ passes: Passes; state: number; snapshots: number }> {
-  const result = await renderIn(scene, false, during);
+  const result = await renderIn(scene, "full", during);
   M._cb_session_free();
   return result;
 }
 
-/** Renders in a new session, or `again` in the last one, and leaves the session open. */
-async function renderIn(scene: Scene, again: boolean, during?: () => void): Promise<{ passes: Passes; state: number; snapshots: number }> {
-  if (again) uploadAgain(M, scene);
+/** Renders in a new session, `again`, or `studio` in the last one, and leaves the session open. */
+async function renderIn(scene: Scene, mode: "full" | "again" | "studio", during?: () => void): Promise<{ passes: Passes; state: number; snapshots: number }> {
+  if (mode === "again") uploadAgain(M, scene);
+  else if (mode === "studio") {
+    if (!scene.part) throw new Error("studio reuse needs a part");
+    uploadStudio(M, {
+      film: scene.film, camera: scene.camera, backdrop: scene.backdrop, props: scene.props,
+      lights: scene.lights, world: scene.world, partToWorld: scene.part.toWorld,
+    }, world);
+  }
   else uploadScene(M, scene, world);
   let snapshots = 0;
   let version = M._cb_passes_version(); // it counts on across a session's renders
@@ -238,7 +245,7 @@ test("rendering again with a new camera or film matches a fresh session, pixel f
   for (const scene of scenes) fresh.push((await render(scene)).passes);
   try {
     for (const [i, scene] of scenes.entries()) {
-      const run = await renderIn(scene, i > 0);
+      const run = await renderIn(scene, i > 0 ? "again" : "full");
       expect(run.state).toBe(RenderState.done);
       expect(run.passes.samples).toBe(scene.film.samples);
       expect(run.passes.rgba, `render ${i}`).toEqual(fresh[i].rgba);
@@ -254,9 +261,9 @@ test("a render again after Finish renders its full sample count", async () => {
   const a = fixture("a", small);
   const fresh = (await render(a)).passes;
   try {
-    const stopped = await renderIn({ ...a, film: { ...a.film, samples: 100_000 } }, false, () => M._cb_finish());
+    const stopped = await renderIn({ ...a, film: { ...a.film, samples: 100_000 } }, "full", () => M._cb_finish());
     expect(stopped.passes.samples).toBeLessThan(100_000);
-    const again = await renderIn(a, true);
+    const again = await renderIn(a, "again");
     expect(again.passes.samples).toBe(small.samples);
     expect(again.passes.rgba).toEqual(fresh.rgba);
     expect(again.passes.normal).toEqual(fresh.normal);
@@ -284,7 +291,7 @@ test("a render again builds no BVH and reuses the heap", async () => {
   const bvh: number[] = [], heaps: number[] = [];
   try {
     for (const [i, scene] of scenes.entries()) {
-      await renderIn(scene, i > 0);
+      await renderIn(scene, i > 0 ? "again" : "full");
       bvh.push(M._cb_time_ms(2));
       heaps.push(M._cb_heap_bytes());
     }
@@ -295,3 +302,60 @@ test("a render again builds no BVH and reuses the heap", async () => {
   expect(bvh.slice(1)).toEqual(bvh.slice(1).map(() => 0));
   expect(heaps.at(-1)).toBe(heaps[4]); // after the largest frame
 }, 120_000);
+
+test("studio reuse matches fresh renders across lights, backdrop, world, props and pose without rebuilding the part BVH", async () => {
+  const a = fixture("a", small);
+  const b = fixture("b", small);
+  const p = fixture("p", small);
+  const c = fixture("c", small);
+  if (!a.part) throw new Error("fixture a has no part");
+  const turned: Scene = {
+    ...a,
+    part: { ...a.part, toWorld: [0, 1, 0, 0, -1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 2e-5, 1] },
+    lights: b.lights,
+    backdrop: b.backdrop,
+    world: { ...a.world, strength: 1.5, rotationRad: 0.9 },
+  };
+  const withPropsAndRing: Scene = {
+    ...a,
+    props: p.props,
+    lights: c.lights,
+    backdrop: { ...b.backdrop, shadowCatcher: true },
+    film: { ...a.film, transparent: true },
+  };
+  const sequence = [a, turned, withPropsAndRing, a];
+  const fresh = [];
+  for (const s of sequence) fresh.push((await render(s)).passes);
+
+  const maxDiff = (x: Float32Array, y: Float32Array): number => {
+    let best = 0;
+    for (let i = 0; i < x.length; i++) best = Math.max(best, Math.abs(x[i] - y[i]));
+    return best;
+  };
+  try {
+    for (const [i, s] of sequence.entries()) {
+      const run = await renderIn(s, i === 0 ? "full" : "studio");
+      expect(run.state).toBe(RenderState.done);
+      expect(maxDiff(run.passes.rgba, fresh[i].rgba), `studio rgba ${i}`).toBeLessThan(1e-3);
+      expect(maxDiff(run.passes.albedo!, fresh[i].albedo!), `studio albedo ${i}`).toBeLessThan(1e-3);
+      expect(maxDiff(run.passes.normal!, fresh[i].normal!), `studio normal ${i}`).toBeLessThan(1e-3);
+    }
+  } finally {
+    M._cb_session_free();
+  }
+
+  // Verify the part BVH itself is skipped when studio changes on a large part.
+  const big = beadMesh({ layers: 120, perimeters: 2, segments: 600, ringVerts: 12, halfSizeM: [0.016, 0.011], layerHeightM: 0.0002, beadWidthM: 0.00045 });
+  const bigA: Scene = { ...a, film: { ...a.film, samples: 1 }, part: { ...a.part, mesh: big } };
+  const bigB: Scene = { ...bigA, lights: b.lights, backdrop: b.backdrop, world: { ...bigA.world, strength: 2 } };
+  try {
+    await renderIn(bigA, "full");
+    const firstBvh = M._cb_time_ms(2);
+    await renderIn(bigB, "studio");
+    const studioBvh = M._cb_time_ms(2);
+    expect(firstBvh).toBeGreaterThan(20);
+    expect(studioBvh).toBeLessThan(firstBvh * 0.2);
+  } finally {
+    M._cb_session_free();
+  }
+}, 240_000);

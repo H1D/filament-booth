@@ -72,33 +72,46 @@ test("a photo with another camera or film renders again on the last render's wor
   const bigger = await shoot(engine, { ...scene, film: { ...scene.film, width: 16, height: 10, samples: 64 } });
   expect([moved, bigger]).toEqual([first, first]);
   expect(StandIn.made).toHaveLength(1);
-  expect(first.requests.map((r) => r.again)).toEqual([false, true, true]);
+  expect(first.requests.map((r) => r.mode)).toEqual(["full", "again", "again"]);
 });
 
-test("another part, light, backdrop or world, or the part's hidden faces come since, gets a fresh worker", async () => {
+test("another light, backdrop, world or pose reuses the worker in studio mode; another part or hidden faces gets a fresh worker", async () => {
   const engine = cyclesEngine(), scene = fixture("a", small), b = fixture("b", small);
   const part = scene.part;
   if (!part) throw new Error("fixture a has a part");
-  const changes: Scene[] = [
-    { ...scene, part: { ...part } },
+  const studioChanges: Scene[] = [
+    { ...scene, part: { ...part, toWorld: [0, 1, 0, 0, -1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 2e-5, 1] } },
     { ...scene, lights: b.lights },
     { ...scene, backdrop: b.backdrop },
     { ...scene, world: { ...scene.world, strength: 2 } },
   ];
-  let last = await shoot(engine, scene);
-  for (const changed of changes) {
+  const first = await shoot(engine, scene);
+  for (const changed of studioChanges) {
+    const next = await shoot(engine, changed);
+    expect(next).toBe(first);
+    expect(first.terminated).toBe(false);
+  }
+  expect(first.requests.map((r) => r.mode)).toEqual(["full", "studio", "studio", "studio", "studio"]);
+
+  const partChanges: Scene[] = [
+    { ...scene, part: { ...part, material: { ...part.material } } },
+    { ...scene, part: { ...part, mesh: { ...part.mesh } } },
+    { ...scene, part: null },
+  ];
+  let last = first;
+  for (const changed of partChanges) {
     const next = await shoot(engine, changed);
     expect(next).not.toBe(last);
     expect(last.terminated).toBe(true);
-    expect(next.requests[0].again).toBe(false);
+    expect(next.requests[0].mode).toBe("full");
     last = next;
   }
-  const culled = changes[3];
-  if (!culled.part) throw new Error("no part");
+  const culled = { ...scene, part: { ...part, mesh: { ...part.mesh } } };
+  const seeded = await shoot(engine, culled);
   culled.part.mesh.hidden = new Uint8Array(culled.part.mesh.tris);
   const next = await shoot(engine, culled);
-  expect(next).not.toBe(last);
-  expect(next.requests[0].again).toBe(false);
+  expect(next).not.toBe(seeded);
+  expect(next.requests[0].mode).toBe("full");
   expect(await shoot(engine, { ...culled, camera: { ...culled.camera, fovYRad: 0.3 } })).toBe(next);
 });
 
@@ -112,7 +125,7 @@ test("a parked worker is ended after IDLE_MS", async () => {
   expect(worker.terminated).toBe(true);
   const next = await shoot(engine, scene);
   expect(next).not.toBe(worker);
-  expect(next.requests[0].again).toBe(false);
+  expect(next.requests[0].mode).toBe("full");
 });
 
 test("a failed or cancelled render's worker is ended, not kept", async () => {
@@ -149,7 +162,7 @@ test("an error or a message from a parked worker ends it, and the next photo get
     expect(parked.terminated).toBe(true);
     const next = await shoot(engine, moved(scene));
     expect(next).not.toBe(parked);
-    expect(next.requests[0].again).toBe(false);
+    expect(next.requests[0].mode).toBe("full");
   }
 });
 
@@ -187,7 +200,7 @@ test("hidden faces that come during a render make the next photo a fresh one", a
   const first = await shoot(engine, scene, "done", () => { part.mesh.hidden = new Uint8Array(part.mesh.tris); });
   const next = await shoot(engine, moved(scene));
   expect(next).not.toBe(first);
-  expect(next.requests[0].again).toBe(false);
+  expect(next.requests[0].mode).toBe("full");
 });
 
 test("a worker rendering again is not ended by the earlier render's idle timer", async () => {

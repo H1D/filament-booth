@@ -24,8 +24,8 @@ const tools: PhotoTools = {
   schedule: () => () => {},
 };
 
-// Node is not cross-origin isolated, so Cycles reports that it does not fit and the desk goes on to the next engine.
-test("the photo desk renders on the preview when Cycles cannot run here", async () => {
+// Node has neither WebGPU nor cross-origin isolation for Cycles, so both skip and the desk falls back to the next engine.
+test("the photo desk renders on the preview when WebGPU and Cycles cannot run here", async () => {
   const accumulate = vi.fn((_scene: unknown, _onPass: unknown, signal: AbortSignal) =>
     new Promise<never>((_resolve, reject) => { signal.addEventListener("abort", () => { reject(signal.reason); }); }));
   const run = photoDesk({ accumulate }, tools).take(scene, "part");
@@ -35,9 +35,9 @@ test("the photo desk renders on the preview when Cycles cannot run here", async 
   await run.result.catch(() => {});
 });
 
-test("with no preview the desk has Cycles alone, and the photo fails saying why", async () => {
+test("with no preview the desk has WebGPU and Cycles only, and the photo fails saying why", async () => {
   const run = photoDesk(null, tools).take(scene, "part");
-  await expect(run.result).rejects.toThrow(/cross-origin isolated/);
+  await expect(run.result).rejects.toThrow(/no WebGPU[\s\S]*cross-origin isolated/);
 });
 
 // ---- agentControl --------------------------------------------------------------------------

@@ -363,3 +363,24 @@ export function isFixtureName(name: string): name is FixtureName {
   return FIXTURES.some((f) => f === name);
 }
 
+/** Realism parity scene exercising PR #17 surfaceWear, dust, Burley subsurface, and backdrop texture. */
+export function realismFixture(o: FixtureOptions = {}): Scene {
+  const base = fixture("p", o);
+  const part = base.part
+    ? {
+        ...base.part,
+        material: {
+          ...base.part.material,
+          surfaceWear: 0.35,
+          dust: 0.3,
+          subsurface: 0.25,
+        },
+      }
+    : null;
+  return {
+    ...base,
+    part,
+    backdrop: { ...base.backdrop, texture: 0.45 },
+  };
+}
+

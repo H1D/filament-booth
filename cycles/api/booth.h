@@ -7,8 +7,9 @@
  * cb_mesh_shader_index, cb_object, cb_shader_*, cb_area_light, cb_scrim, cb_floor_ring, cb_world_*), then
  * cb_render_start. Poll cb_render_state and cb_passes_version, read passes between
  * cb_passes_lock and cb_passes_unlock. After a finished render, cb_session_again readies the same
- * scene for another with a new cb_film and cb_camera. End with cb_session_free, after which a new
- * session may be created in the same module.
+ * scene for another with a new cb_film and cb_camera, or cb_session_update_studio keeps the part
+ * mesh and its BVH while replacing lights, backdrop, props, world, part transform, camera and film.
+ * End with cb_session_free, after which a new session may be created in the same module.
  */
 #pragma once
 
@@ -17,6 +18,7 @@
 #include <string>
 #include <thread>
 
+#include "scene/object.h"
 #include "scene/scene.h"
 #include "session/session.h"
 #include "util/vector.h"
@@ -72,6 +74,11 @@ struct Booth {
   SessionParams session_params;
   vector<Geometry *> meshes;
   vector<Shader *> shaders;
+  Geometry *part_mesh = nullptr;
+  Object *part_object = nullptr;
+  vector<Geometry *> studio_geometries;
+  vector<Object *> studio_objects;
+  vector<Shader *> studio_shaders;
   bool aux_passes = true;
 
   Snapshot snapshot;

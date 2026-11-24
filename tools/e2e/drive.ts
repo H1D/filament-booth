@@ -474,16 +474,16 @@ try {
     return sizes.join("; ");
   });
 
-  await flow("5", "PHOTO through Cycles at 1000x1000, 64 samples, against the preview", async () => {
+  await flow("5", "PHOTO through WebGPU at 1000x1000, 64 samples, against the preview", async () => {
     await withBsch04(true);
     await applyLook("studio");
     await setColour(GREEN);
     await setOutput(1000, 64);
     const preview = await previewShot("5-preview");
-    const shot = await photo("5-cycles");
+    const shot = await photo("5-webgpu");
     photo5 = { shot, preview: preview.img };
     const film = await page.evaluate(() => window.boothDev?.booth.scene.film);
-    expect(shot.engine === "Cycles", `engine ${shot.engine}: ${shot.readout} ${shot.preparing.join(" | ")}`);
+    expect(shot.engine === "WebGPU", `engine ${shot.engine}: ${shot.readout} ${shot.preparing.join(" | ")}`);
     expect(shot.sawRefining && (shot.refiningLuma ?? 0) > 10, `refining image seen ${shot.sawRefining}, luma ${shot.refiningLuma}`);
     expect(shot.img.width === film?.width && shot.img.height === film.height, `the PNG is ${shot.img.width}x${shot.img.height}, the film ${film?.width}x${film?.height}`);
     const all = meanLuma(shot.img);
@@ -491,11 +491,11 @@ try {
     const small = resize(shot.img, preview.img.width, preview.img.height);
     const a = greenMask(preview.img), b = greenMask(small);
     const overlap = iou(a, b);
-    writeFileSync(join(OUT, "5-preview-vs-cycles.png"), encodePng(sideBySide(preview.img, small)));
+    writeFileSync(join(OUT, "5-preview-vs-webgpu.png"), encodePng(sideBySide(preview.img, small)));
     const mPhoto = await partMask(shot.img.width, shot.img.height), mPreview = await partMask(preview.img.width, preview.img.height);
     const lumaPhoto = meanLuma(shot.img, mPhoto), lumaPreview = meanLuma(preview.img, mPreview);
     expect(overlap > 0.97, `silhouette IoU ${f3(overlap)} (${count(a)} and ${count(b)} part pixels)`);
-    return `${shot.readout} in ${(shot.ms / 1000).toFixed(1)} s, refining image luma ${f1(shot.refiningLuma ?? NaN)}; PNG ${shot.img.width}x${shot.img.height} mean luma ${f1(all)}; silhouette IoU ${f3(overlap)} over ${count(a)} px; mean part luma preview ${f1(lumaPreview)}, Cycles ${f1(lumaPhoto)}`;
+    return `${shot.readout} in ${(shot.ms / 1000).toFixed(1)} s, refining image luma ${f1(shot.refiningLuma ?? NaN)}; PNG ${shot.img.width}x${shot.img.height} mean luma ${f1(all)}; silhouette IoU ${f3(overlap)} over ${count(a)} px; mean part luma preview ${f1(lumaPreview)}, WebGPU ${f1(lumaPhoto)}`;
   });
 
   await flow("6", "native Blender on the exported scene against the browser photo", async () => {
@@ -556,8 +556,8 @@ try {
     return `PHOTO usable ${usableMs} ms after Cancel (card: ${state}); Finish now: ${shot.readout}; the card says "${shot.stopText}"; ${(shot.ms / 1000).toFixed(1)} s`;
   });
 
-  await flow("8", "Cycles unavailable falls back to the raster engine", async () => {
-    await load("?no-cycles");
+  await flow("8", "Cycles and WebGPU unavailable falls back to the raster engine", async () => {
+    await load("?no-cycles&no-webgpu");
     await openPart(BSCH04, BSCH04_NAME);
     const shot = await photo("8-raster");
     const film = await page.evaluate(() => window.boothDev?.booth.scene.film);
@@ -664,7 +664,7 @@ try {
   });
 
   await flow("12", "LEKV2 at 1600x1600, 256 samples through Cycles", async () => {
-    await load("", true);
+    await load("?no-webgpu", true);
     const parseMs = await openPart(LEKV2, "plate_1.gcode");
     // The default limit is 5 minutes and this photo takes over half an hour. It must run to its samples.
     await setTimeLimit("No limit", 0);
@@ -683,8 +683,9 @@ try {
   });
 
   await flow("13", "a 30 second time limit cuts a 64 sample photo short", async () => {
-    // 64 samples at 1000x1000 take about 63 s unlimited. The control offers 30 seconds, not 20.
-    await withBsch04(true);
+    // 64 samples at 1000x1000 take about 63 s unlimited under Cycles. The control offers 30 seconds, not 20.
+    await load("?no-webgpu", true);
+    await openPart(BSCH04, BSCH04_NAME);
     await setOutput(1000, 64);
     await setTimeLimit("30 seconds", 30);
     const control = await page.evaluate(() => window.boothDev?.booth.doc.output.timeLimitS);
