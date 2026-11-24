@@ -194,7 +194,7 @@ CB_EXPORT int cb_session_create(int width, int height, int threads)
 
   SceneParams scene_params;
   scene_params.shadingsystem = SHADINGSYSTEM_SVM;
-  scene_params.bvh_type = BVH_TYPE_STATIC;
+  scene_params.bvh_type = BVH_TYPE_DYNAMIC;
   scene_params.bvh_layout = BVH_LAYOUT_BVH2;
   scene_params.use_bvh_spatial_split = false;
   scene_params.use_bvh_unaligned_nodes = true;
@@ -367,6 +367,64 @@ CB_EXPORT int cb_session_again(int width, int height)
   scene->delete_nodes(set<Pass *>(scene->passes.begin(), scene->passes.end()));
   /* Clears the "finish" cancel too, which would otherwise end the next render at once. */
   b.session->progress.reset();
+  if (scene->update_stats) {
+    scene->update_stats->geometry.times.clear();
+  }
+  b.width = width;
+  b.height = height;
+  scene->camera->set_full_width(width);
+  scene->camera->set_full_height(height);
+  {
+    const std::lock_guard<std::mutex> lock(b.snapshot.mutex);
+    for (vector<float> &pixels : b.snapshot.pixels) {
+      pixels.clear();
+    }
+    b.snapshot.samples = 0;
+    b.snapshot.max_sample = 0;
+    b.snapshot.pending = false;
+    b.snapshot.copy_ms = 0.0;
+  }
+  b.discard = false;
+  b.t_start = 0.0;
+  b.t_first_sample = 0.0;
+  b.t_end = 0.0;
+  b.state = RENDER_IDLE;
+  return 0;
+}
+
+/* After a finished render with a part: keeps the part mesh, shaders and object BVH while clearing
+ * every studio object, geometry, light, shader and world so the caller can upload a new studio,
+ * part transform, camera and film. Returns 0, or -1 with cb_error set. */
+CB_EXPORT int cb_session_update_studio(int width, int height)
+{
+  Booth &b = booth();
+  if (b.state.load() != RENDER_DONE) {
+    set_error("cb_session_update_studio needs a finished render");
+    return -1;
+  }
+  if (!b.part_object || !b.part_mesh) {
+    set_error("cb_session_update_studio needs a part object");
+    return -1;
+  }
+  if (b.waiter.joinable()) {
+    b.waiter.join();
+  }
+  Scene *scene = b.scene;
+  scene->delete_nodes(set<Pass *>(scene->passes.begin(), scene->passes.end()));
+  scene->delete_nodes(set<Object *>(b.studio_objects.begin(), b.studio_objects.end()));
+  scene->delete_nodes(set<Geometry *>(b.studio_geometries.begin(), b.studio_geometries.end()));
+  scene->delete_nodes(set<Shader *>(b.studio_shaders.begin(), b.studio_shaders.end()));
+  scene->tag_shadow_catcher_modified();
+  b.studio_objects.clear();
+  b.studio_geometries.clear();
+  b.studio_shaders.clear();
+  b.meshes.clear();
+  b.shaders.clear();
+
+  b.session->progress.reset();
+  if (scene->update_stats) {
+    scene->update_stats->geometry.times.clear();
+  }
   b.width = width;
   b.height = height;
   scene->camera->set_full_width(width);

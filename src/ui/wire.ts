@@ -14,6 +14,7 @@ import { develop } from "../film";
 import { cyclesEngine, type CyclesEngineOptions } from "../photo/cycles";
 import { PhotoDesk, type PhotoTools } from "../photo/photo";
 import { rasterEngine } from "../photo/raster";
+import { webgpuEngine, type WebGpuEngineOptions } from "../photo/webgpu";
 import type { BeadMesh, LoadedPrint } from "../print";
 import type { Viewport, ViewportEvents } from "../viewport/viewport";
 import type { Scene } from "../scene";
@@ -30,12 +31,12 @@ export interface ViewportLike {
 }
 
 /**
- * The photo desk: Cycles first, then the raster engine on the live preview's
- * renderer. Without a preview there is no raster engine, so a machine that
- * cannot run Cycles gets a failed photo that says why.
+ * The photo desk: WebGPU path tracer first, then Cycles, then the raster engine
+ * on the live preview's renderer. Without a preview there is no raster engine,
+ * so a machine that cannot run WebGPU or Cycles gets a failed photo that says why.
  */
-export function photoDesk(viewport: Pick<Viewport, "accumulate"> | null, tools?: PhotoTools, cycles?: CyclesEngineOptions): PhotoDesk {
-  return new PhotoDesk(viewport === null ? [cyclesEngine(cycles)] : [cyclesEngine(cycles), rasterEngine(viewport)], tools);
+export function photoDesk(viewport: Pick<Viewport, "accumulate"> | null, tools?: PhotoTools, cycles?: CyclesEngineOptions, webgpu?: WebGpuEngineOptions): PhotoDesk {
+  return new PhotoDesk(viewport === null ? [webgpuEngine(webgpu), cyclesEngine(cycles)] : [webgpuEngine(webgpu), cyclesEngine(cycles), rasterEngine(viewport)], tools);
 }
 
 /**

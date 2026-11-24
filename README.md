@@ -8,8 +8,9 @@ Product photos of 3D-printed parts, made in a browser tab. Drop an STL or a G-co
 ![A close-up of an orange 3DBenchy with every layer line visible](docs/media/hero.jpg)
 
 The tab slices the STL with OrcaSlicer's engine, builds the print bead by bead, and path traces it
-with Blender's Cycles. Both run in WebAssembly, so no file leaves your computer and there is
-nothing to install. The layer lines above are the toolpath of a 0.2 mm print.
+with a WebGPU compute path tracer by default, falling back to Blender's Cycles in WebAssembly when
+needed. Both run on your device, so no file leaves your computer and there is nothing to install.
+The layer lines above are the toolpath of a 0.2 mm print.
 
 Opening a part frames it and chooses a default aperture (`f/`) for its size so small prints stay in
 focus front to back. Photos develop through Blender's AgX with subtle camera optics on by default

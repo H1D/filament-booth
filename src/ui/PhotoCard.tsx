@@ -6,7 +6,7 @@ import { Icon } from "./icons";
 import { formatDuration, formatEta } from "./model";
 import type { LiveProgress, Shot } from "./photo-session";
 
-const ENGINE_NAMES = { cycles: "Cycles", raster: "Raster" } as const satisfies Record<Photo["engine"], string>;
+const ENGINE_NAMES = { webgpu: "WebGPU", cycles: "Cycles", raster: "Raster" } as const satisfies Record<Photo["engine"], string>;
 
 const STATE_LABELS: Record<LiveProgress["state"], string> = {
   preparing: "Preparing", rendering: "Rendering", developing: "Developing",

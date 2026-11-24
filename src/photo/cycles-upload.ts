@@ -8,7 +8,7 @@
  * so the parity tool checks this code too.
  */
 import { BEAD_WORD, PLATE_EPS, SPEED_STEP_MMS, unpackBeadWord, type BeadMesh } from "../print";
-import { ROUGH_MIN, type BackdropSection, type BeadMaterial, type Emitter, type FloorCardRing, type PartSection, type PropItem, type Scene } from "../scene";
+import { ROUGH_MIN, type BackdropSection, type BeadMaterial, type Emitter, type FloorCardRing, type Mat4, type PartSection, type PropItem, type Scene } from "../scene";
 
 /** The exports of public/cycles/cycles_booth.mjs. Pointers are byte offsets into wasmMemory. */
 export interface CyclesModule {
@@ -20,6 +20,8 @@ export interface CyclesModule {
   lengthBytesUTF8(text: string): number;
   _cb_session_create(width: number, height: number, threads: number): number;
   _cb_session_again(width: number, height: number): number;
+  _cb_session_update_studio(width: number, height: number): number;
+  _cb_part_set_tfm(tfm: number): number;
   _cb_film(samples: number, adaptiveThreshold: number, maxBounces: number, diffuseBounces: number,
     glossyBounces: number, transmissionBounces: number, clampDirect: number, clampIndirect: number,
     filterWidthPx: number, transparent: number, auxPasses: number): void;
@@ -256,17 +258,18 @@ export function uploadScene(M: CyclesModule, scene: Scene, world: WorldImage, th
   const { film } = scene;
   check(M, M._cb_session_create(film.width, film.height, threads), "session");
   uploadFrame(M, scene);
-  copyToHeap(M, world.rgb, (rgb) =>
-    check(M, M._cb_world_image(rgb, world.width, world.height, scene.world.strength, scene.world.rotationRad), "world"));
+  uploadWorld(M, scene.world, world);
   if (scene.part) uploadPart(M, scene.part);
-  uploadBackdrop(M, scene.backdrop);
-  uploadProps(M, scene.props);
-  for (const emitter of scene.lights.emitters) uploadEmitter(M, emitter);
-  if (scene.lights.floorCards) uploadFloorCards(M, scene.lights.floorCards);
+  uploadStudioRest(M, scene);
 }
 
 /** What a render again may change. */
 export type Frame = Pick<Scene, "film" | "camera">;
+
+/** What a studio-preserving Cycles render may change while keeping the part mesh and BVH. */
+export type StudioFrame = Pick<Scene, "film" | "camera" | "backdrop" | "props" | "lights" | "world"> & {
+  readonly partToWorld: Mat4;
+};
 
 /**
  * Readies the session of a finished render for another with this camera and film: Cycles keeps
@@ -275,6 +278,30 @@ export type Frame = Pick<Scene, "film" | "camera">;
 export function uploadAgain(M: CyclesModule, frame: Frame): void {
   check(M, M._cb_session_again(frame.film.width, frame.film.height), "session again");
   uploadFrame(M, frame);
+}
+
+/**
+ * Replaces lights, backdrop, props, world, part transform, camera and film on a finished part
+ * session while keeping the part mesh, bead shaders and object BVH (cb_session_update_studio).
+ */
+export function uploadStudio(M: CyclesModule, studio: StudioFrame, world: WorldImage): void {
+  check(M, M._cb_session_update_studio(studio.film.width, studio.film.height), "session studio");
+  copyToHeap(M, Float32Array.from(studio.partToWorld), (tfm) => check(M, M._cb_part_set_tfm(tfm), "part transform"));
+  uploadFrame(M, studio);
+  uploadWorld(M, studio.world, world);
+  uploadStudioRest(M, studio);
+}
+
+function uploadWorld(M: CyclesModule, worldSection: Scene["world"], world: WorldImage): void {
+  copyToHeap(M, world.rgb, (rgb) =>
+    check(M, M._cb_world_image(rgb, world.width, world.height, worldSection.strength, worldSection.rotationRad), "world"));
+}
+
+function uploadStudioRest(M: CyclesModule, scene: Pick<Scene, "backdrop" | "props" | "lights">): void {
+  uploadBackdrop(M, scene.backdrop);
+  uploadProps(M, scene.props);
+  for (const emitter of scene.lights.emitters) uploadEmitter(M, emitter);
+  if (scene.lights.floorCards) uploadFloorCards(M, scene.lights.floorCards);
 }
 
 function uploadFrame(M: CyclesModule, { film, camera }: Frame): void {

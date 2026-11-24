@@ -1,10 +1,10 @@
 /**
  * photo.ts: PHOTO. Takes a Scene, returns a running PhotoRun.
  *
- * The engine is chosen here, privately: Cycles in WebAssembly when it fits
- * this machine and scene, the raster accumulator otherwise. A Cycles failure
- * that is not a cancel (a wasm trap, out of memory, a crashed worker) falls
- * through to the next engine. Callers never branch on the engine.
+ * The engine is chosen here, privately: the WebGPU compute path tracer first
+ * when it fits this machine and scene, Cycles in WebAssembly next, and the
+ * raster accumulator as fallback. A failure that is not a cancel falls through
+ * to the next engine. Callers never branch on the engine.
  *
  * A Scene is immutable, so edits made after the press cannot reach a run.
  */
@@ -39,7 +39,7 @@ export interface Photo {
   readonly stoppedBy: StoppedBy;
   readonly denoising: Denoising;
   /** A label for the status line. */
-  readonly engine: "cycles" | "raster";
+  readonly engine: "webgpu" | "cycles" | "raster";
   readonly docRev: number;
 }
 
@@ -71,7 +71,7 @@ export class PhotoCancelled extends Error {}
 
 /** The engine side of the desk. Callers of the desk never see this type. */
 export interface PhotoEngine {
-  readonly id: "cycles" | "raster";
+  readonly id: "webgpu" | "cycles" | "raster";
   /** Can this engine render this scene here? The machine check is cached; Cycles also waits for
    *  the part's hidden faces when a load has only just sent the mesh (about 2 s). */
   fits(scene: Scene): Promise<true | { reason: string }>;
@@ -110,7 +110,7 @@ export class PhotoDesk {
   readonly #tools: PhotoTools;
   #current: Run | null = null;
 
-  /** Engines in order of preference. The default is Cycles, then raster. */
+  /** Engines in order of preference (default desk: WebGPU, then Cycles, then raster). */
   constructor(engines: readonly PhotoEngine[], tools: PhotoTools = BROWSER_TOOLS) {
     this.#engines = [...engines];
     this.#tools = tools;

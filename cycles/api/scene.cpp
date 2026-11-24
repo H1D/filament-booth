@@ -231,6 +231,8 @@ void set_world(unique_ptr<ShaderGraph> graph)
   object->set_geometry(light);
   object->set_is_shadow_catcher(true);
   light->tag_update(scene);
+  booth().studio_geometries.push_back(light);
+  booth().studio_objects.push_back(object);
 }
 
 }  // namespace
@@ -339,8 +341,36 @@ CB_EXPORT int cb_object(int mesh, int shader, int second_shader, const float *tf
                                  tfm[2], tfm[6], tfm[10], tfm[14]));
   if (flags & OBJECT_PART) {
     object->set_receiver_light_set(PART_LIGHT_SET);
+    b.part_mesh = geom;
+    b.part_object = object;
+  }
+  else {
+    b.studio_geometries.push_back(geom);
+    b.studio_objects.push_back(object);
+    b.studio_shaders.push_back(b.shaders[shader]);
+    if (second_shader >= 0) {
+      b.studio_shaders.push_back(b.shaders[second_shader]);
+    }
   }
   object->set_is_shadow_catcher((flags & OBJECT_SHADOW_CATCHER) != 0);
+  return 0;
+}
+
+/* Updates the part object's transform without recreating its mesh or BVH. */
+CB_EXPORT int cb_part_set_tfm(const float *tfm)
+{
+  Booth &b = booth();
+  if (!b.part_object) {
+    set_error("no part object in session");
+    return -1;
+  }
+  const Transform next = make_transform(tfm[0], tfm[4], tfm[8], tfm[12],
+                                        tfm[1], tfm[5], tfm[9], tfm[13],
+                                        tfm[2], tfm[6], tfm[10], tfm[14]);
+  if (!b.part_object->tfm_equals(next)) {
+    b.part_object->set_tfm(next);
+    b.part_object->tag_update(b.scene);
+  }
   return 0;
 }
 
@@ -371,18 +401,23 @@ CB_EXPORT int cb_shader_bead(float r, float g, float b, float ior, float anisotr
   AttributeNode *path = attribute(gr, "path_tangent");
   GeometryNode *geometry = gr->create_node<GeometryNode>();
 
-  NoiseTextureNode *mottle_noise = noise(gr, mottle_scale, 3.0f);
-  gr->connect(texco->output("Object"), mottle_noise->input("Vector"));
-  MathNode *mottle = math(gr, NODE_MATH_MULTIPLY_ADD, 0.0f, mottle_amp, -0.5f * mottle_amp);
-  gr->connect(mottle_noise->output("Fac"), mottle->input("Value1"));
-  MathNode *bead = math(gr, NODE_MATH_ADD);
-  gr->connect(rough->output("Fac"), bead->input("Value1"));
-  gr->connect(mottle->output("Value"), bead->input("Value2"));
   ClampNode *clamped = gr->create_node<ClampNode>();
   clamped->set_clamp_type(NODE_CLAMP_MINMAX);
   clamped->set_min(rough_min);
   clamped->set_max(1.0f);
-  gr->connect(bead->output("Value"), clamped->input("Value"));
+  if (mottle_amp > 0.0f) {
+    NoiseTextureNode *mottle_noise = noise(gr, mottle_scale, 3.0f);
+    gr->connect(texco->output("Object"), mottle_noise->input("Vector"));
+    MathNode *mottle = math(gr, NODE_MATH_MULTIPLY_ADD, 0.0f, mottle_amp, -0.5f * mottle_amp);
+    gr->connect(mottle_noise->output("Fac"), mottle->input("Value1"));
+    MathNode *bead = math(gr, NODE_MATH_ADD);
+    gr->connect(rough->output("Fac"), bead->input("Value1"));
+    gr->connect(mottle->output("Value"), bead->input("Value2"));
+    gr->connect(bead->output("Value"), clamped->input("Value"));
+  }
+  else {
+    gr->connect(rough->output("Fac"), clamped->input("Value"));
+  }
 
   MathNode *plate = math(gr, NODE_MATH_GREATER_THAN, 0.0f, PLATE_MASK_THRESHOLD);
   gr->connect(plate_attr->output("Fac"), plate->input("Value1"));
@@ -641,8 +676,9 @@ CB_EXPORT int cb_area_light(const float *frame, float size_x, float size_y, int 
   emission->set_color(one_float3());
   emission->set_strength(1.0f);
   graph->connect(emission->output("Emission"), graph->output()->input("Surface"));
+  Shader *light_shader = add_shader(scene, "booth_light", std::move(graph));
   array<Node *> used_shaders;
-  used_shaders.push_back_slow(add_shader(scene, "booth_light", std::move(graph)));
+  used_shaders.push_back_slow(light_shader);
   light->set_used_shaders(used_shaders);
 
   light->set_sizeu(size_x);
@@ -667,6 +703,9 @@ CB_EXPORT int cb_area_light(const float *frame, float size_x, float size_y, int 
   object->set_is_shadow_catcher(true);
   set_part_only(object, part_only != 0);
   light->tag_update(scene);
+  booth().studio_shaders.push_back(light_shader);
+  booth().studio_geometries.push_back(light);
+  booth().studio_objects.push_back(object);
   return 0;
 }
 
@@ -702,6 +741,9 @@ CB_EXPORT int cb_scrim(const float *frame, float size_x, float size_y, int ellip
       load3(frame + 3), load3(frame + 3 * 2), load3(frame + 3 * 3), load3(frame)));
   object->set_visibility(PATH_RAY_VISIBILITY_ALL & ~PATH_RAY_VISIBILITY_CAMERA);
   set_part_only(object, part_only != 0);
+  booth().studio_shaders.push_back(shader);
+  booth().studio_geometries.push_back(mesh);
+  booth().studio_objects.push_back(object);
   return 0;
 }
 
@@ -788,6 +830,9 @@ CB_EXPORT int cb_floor_ring(float cx, float cy, float cz, float inner, float out
   object->set_geometry(mesh);
   object->set_visibility(PATH_RAY_VISIBILITY_GLOSSY);
   set_part_only(object, true);
+  booth().studio_shaders.push_back(shader);
+  booth().studio_geometries.push_back(mesh);
+  booth().studio_objects.push_back(object);
   return 0;
 }
 

@@ -41,6 +41,12 @@ export function sameButFrame(last: Scene, lastHidden: Uint8Array | undefined, ne
     next.backdrop === last.backdrop && next.world === last.world && next.props === last.props;
 }
 
+/** Whether `next` keeps `last`'s part mesh, hidden faces and material, so Cycles can reuse the part BVH. */
+export function samePart(last: Scene, lastHidden: Uint8Array | undefined, next: Scene): boolean {
+  return last.part !== null && next.part !== null &&
+    last.part.mesh === next.part.mesh && hiddenOf(next) === lastHidden && last.part.material === next.part.material;
+}
+
 export interface CyclesEngineOptions {
   /** Called once per finished render, for tooling. */
   readonly onStats?: (stats: RenderStats) => void;
@@ -61,11 +67,13 @@ export function cyclesEngine(options: CyclesEngineOptions = {}): PhotoEngine {
     return p;
   };
   const release = (): void => unpark()?.worker.terminate();
-  const take = (scene: Scene): { worker: Worker; again: boolean } => {
+  type ReuseMode = "full" | "studio" | "again";
+  const take = (scene: Scene): { worker: Worker; mode: ReuseMode } => {
     const p = unpark();
-    if (p && sameButFrame(p.scene, p.hidden, scene)) return { worker: p.worker, again: true };
+    if (p && sameButFrame(p.scene, p.hidden, scene)) return { worker: p.worker, mode: "again" };
+    if (p && samePart(p.scene, p.hidden, scene)) return { worker: p.worker, mode: "studio" };
     p?.worker.terminate();
-    return { worker: new Worker(new URL("./cycles-worker.ts", import.meta.url), { type: "module", name: "cycles" }), again: false };
+    return { worker: new Worker(new URL("./cycles-worker.ts", import.meta.url), { type: "module", name: "cycles" }), mode: "full" };
   };
   const park = (worker: Worker, scene: Scene, hidden: Uint8Array | undefined): void => {
     release();
@@ -100,15 +108,15 @@ export function cyclesEngine(options: CyclesEngineOptions = {}): PhotoEngine {
     },
     render: (scene, onPass, signal) => {
       if (signal.aborted && signal.reason !== "finish") return Promise.reject(signal.reason);
-      const { worker, again } = take(scene), hidden = hiddenOf(scene);
-      return render(scene, again, worker, () => park(worker, scene, hidden), onPass, signal, options);
+      const { worker, mode } = take(scene), hidden = hiddenOf(scene);
+      return render(scene, mode, worker, () => park(worker, scene, hidden), onPass, signal, options);
     },
   };
 }
 
 function render(
   scene: Scene,
-  again: boolean,
+  mode: "full" | "studio" | "again",
   worker: Worker,
   park: () => void,
   onPass: (frame: RadianceFrame, fraction: number) => void,
@@ -164,10 +172,20 @@ function render(
       settle();
       reject(new Error(`Cycles worker: ${event.message}`));
     };
+    const payload = mode === "again"
+      ? { mode, scene: { film: scene.film, camera: scene.camera } }
+      : mode === "studio" && scene.part !== null
+        ? {
+            mode,
+            scene: {
+              film: scene.film, camera: scene.camera, backdrop: scene.backdrop, props: scene.props,
+              lights: scene.lights, world: scene.world, partToWorld: scene.part.toWorld,
+            },
+          }
+        : { mode: "full" as const, scene };
     const request: RenderRequest = {
       type: "render",
-      // A render again reads the frame only: the mesh is not cloned for nothing.
-      ...(again ? { again, scene: { film: scene.film, camera: scene.camera } } : { again, scene }),
+      ...payload,
       moduleUrl: new URL(`${BASE}cycles/cycles_booth.mjs`, location.href).href,
       hdrUrl: new URL(`${BASE}hdr/${scene.world.hdrId}.hdr`, location.href).href,
       poolSize: navigator.hardwareConcurrency + 4,
